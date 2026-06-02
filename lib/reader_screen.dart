@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter/gestures.dart';
 import 'package:docx_to_text/docx_to_text.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';
 
 enum ReadingMode { scroll, screenFlip, pageFlip }
+
+enum _AnnotationTag { voice, pacing, continuity, query }
+
+// ─── ReaderScreen ─────────────────────────────────────────────────────────────
 
 class ReaderScreen extends StatefulWidget {
   final String filePath;
@@ -21,8 +25,6 @@ class ReaderScreen extends StatefulWidget {
 class _ReaderScreenState extends State<ReaderScreen> {
   late Future<String> _fileContentFuture;
   late ReadingMode _readingMode;
-  // Prevents _loadReadingModePreference from overwriting a user-initiated
-  // selection if both async operations are in flight simultaneously.
   bool _modeSetByUser = false;
 
   @override
@@ -59,12 +61,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   void _setReadingMode(ReadingMode mode) {
-    // Update UI immediately — no await before setState.
     setState(() {
       _readingMode = mode;
       _modeSetByUser = true;
     });
-    // Persist in the background; errors are non-fatal.
     SharedPreferences.getInstance()
         .then((prefs) => prefs.setString('reading_mode', mode.name));
   }
@@ -73,7 +73,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
     try {
       final file = File(widget.filePath);
       final fileExtension = widget.filePath.toLowerCase().split('.').last;
-
       if (fileExtension == 'docx') {
         final bytes = await file.readAsBytes();
         final text = docxToText(bytes);
@@ -84,6 +83,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
     } catch (e) {
       return 'Error reading file: $e';
     }
+  }
+
+  void _onTextSelected(String selectedText) {
+    if (selectedText.trim().isEmpty) return;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      isDismissible: false,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _AnnotationPanel(selectedText: selectedText),
+    );
   }
 
   @override
@@ -107,10 +117,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     children: [
                       const Icon(Icons.unfold_more, size: 20),
                       const SizedBox(width: 12),
-                      Text(
-                        'Scroll',
-                        style: GoogleFonts.sourceSans3(),
-                      ),
+                      Text('Scroll', style: const TextStyle(fontFamily: 'Literata')),
                     ],
                   ),
                 ),
@@ -121,10 +128,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     children: [
                       const Icon(Icons.arrow_upward, size: 20),
                       const SizedBox(width: 12),
-                      Text(
-                        'Screen Flip',
-                        style: GoogleFonts.sourceSans3(),
-                      ),
+                      Text('Screen Flip', style: const TextStyle(fontFamily: 'Literata')),
                     ],
                   ),
                 ),
@@ -135,10 +139,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     children: [
                       const Icon(Icons.arrow_forward, size: 20),
                       const SizedBox(width: 12),
-                      Text(
-                        'Page Flip',
-                        style: GoogleFonts.sourceSans3(),
-                      ),
+                      Text('Page Flip', style: const TextStyle(fontFamily: 'Literata')),
                     ],
                   ),
                 ),
@@ -152,26 +153,25 @@ class _ReaderScreenState extends State<ReaderScreen> {
         future: _fileContentFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(
-              child: CircularProgressIndicator(),
-            );
+            return const Center(child: CircularProgressIndicator());
           }
-
           if (snapshot.hasError) {
-            return Center(
-              child: Text('Error: ${snapshot.error}'),
-            );
+            return Center(child: Text('Error: ${snapshot.error}'));
           }
-
           final content = snapshot.data ?? '';
-
           switch (_readingMode) {
             case ReadingMode.scroll:
               return _buildScrollMode(content);
             case ReadingMode.screenFlip:
-              return _buildScreenFlipMode(content);
+              return _ScreenFlipReader(
+                content: content,
+                onTextSelected: _onTextSelected,
+              );
             case ReadingMode.pageFlip:
-              return _buildPageFlipMode(content);
+              return _PageFlipReader(
+                content: content,
+                onTextSelected: _onTextSelected,
+              );
           }
         },
       ),
@@ -192,37 +192,47 @@ class _ReaderScreenState extends State<ReaderScreen> {
       child: Padding(
         padding: const EdgeInsets.all(32.0),
         child: SingleChildScrollView(
-          child: Text(
+          child: SelectableText(
             content,
-            style: GoogleFonts.literata(
+            style: TextStyle(fontFamily: 'Literata',
               fontSize: 16,
               color: Colors.black87,
               height: 1.6,
             ),
+            contextMenuBuilder: (ctx, editableTextState) {
+              _interceptSelection(editableTextState, _onTextSelected);
+              return const SizedBox.shrink();
+            },
           ),
         ),
       ),
     );
   }
-
-  Widget _buildScreenFlipMode(String content) {
-    return _ScreenFlipReader(
-      content: content,
-    );
-  }
-
-  Widget _buildPageFlipMode(String content) {
-    return _PageFlipReader(
-      content: content,
-    );
-  }
 }
+
+/// Extracts the selected span from [editableTextState] and fires [onSelected].
+/// Returns immediately — the bottom sheet is shown in a post-frame callback so
+/// the overlay context has already been cleaned up before we push the sheet.
+void _interceptSelection(
+  EditableTextState editableTextState,
+  void Function(String) onSelected,
+) {
+  final sel = editableTextState.textEditingValue.selection;
+  if (!sel.isValid || sel.isCollapsed) return;
+  final selected = editableTextState.textEditingValue.text
+      .substring(sel.start, sel.end);
+  WidgetsBinding.instance.addPostFrameCallback((_) => onSelected(selected));
+}
+
+// ─── Screen-flip mode ─────────────────────────────────────────────────────────
 
 class _ScreenFlipReader extends StatefulWidget {
   final String content;
+  final void Function(String) onTextSelected;
 
   const _ScreenFlipReader({
     required this.content,
+    required this.onTextSelected,
   });
 
   @override
@@ -246,8 +256,8 @@ class _ScreenFlipReaderState extends State<_ScreenFlipReader> {
   }
 
   void _scrollByScreen(bool down) {
-    final newOffset = _scrollController.offset +
-        (down ? _screenHeight : -_screenHeight);
+    final newOffset =
+        _scrollController.offset + (down ? _screenHeight * 0.9 : -_screenHeight * 0.9);
     _scrollController.animateTo(
       newOffset.clamp(0, _scrollController.position.maxScrollExtent),
       duration: const Duration(milliseconds: 500),
@@ -261,34 +271,42 @@ class _ScreenFlipReaderState extends State<_ScreenFlipReader> {
       child: LayoutBuilder(
         builder: (context, constraints) {
           _screenHeight = constraints.maxHeight;
-          return GestureDetector(
+          return Listener(
+            onPointerSignal: (event) {
+              if (event is PointerScrollEvent &&
+                  event.scrollDelta.dy.abs() > 4.0) {
+                _scrollByScreen(event.scrollDelta.dy > 0);
+              }
+            },
+            child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onVerticalDragEnd: (details) {
               final velocity = details.primaryVelocity ?? 0;
               if (velocity > 300) {
-                // Swiping down -> go back one screen
                 _scrollByScreen(false);
               } else if (velocity < -300) {
-                // Swiping up -> advance one screen
                 _scrollByScreen(true);
               }
             },
-            // Disable the scroll view's own physics so a swipe can't
-            // free-scroll. Each swipe instead jumps exactly one screen
-            // height via the ScrollController's animateTo.
             child: SingleChildScrollView(
               controller: _scrollController,
               physics: const NeverScrollableScrollPhysics(),
               padding: const EdgeInsets.all(32.0),
-              child: Text(
+              child: SelectableText(
                 widget.content,
-                style: GoogleFonts.literata(
+                style: TextStyle(fontFamily: 'Literata',
                   fontSize: 16,
                   color: Colors.black87,
                   height: 1.6,
                 ),
+                contextMenuBuilder: (ctx, editableTextState) {
+                  _interceptSelection(
+                      editableTextState, widget.onTextSelected);
+                  return const SizedBox.shrink();
+                },
               ),
             ),
+          ),
           );
         },
       ),
@@ -296,11 +314,15 @@ class _ScreenFlipReaderState extends State<_ScreenFlipReader> {
   }
 }
 
+// ─── Page-flip mode ───────────────────────────────────────────────────────────
+
 class _PageFlipReader extends StatefulWidget {
   final String content;
+  final void Function(String) onTextSelected;
 
   const _PageFlipReader({
     required this.content,
+    required this.onTextSelected,
   });
 
   @override
@@ -314,12 +336,16 @@ class _PageFlipReaderState extends State<_PageFlipReader> {
   Size? _lastSize;
 
   static const double _padding = 32.0;
-  // Positioned indicator is bottom: 24 with ~32px pill height.
   static const double _indicatorReservedHeight = 56.0;
-  // Extra breathing room so the last line is never clipped.
   static const double _safetyMargin = 24.0;
+  // Narrow transparent strips on each edge handle prev/next taps so
+  // SelectableText owns the central area for long-press selection.
+  static const double _navStripWidth = 64.0;
 
-  TextStyle get _textStyle => GoogleFonts.literata(
+  // Prevents a single wheel flick from firing multiple page changes.
+  DateTime _lastWheelEvent = DateTime.fromMillisecondsSinceEpoch(0);
+
+  TextStyle get _textStyle => TextStyle(fontFamily: 'Literata',
         fontSize: 16,
         color: Colors.black87,
         height: 1.6,
@@ -331,8 +357,6 @@ class _PageFlipReaderState extends State<_PageFlipReader> {
     super.dispose();
   }
 
-  /// Splits [text] into pages that each fit within [maxWidth] x [maxHeight].
-  /// Breaks only on complete line boundaries so no line is ever clipped.
   List<String> _paginate(String text, double maxWidth, double maxHeight) {
     if (text.isEmpty || maxWidth <= 0 || maxHeight <= 0) return const [''];
 
@@ -351,14 +375,10 @@ class _PageFlipReaderState extends State<_PageFlipReader> {
         break;
       }
 
-      // Find the character at the bottom edge of the page, then snap back to
-      // the start of that line so we never display a partially clipped line.
       final pos = painter.getPositionForOffset(Offset(maxWidth, maxHeight));
       final lineBoundary = painter.getLineBoundary(pos);
       int end = lineBoundary.start;
 
-      // If we landed on the very first line, include at least that line so
-      // we always make forward progress.
       if (end <= 0) {
         end = lineBoundary.end > 0 ? lineBoundary.end : 1;
       }
@@ -366,7 +386,6 @@ class _PageFlipReaderState extends State<_PageFlipReader> {
       pages.add(remaining.substring(0, end).trimRight());
       start += end;
 
-      // Skip any leading whitespace/newlines before the next page.
       while (start < text.length && text[start] == '\n') {
         start++;
       }
@@ -390,75 +409,106 @@ class _PageFlipReaderState extends State<_PageFlipReader> {
         builder: (context, constraints) {
           final size = Size(constraints.maxWidth, constraints.maxHeight);
 
-          // Recompute pages only when the available size changes.
           if (_lastSize != size) {
             _lastSize = size;
             _pages = _paginate(
               widget.content,
               constraints.maxWidth - _padding * 2,
-              (constraints.maxHeight - _padding * 2 - _indicatorReservedHeight - _safetyMargin) * 0.85,
+              (constraints.maxHeight -
+                      _padding * 2 -
+                      _indicatorReservedHeight -
+                      _safetyMargin) *
+                  0.85,
             );
             if (_currentPage > _pages.length - 1) {
               _currentPage = _pages.length - 1;
             }
           }
 
-          return Stack(
+          return Listener(
+            onPointerSignal: (event) {
+              if (event is! PointerScrollEvent) return;
+              if (event.scrollDelta.dy.abs() <= 4.0) return;
+              final now = DateTime.now();
+              if (now.difference(_lastWheelEvent).inMilliseconds < 400) return;
+              _lastWheelEvent = now;
+              _goToPage(
+                _currentPage + (event.scrollDelta.dy > 0 ? 1 : -1),
+              );
+            },
+            child: Stack(
             children: [
               PageView.builder(
                 controller: _pageController,
-                onPageChanged: (page) {
-                  setState(() {
-                    _currentPage = page;
-                  });
-                },
+                onPageChanged: (page) => setState(() => _currentPage = page),
                 itemCount: _pages.length,
                 itemBuilder: (context, index) {
-                  return GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTapUp: (details) {
-                      final width = MediaQuery.of(context).size.width;
-                      if (details.globalPosition.dx < width / 3) {
-                        _goToPage(_currentPage - 1);
-                      } else if (details.globalPosition.dx > 2 * width / 3) {
-                        _goToPage(_currentPage + 1);
-                      }
-                    },
-                    child: Padding(
-                      padding: const EdgeInsets.all(_padding),
-                      child: Text(
-                        _pages[index],
-                        style: _textStyle,
-                      ),
+                  return Padding(
+                    padding: const EdgeInsets.all(_padding),
+                    child: SelectableText(
+                      _pages[index],
+                      style: _textStyle,
+                      contextMenuBuilder: (ctx, editableTextState) {
+                        _interceptSelection(
+                            editableTextState, widget.onTextSelected);
+                        return const SizedBox.shrink();
+                      },
                     ),
                   );
                 },
               ),
+
+              // Previous-page tap zone (left edge).
               Positioned(
-            bottom: 24,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16.0,
-                  vertical: 8.0,
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: _navStripWidth,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => _goToPage(_currentPage - 1),
                 ),
-                decoration: BoxDecoration(
-                  color: Colors.black12,
-                  borderRadius: BorderRadius.circular(20),
+              ),
+
+              // Next-page tap zone (right edge).
+              Positioned(
+                right: 0,
+                top: 0,
+                bottom: 0,
+                width: _navStripWidth,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => _goToPage(_currentPage + 1),
                 ),
-                child: Text(
-                  '${_currentPage + 1} / ${_pages.length}',
-                  style: GoogleFonts.sourceSans3(
-                    fontSize: 14,
-                    color: Colors.black87,
+              ),
+
+              // Page indicator pill.
+              Positioned(
+                bottom: 24,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16.0,
+                      vertical: 8.0,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black12,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      '${_currentPage + 1} / ${_pages.length}',
+                      style: TextStyle(fontFamily: 'SourceSans3',
+                        fontSize: 14,
+                        color: Colors.black87,
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
-          ),
             ],
+          ),
           );
         },
       ),
@@ -466,3 +516,217 @@ class _PageFlipReaderState extends State<_PageFlipReader> {
   }
 }
 
+// ─── Annotation panel ─────────────────────────────────────────────────────────
+
+class _AnnotationPanel extends StatefulWidget {
+  final String selectedText;
+
+  const _AnnotationPanel({required this.selectedText});
+
+  @override
+  State<_AnnotationPanel> createState() => _AnnotationPanelState();
+}
+
+class _AnnotationPanelState extends State<_AnnotationPanel> {
+  final _controller = TextEditingController();
+  _AnnotationTag? _activeTag;
+
+  static const _tagLabels = {
+    _AnnotationTag.voice: 'Voice',
+    _AnnotationTag.pacing: 'Pacing',
+    _AnnotationTag.continuity: 'Continuity',
+    _AnnotationTag.query: 'Query',
+  };
+
+  static const _tagPrompts = {
+    _AnnotationTag.voice:
+        'The voice feels [too formal / too casual / inconsistent] because ',
+    _AnnotationTag.pacing:
+        'The pacing feels [rushed / slow / uneven] because ',
+    _AnnotationTag.continuity: 'Possible continuity issue: ',
+    _AnnotationTag.query: 'Question: ',
+  };
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _selectTag(_AnnotationTag tag) {
+    setState(() {
+      if (_activeTag == tag) {
+        _activeTag = null;
+        _controller.clear();
+      } else {
+        _activeTag = tag;
+        _controller.text = _tagPrompts[tag]!;
+        _controller.selection =
+            TextSelection.collapsed(offset: _controller.text.length);
+      }
+    });
+  }
+
+  void _save() {
+    final note = _controller.text.trim();
+    if (note.isEmpty) return;
+    debugPrint('--- ANNOTATION ---');
+    debugPrint('Selected: "${widget.selectedText}"');
+    debugPrint('Tag: ${_activeTag?.name ?? 'none'}');
+    debugPrint('Note: "$note"');
+    debugPrint('------------------');
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFFF5F0E8),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      padding: EdgeInsets.fromLTRB(
+        24,
+        20,
+        24,
+        MediaQuery.of(context).viewInsets.bottom + 24,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header row
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Add Note',
+                style: TextStyle(fontFamily: 'Literata',
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black87,
+                ),
+              ),
+              GestureDetector(
+                onTap: () => Navigator.of(context).pop(),
+                child:
+                    const Icon(Icons.close, size: 22, color: Colors.black54),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // Selected-text quote box
+          Container(
+            width: double.infinity,
+            padding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              '“${widget.selectedText}”',
+              style: TextStyle(fontFamily: 'Literata',
+                fontSize: 14,
+                fontStyle: FontStyle.italic,
+                color: Colors.black54,
+                height: 1.5,
+              ),
+              maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // Note input
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            maxLines: null,
+            keyboardType: TextInputType.multiline,
+            style:
+                TextStyle(fontFamily: 'Literata',fontSize: 15, color: Colors.black87),
+            decoration: InputDecoration(
+              hintText: 'Write your note...',
+              hintStyle: TextStyle(fontFamily: 'Literata',
+                fontSize: 15,
+                color: Colors.black38,
+              ),
+              filled: true,
+              fillColor: Colors.black.withValues(alpha: 0.04),
+              contentPadding: const EdgeInsets.all(12),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide:
+                    const BorderSide(color: Colors.black26, width: 1),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // Tag chips
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _AnnotationTag.values.map((tag) {
+              final isActive = _activeTag == tag;
+              return GestureDetector(
+                onTap: () => _selectTag(tag),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: isActive
+                        ? Colors.black87
+                        : Colors.black.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    _tagLabels[tag]!,
+                    style: TextStyle(fontFamily: 'Literata',
+                      fontSize: 13,
+                      color: isActive
+                          ? const Color(0xFFF5F0E8)
+                          : Colors.black54,
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 20),
+
+          // Save button
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _save,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.black87,
+                foregroundColor: const Color(0xFFF5F0E8),
+                elevation: 0,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: Text(
+                'Save',
+                style: TextStyle(fontFamily: 'Literata',
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

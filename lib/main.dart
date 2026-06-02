@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:file_picker/file_picker.dart';
 import 'reader_screen.dart';
 
@@ -64,7 +63,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 Text(
                   'Léamh',
                   textAlign: TextAlign.center,
-                  style: GoogleFonts.literata(
+                  style: const TextStyle(
+                    fontFamily: 'Literata',
                     fontSize: 64,
                     fontWeight: FontWeight.w300,
                     color: Colors.black87,
@@ -74,7 +74,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 Text(
                   '(LAY-uv)',
                   textAlign: TextAlign.center,
-                  style: GoogleFonts.literata(
+                  style: const TextStyle(
+                    fontFamily: 'Literata',
                     fontSize: 14,
                     color: Color(0xFF8C8070),
                   ),
@@ -83,7 +84,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 Text(
                   'Open something worth noting.',
                   textAlign: TextAlign.center,
-                  style: GoogleFonts.literata(
+                  style: const TextStyle(
+                    fontFamily: 'Literata',
                     fontSize: 18,
                     color: Colors.black87,
                   ),
@@ -101,7 +103,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   child: Text(
                     'Open file',
-                    style: GoogleFonts.sourceSans3(),
+                    style: const TextStyle(fontFamily: 'Literata'),
                   ),
                 ),
               ],
