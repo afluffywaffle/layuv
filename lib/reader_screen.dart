@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:docx_to_text/docx_to_text.dart';
 import 'dart:io';
 
 class ReaderScreen extends StatefulWidget {
@@ -26,7 +27,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
   Future<String> _readFile() async {
     try {
       final file = File(widget.filePath);
-      return await file.readAsString();
+      final fileExtension = widget.filePath.toLowerCase().split('.').last;
+
+      if (fileExtension == 'docx') {
+        final bytes = await file.readAsBytes();
+        final text = docxToText(bytes);
+        return text.isNotEmpty ? text : 'No text found in DOCX file.';
+      } else {
+        return await file.readAsString();
+      }
     } catch (e) {
       return 'Error reading file: $e';
     }
