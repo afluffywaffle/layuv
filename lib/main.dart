@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:file_picker/file_picker.dart';
 
 void main() {
   runApp(const LeamhApp());
@@ -18,8 +19,28 @@ class LeamhApp extends StatelessWidget {
   }
 }
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  Future<void> _pickFile() async {
+    try {
+      FilePickerResult? result = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['txt', 'md', 'rtf', 'docx'],
+      );
+      if (result != null && result.files.isNotEmpty) {
+        final filePath = result.files.single.path;
+        print('Selected: $filePath');
+      }
+    } catch (e) {
+      print('Error: $e');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -62,7 +83,7 @@ class HomeScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 32),
                 OutlinedButton(
-                  onPressed: () {},
+                  onPressed: _pickFile,
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Colors.black87,
                     side: const BorderSide(color: Colors.black54),
