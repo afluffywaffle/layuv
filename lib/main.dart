@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:file_picker/file_picker.dart';
+import 'reader_screen.dart';
 
 void main() {
   runApp(const LeamhApp());
@@ -35,7 +36,13 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       if (result != null && result.files.isNotEmpty) {
         final filePath = result.files.single.path;
-        print('Selected: $filePath');
+        if (filePath != null) {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => ReaderScreen(filePath: filePath),
+            ),
+          );
+        }
       }
     } catch (e) {
       print('Error: $e');
