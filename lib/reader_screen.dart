@@ -43,6 +43,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   final _jumpNotifier = ValueNotifier<double?>(null);
   String? _emphasizedAnnotationId;
   Timer? _emphasisTimer;
+  bool _twoColumnEnabled = true;
 
   @override
   void initState() {
@@ -75,6 +76,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _annotations = annotations;
       _savedPosition = position;
       _dismissToolbarOnTapOutside = prefs.getBool('dismissToolbarOnTapOutside') ?? true;
+      _twoColumnEnabled = prefs.getBool('two_column_enabled') ?? true;
       if (!_modeSetByUser) {
         final saved = prefs.getString('reading_mode');
         if (saved != null) {
@@ -89,6 +91,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
   Future<void> _reloadAnnotations() async {
     final annotations = await _store.loadAnnotations();
     if (mounted) setState(() => _annotations = annotations);
+  }
+
+  void _toggleTwoColumn() {
+    setState(() => _twoColumnEnabled = !_twoColumnEnabled);
+    SharedPreferences.getInstance()
+        .then((p) => p.setBool('two_column_enabled', _twoColumnEnabled));
   }
 
   void _setReadingMode(ReadingMode mode) {
@@ -405,6 +413,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 onModeSelected: _setReadingMode,
                 onUnlock: () => setState(() => _lockedTool = null),
                 onAnnotations: _toggleAnnotationsPanel,
+                twoColumnEnabled: _twoColumnEnabled,
+                onToggleTwoColumn: _toggleTwoColumn,
               ),
             ),
           ],
@@ -469,6 +479,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   onPositionChanged: _onPositionChanged,
                   jumpNotifier: _jumpNotifier,
                   emphasizedAnnotationId: _emphasizedAnnotationId,
+                  twoColumn: _twoColumnEnabled,
                 );
             }
             return Stack(

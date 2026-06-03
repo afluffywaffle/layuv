@@ -8,6 +8,9 @@ class AppBarPill extends StatelessWidget {
   final VoidCallback onClose;
   final void Function(ReadingMode) onModeSelected;
   final VoidCallback onUnlock;
+  final VoidCallback onAnnotations;
+  final bool twoColumnEnabled;
+  final VoidCallback onToggleTwoColumn;
 
   const AppBarPill({
     super.key,
@@ -16,6 +19,9 @@ class AppBarPill extends StatelessWidget {
     required this.onClose,
     required this.onModeSelected,
     required this.onUnlock,
+    required this.onAnnotations,
+    this.twoColumnEnabled = false,
+    required this.onToggleTwoColumn,
   });
 
   static const _divider = SizedBox(
@@ -90,6 +96,13 @@ class AppBarPill extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           _pillButton(
+            onTap: onAnnotations,
+            child: const Icon(Icons.list_alt, size: 20, color: Colors.black87),
+          ),
+
+          _divider,
+
+          _pillButton(
             onTap: onClose,
             child: const Icon(Icons.close, size: 20, color: Colors.black87),
           ),
@@ -124,12 +137,36 @@ class AppBarPill extends StatelessWidget {
 
           _divider,
 
-          PopupMenuButton<Never>(
+          PopupMenuButton<String>(
             offset: const Offset(0, 40),
             color: const Color(0xFFF5F0E8),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            onSelected: (value) {
+              if (value == 'two_column') onToggleTwoColumn();
+            },
             itemBuilder: (_) => [
-              const PopupMenuItem<Never>(
+              if (readingMode == ReadingMode.pageFlip && !isEink)
+                PopupMenuItem<String>(
+                  value: 'two_column',
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        twoColumnEnabled
+                            ? Icons.view_column
+                            : Icons.view_agenda_outlined,
+                        size: 20,
+                        color: Colors.black87,
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        twoColumnEnabled ? '2 columns: on' : '2 columns: off',
+                        style: const TextStyle(fontFamily: 'Literata'),
+                      ),
+                    ],
+                  ),
+                ),
+              const PopupMenuItem<String>(
                 enabled: false,
                 child: Text(
                   'Export (coming soon)',
