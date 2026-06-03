@@ -15,6 +15,7 @@ class PageFlipReader extends StatefulWidget {
   final void Function(Annotation) onAnnotationTap;
   final void Function(ReadingPosition) onPositionChanged;
   final ValueNotifier<double?> jumpNotifier;
+  final String? emphasizedAnnotationId;
 
   const PageFlipReader({
     super.key,
@@ -25,6 +26,7 @@ class PageFlipReader extends StatefulWidget {
     required this.onAnnotationTap,
     required this.onPositionChanged,
     required this.jumpNotifier,
+    this.emphasizedAnnotationId,
   });
 
   @override
@@ -171,6 +173,7 @@ class _PageFlipReaderState extends State<PageFlipReader> {
                       sliceOffset: page.offset,
                       lineHeight: kReaderTextStyle.height! * kReaderTextStyle.fontSize!,
                       maxWidth: textWidth,
+                      emphasizedAnnotationId: widget.emphasizedAnnotationId,
                     );
                     return Stack(
                       children: [
@@ -214,7 +217,15 @@ class _PageFlipReaderState extends State<PageFlipReader> {
                         ...marginIndicators.map((m) => Positioned(
                           left: 4,
                           top: _padding + m.topOffset,
-                          child: Text(m.label, style: marginIndicatorStyle),
+                          child: Text(
+                            m.label,
+                            style: m.emphasized
+                                ? marginIndicatorStyle.copyWith(
+                                    color: const Color(0xCC000000),
+                                    fontSize: 13,
+                                  )
+                                : marginIndicatorStyle,
+                          ),
                         )),
                       ],
                     );

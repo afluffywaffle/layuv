@@ -244,13 +244,14 @@ const marginIndicatorStyle = _kMarginIndicatorStyle;
 
 /// Computes the vertical position of each annotated note within a text slice,
 /// using TextPainter to measure caret offsets at annotation start positions.
-List<({double topOffset, String label})> buildMarginIndicators({
+List<({double topOffset, String label, bool emphasized})> buildMarginIndicators({
   required String sliceContent,
   required String fullContent,
   required List<Annotation> annotations,
   required int sliceOffset,
   required double lineHeight,
   required double maxWidth,
+  String? emphasizedAnnotationId,
 }) {
   if (maxWidth <= 0 || sliceContent.isEmpty) return const [];
 
@@ -259,7 +260,7 @@ List<({double topOffset, String label})> buildMarginIndicators({
     textDirection: TextDirection.ltr,
   )..layout(maxWidth: maxWidth);
 
-  final result = <({double topOffset, String label})>[];
+  final result = <({double topOffset, String label, bool emphasized})>[];
 
   for (final ann in annotations) {
     if (ann.note == null || ann.note!.isEmpty) continue;
@@ -275,8 +276,11 @@ List<({double topOffset, String label})> buildMarginIndicators({
       Rect.zero,
     );
 
-    final label = ann.tag != null ? ann.tag!.name[0].toUpperCase() : '●';
-    result.add((topOffset: caretOffset.dy, label: label));
+    final emphasized = ann.id == emphasizedAnnotationId;
+    final label = emphasized
+        ? '▶'
+        : (ann.tag != null ? ann.tag!.name[0].toUpperCase() : '●');
+    result.add((topOffset: caretOffset.dy, label: label, emphasized: emphasized));
   }
 
   return result;

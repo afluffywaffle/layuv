@@ -6,7 +6,7 @@ import 'dart:io';
 
 import 'models/annotation.dart';
 import 'models/reading_position.dart';
-import 'models/annotation_store.dart';
+import 'models/docx_store.dart';
 import 'reader/appbar_pill.dart';
 import 'reader/scroll_reader.dart';
 import 'reader/screen_flip_reader.dart';
@@ -29,7 +29,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   late Future<String> _fileContentFuture;
   late ReadingMode _readingMode;
   bool _modeSetByUser = false;
-  late AnnotationStore _store;
+  late DocxStore _store;
   List<Annotation> _annotations = [];
   ReadingPosition? _savedPosition;
   Timer? _positionSaveTimer;
@@ -41,11 +41,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
   double _panelWidth = 320.0;
   double _currentFraction = 0.0;
   final _jumpNotifier = ValueNotifier<double?>(null);
+  String? _emphasizedAnnotationId;
+  Timer? _emphasisTimer;
 
   @override
   void initState() {
     super.initState();
-    _store = AnnotationStore(filePath: widget.filePath);
+    _store = DocxStore(filePath: widget.filePath);
     _readingMode = _defaultMode();
     _fileContentFuture = _readFile();
     _loadPrefs();
@@ -55,6 +57,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   void dispose() {
     _positionSaveTimer?.cancel();
     _toolbarDebounce?.cancel();
+    _emphasisTimer?.cancel();
     _toolbarOverlay?.remove();
     _jumpNotifier.dispose();
     super.dispose();
@@ -108,14 +111,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   Future<String> _readFile() async {
     try {
-      final file = File(widget.filePath);
-      final ext = widget.filePath.toLowerCase().split('.').last;
-      if (ext == 'docx') {
-        final bytes = await file.readAsBytes();
-        final text = docxToText(bytes);
-        return text.isNotEmpty ? text : 'No text found in DOCX file.';
-      }
-      return await file.readAsString();
+      final bytes = await File(widget.filePath).readAsBytes();
+      final text = docxToText(bytes);
+      return text.isNotEmpty ? text : 'No text found in DOCX file.';
     } catch (e) {
       return 'Error reading file: $e';
     }
@@ -329,6 +327,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   onJumpTo: (pos) {
                     _jumpNotifier.value = pos;
                     Future.microtask(() => _jumpNotifier.value = null);
+                    final ann = _annotations
+                        .where((a) => (a.position - pos).abs() < 0.001)
+                        .firstOrNull;
+                    if (ann != null) {
+                      _emphasisTimer?.cancel();
+                      setState(() => _emphasizedAnnotationId = ann.id);
+                      _emphasisTimer = Timer(
+                        const Duration(seconds: 3),
+                        () => setState(() => _emphasizedAnnotationId = null),
+                      );
+                    }
                   },
                   onClose: _toggleAnnotationsPanel,
                 ),
@@ -427,6 +436,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   ),
                   onPositionChanged: _onPositionChanged,
                   jumpNotifier: _jumpNotifier,
+                  emphasizedAnnotationId: _emphasizedAnnotationId,
                 );
               case ReadingMode.screenFlip:
                 reader = ScreenFlipReader(
@@ -442,6 +452,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   ),
                   onPositionChanged: _onPositionChanged,
                   jumpNotifier: _jumpNotifier,
+                  emphasizedAnnotationId: _emphasizedAnnotationId,
                 );
               case ReadingMode.pageFlip:
                 reader = PageFlipReader(
@@ -457,6 +468,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   ),
                   onPositionChanged: _onPositionChanged,
                   jumpNotifier: _jumpNotifier,
+                  emphasizedAnnotationId: _emphasizedAnnotationId,
                 );
             }
             return Stack(

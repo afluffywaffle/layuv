@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import '../models/annotation.dart';
-import '../models/annotation_store.dart';
+import '../models/annotation_store_interface.dart';
+import '../utils/platform_utils.dart';
 import 'appbar_pill.dart';
 
 class AnnotationsPanel extends StatefulWidget {
-  final AnnotationStore store;
+  final AnnotationStoreInterface store;
   final void Function(double position) onJumpTo;
   final VoidCallback onClose;
 
@@ -19,14 +20,15 @@ class AnnotationsPanel extends StatefulWidget {
   State<AnnotationsPanel> createState() => _AnnotationsPanelState();
 }
 
-class _AnnotationsPanelState extends State<AnnotationsPanel>
-    with SingleTickerProviderStateMixin {
+class _AnnotationsPanelState extends State<AnnotationsPanel> {
   static const _warmPaper = Color(0xFFF5F0E8);
 
   List<Annotation> _annotations = [];
-  Set<AnnotationTool> _activeFilters = {};
+  final Set<AnnotationTool> _activeFilters = {};
   String? _highlightedAnnotationId;
   bool _filterCommentsOnly = false;
+  bool _editMode = false;
+  final Set<String> _selected = {};
 
   static const _filterableTools = [
     AnnotationTool.highlight,
@@ -73,12 +75,48 @@ class _AnnotationsPanelState extends State<AnnotationsPanel>
         _ => tool.name,
       };
 
-  Future<void> _confirmDelete(Annotation annotation) async {
+  Future<void> _deleteSelected() async {
+    final ids = _selected.toList();
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: _warmPaper,
-        title: const Text('Delete annotation?',
+        backgroundColor: const Color(0xFFF5F0E8),
+        title: Text('Delete ${ids.length} annotation${ids.length == 1 ? '' : 's'}?',
+            style: const TextStyle(fontFamily: 'Literata')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel',
+                style: TextStyle(fontFamily: 'Literata', color: Colors.black54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete',
+                style: TextStyle(fontFamily: 'Literata', color: Colors.black87)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await widget.store.deleteAll(ids);
+      setState(() {
+        _selected.clear();
+        _editMode = false;
+      });
+      await _loadAnnotations();
+    }
+  }
+
+  Future<void> _deleteAllAnnotations() async {
+    final all = _annotations
+        .where((a) => a.tool != AnnotationTool.bookmark)
+        .map((a) => a.id)
+        .toList();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFFF5F0E8),
+        title: const Text('Delete all annotations?',
             style: TextStyle(fontFamily: 'Literata')),
         actions: [
           TextButton(
@@ -95,9 +133,36 @@ class _AnnotationsPanelState extends State<AnnotationsPanel>
       ),
     );
     if (confirmed == true) {
-      await widget.store.deleteAnnotation(annotation.id);
+      await widget.store.deleteAll(all);
+      setState(() {
+        _selected.clear();
+        _editMode = false;
+      });
       await _loadAnnotations();
     }
+  }
+
+  Future<bool?> _confirmSingleDelete(Annotation annotation) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFFF5F0E8),
+        title: const Text('Delete annotation?',
+            style: TextStyle(fontFamily: 'Literata')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel',
+                style: TextStyle(fontFamily: 'Literata', color: Colors.black54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete',
+                style: TextStyle(fontFamily: 'Literata', color: Colors.black87)),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -109,7 +174,14 @@ class _AnnotationsPanelState extends State<AnnotationsPanel>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _Header(onClose: widget.onClose),
+            _Header(
+              onClose: widget.onClose,
+              editMode: _editMode,
+              onToggleEdit: () => setState(() {
+                _editMode = !_editMode;
+                _selected.clear();
+              }),
+            ),
             const TabBar(
               labelStyle: TextStyle(
                 fontFamily: 'Literata',
@@ -166,7 +238,27 @@ class _AnnotationsPanelState extends State<AnnotationsPanel>
                         widget.onClose();
                       }
                     },
-                    onLongPress: _confirmDelete,
+                    onLongPress: (a) async {
+                      final confirmed = await _confirmSingleDelete(a);
+                      if (confirmed == true) {
+                        await widget.store.deleteAnnotation(a.id);
+                        await _loadAnnotations();
+                      }
+                    },
+                    onDelete: (a) async {
+                      await widget.store.deleteAnnotation(a.id);
+                      await _loadAnnotations();
+                    },
+                    confirmDelete: _confirmSingleDelete,
+                    editMode: _editMode,
+                    selected: _selected,
+                    onToggleSelect: (id) => setState(() {
+                      if (_selected.contains(id)) {
+                        _selected.remove(id);
+                      } else {
+                        _selected.add(id);
+                      }
+                    }),
                   ),
                   _AnnotationsTab(
                     annotations: _bookmarks,
@@ -185,11 +277,63 @@ class _AnnotationsPanelState extends State<AnnotationsPanel>
                         widget.onClose();
                       }
                     },
-                    onLongPress: _confirmDelete,
+                    onLongPress: (a) async {
+                      final confirmed = await _confirmSingleDelete(a);
+                      if (confirmed == true) {
+                        await widget.store.deleteAnnotation(a.id);
+                        await _loadAnnotations();
+                      }
+                    },
+                    onDelete: (a) async {
+                      await widget.store.deleteAnnotation(a.id);
+                      await _loadAnnotations();
+                    },
+                    confirmDelete: _confirmSingleDelete,
                   ),
                 ],
               ),
             ),
+            if (_editMode)
+              SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: _selected.isEmpty ? null : _deleteSelected,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.black87,
+                            side: const BorderSide(color: Colors.black26),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                          child: Text(
+                            _selected.isEmpty
+                                ? 'Delete Selected'
+                                : 'Delete Selected (${_selected.length})',
+                            style: const TextStyle(
+                                fontFamily: 'Literata', fontSize: 13),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: _deleteAllAnnotations,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Colors.red.shade700,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                          child: const Text('Delete All',
+                              style: TextStyle(
+                                  fontFamily: 'Literata', fontSize: 13)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
           ],
         ),
       ),
@@ -209,12 +353,17 @@ class _AnnotationsTab extends StatelessWidget {
   final VoidCallback onClearFilters;
   final void Function(Annotation) onTap;
   final void Function(Annotation) onLongPress;
+  final Future<void> Function(Annotation) onDelete;
+  final Future<bool?> Function(Annotation) confirmDelete;
   final bool showFilters;
   final bool showSections;
   final String emptyText;
   final String? highlightedAnnotationId;
   final bool filterCommentsOnly;
   final VoidCallback onToggleCommentsOnly;
+  final bool editMode;
+  final Set<String> selected;
+  final void Function(String id) onToggleSelect;
 
   const _AnnotationsTab({
     required this.annotations,
@@ -226,22 +375,28 @@ class _AnnotationsTab extends StatelessWidget {
     required this.onClearFilters,
     required this.onTap,
     required this.onLongPress,
+    required this.onDelete,
+    required this.confirmDelete,
     this.showFilters = true,
     this.showSections = true,
     this.emptyText = 'No annotations yet',
     this.highlightedAnnotationId,
     this.filterCommentsOnly = false,
     this.onToggleCommentsOnly = _noOp,
+    this.editMode = false,
+    this.selected = const {},
+    this.onToggleSelect = _noOp2,
   });
 
   static void _noOp() {}
+  static void _noOp2(String _) {}
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (showFilters)
+        if (showFilters && !editMode)
           _IconToggleRow(
             activeFilters: activeFilters,
             filterableTools: filterableTools,
@@ -249,6 +404,18 @@ class _AnnotationsTab extends StatelessWidget {
             onClearFilters: onClearFilters,
             filterCommentsOnly: filterCommentsOnly,
             onToggleCommentsOnly: onToggleCommentsOnly,
+          ),
+        if (showFilters && editMode)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Text(
+              '${selected.length} selected',
+              style: const TextStyle(
+                fontFamily: 'Literata',
+                fontSize: 13,
+                color: Colors.black54,
+              ),
+            ),
           ),
         Expanded(
           child: allAnnotations.isEmpty
@@ -269,7 +436,12 @@ class _AnnotationsTab extends StatelessWidget {
                       toolLabel: toolLabel,
                       onTap: onTap,
                       onLongPress: onLongPress,
+                      onDelete: onDelete,
+                      confirmDelete: confirmDelete,
                       highlightedAnnotationId: highlightedAnnotationId,
+                      editMode: editMode,
+                      selected: selected,
+                      onToggleSelect: onToggleSelect,
                     )
                   : ListView.builder(
                       itemCount: annotations.length,
@@ -277,7 +449,12 @@ class _AnnotationsTab extends StatelessWidget {
                         annotation: annotations[i],
                         onTap: onTap,
                         onLongPress: onLongPress,
+                        onDelete: onDelete,
+                        confirmDelete: confirmDelete,
                         isHighlighted: annotations[i].id == highlightedAnnotationId,
+                        editMode: editMode,
+                        isSelected: selected.contains(annotations[i].id),
+                        onToggleSelect: onToggleSelect,
                       ),
                     ),
         ),
@@ -365,7 +542,8 @@ class _IconToggleRow extends StatelessWidget {
                 borderRadius: BorderRadius.circular(6),
               ),
               child: const Center(
-                child: Icon(Icons.chat_bubble_outline, size: 16, color: Colors.black87),
+                child: Icon(Icons.chat_bubble_outline,
+                    size: 16, color: Colors.black87),
               ),
             ),
           ),
@@ -383,7 +561,12 @@ class _SectionedList extends StatelessWidget {
   final String Function(AnnotationTool) toolLabel;
   final void Function(Annotation) onTap;
   final void Function(Annotation) onLongPress;
+  final Future<void> Function(Annotation) onDelete;
+  final Future<bool?> Function(Annotation) confirmDelete;
   final String? highlightedAnnotationId;
+  final bool editMode;
+  final Set<String> selected;
+  final void Function(String id) onToggleSelect;
 
   const _SectionedList({
     required this.annotations,
@@ -391,8 +574,15 @@ class _SectionedList extends StatelessWidget {
     required this.toolLabel,
     required this.onTap,
     required this.onLongPress,
+    required this.onDelete,
+    required this.confirmDelete,
     this.highlightedAnnotationId,
+    this.editMode = false,
+    this.selected = const {},
+    this.onToggleSelect = _noOp,
   });
+
+  static void _noOp(String _) {}
 
   static const _sectionTitleStyle = TextStyle(
     fontFamily: 'Source Sans 3',
@@ -461,8 +651,13 @@ class _SectionedList extends StatelessWidget {
                         annotation: a,
                         onTap: onTap,
                         onLongPress: onLongPress,
+                        onDelete: onDelete,
+                        confirmDelete: confirmDelete,
                         showToolIcon: true,
                         isHighlighted: a.id == highlightedAnnotationId,
+                        editMode: editMode,
+                        isSelected: selected.contains(a.id),
+                        onToggleSelect: onToggleSelect,
                       ))
                   .toList(),
             ),
@@ -484,7 +679,12 @@ class _SectionedList extends StatelessWidget {
                       annotation: a,
                       onTap: onTap,
                       onLongPress: onLongPress,
+                      onDelete: onDelete,
+                      confirmDelete: confirmDelete,
                       isHighlighted: a.id == highlightedAnnotationId,
+                      editMode: editMode,
+                      isSelected: selected.contains(a.id),
+                      onToggleSelect: onToggleSelect,
                     ))
                 .toList(),
           ),
@@ -496,129 +696,198 @@ class _SectionedList extends StatelessWidget {
 
 // ─── Annotation tile ──────────────────────────────────────────────────────────
 
-class _AnnotationTile extends StatelessWidget {
+class _AnnotationTile extends StatefulWidget {
   final Annotation annotation;
   final void Function(Annotation) onTap;
   final void Function(Annotation) onLongPress;
+  final Future<void> Function(Annotation) onDelete;
+  final Future<bool?> Function(Annotation) confirmDelete;
   final bool showToolIcon;
   final bool isHighlighted;
+  final bool editMode;
+  final bool isSelected;
+  final void Function(String id) onToggleSelect;
 
   const _AnnotationTile({
     required this.annotation,
     required this.onTap,
     required this.onLongPress,
+    required this.onDelete,
+    required this.confirmDelete,
     this.showToolIcon = false,
     this.isHighlighted = false,
+    this.editMode = false,
+    this.isSelected = false,
+    this.onToggleSelect = _noOp,
   });
+
+  static void _noOp(String _) {}
+
+  @override
+  State<_AnnotationTile> createState() => _AnnotationTileState();
+}
+
+class _AnnotationTileState extends State<_AnnotationTile> {
+  bool _noteExpanded = false;
 
   @override
   Widget build(BuildContext context) {
+    final annotation = widget.annotation;
+    final onTap = widget.onTap;
+    final onLongPress = widget.onLongPress;
+    final onDelete = widget.onDelete;
+    final confirmDelete = widget.confirmDelete;
+    final showToolIcon = widget.showToolIcon;
+    final isHighlighted = widget.isHighlighted;
+    final editMode = widget.editMode;
+    final isSelected = widget.isSelected;
+    final onToggleSelect = widget.onToggleSelect;
     final tag = annotation.tag;
     final note = annotation.note;
     final pct = '${(annotation.position * 100).round()}%';
 
-    return Material(
+    Widget tile = Material(
       color: Colors.transparent,
       child: InkWell(
-      onTap: () => onTap(annotation),
-      onLongPress: () => onLongPress(annotation),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Tool icon (Comments section only)
-            if (showToolIcon) ...[
-              ToolIcon(tool: annotation.tool, size: 12),
-              const SizedBox(width: 6),
-            ],
-            // Tag chip (optional)
-            if (tag != null) ...[
-              Chip(
-                label: Text(tag.name),
-                labelStyle: const TextStyle(fontSize: 10),
-                labelPadding: EdgeInsets.zero,
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                side: BorderSide.none,
-                backgroundColor: Colors.black.withValues(alpha: 0.08),
-              ),
-              const SizedBox(width: 8),
-            ],
-            // Body
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    annotation.selectedText,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontFamily: 'Literata',
-                      fontSize: 13,
-                      color: Colors.black87,
+        onTap: editMode
+            ? () => onToggleSelect(annotation.id)
+            : () => onTap(annotation),
+        onLongPress: editMode ? null : () => onLongPress(annotation),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (editMode) ...[
+                Checkbox(
+                  value: isSelected,
+                  onChanged: (_) => onToggleSelect(annotation.id),
+                  activeColor: Colors.black87,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                ),
+                const SizedBox(width: 4),
+              ],
+              // Tool icon (Comments section only)
+              if (showToolIcon) ...[
+                ToolIcon(tool: annotation.tool, size: 12),
+                const SizedBox(width: 6),
+              ],
+              // Tag chip (optional)
+              if (tag != null) ...[
+                Chip(
+                  label: Text(tag.name),
+                  labelStyle: const TextStyle(fontSize: 10),
+                  labelPadding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  side: BorderSide.none,
+                  backgroundColor: Colors.black.withValues(alpha: 0.08),
+                ),
+                const SizedBox(width: 8),
+              ],
+              // Body
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      annotation.selectedText,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontFamily: 'Literata',
+                        fontSize: 13,
+                        color: Colors.black87,
+                      ),
                     ),
-                  ),
-                  if (note != null && note.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    if (isHighlighted)
-                      Container(
-                        margin: const EdgeInsets.only(top: 6, bottom: 4),
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.06),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
+                    if (note != null && note.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      if (isHighlighted || _noteExpanded)
+                        Container(
+                          margin: const EdgeInsets.only(top: 6, bottom: 4),
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.06),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            note,
+                            style: const TextStyle(
+                              fontFamily: 'Source Sans 3',
+                              fontSize: 12,
+                              color: Colors.black87,
+                            ),
+                          ),
+                        )
+                      else
+                        Text(
                           note,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             fontFamily: 'Source Sans 3',
                             fontSize: 12,
-                            color: Colors.black87,
+                            color: Colors.black54,
                           ),
                         ),
-                      )
-                    else
-                      Text(
-                        note,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontFamily: 'Source Sans 3',
-                          fontSize: 12,
-                          color: Colors.black54,
-                        ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Trailing: position % + optional note indicator
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    pct,
+                    style: const TextStyle(
+                      fontFamily: 'Source Sans 3',
+                      fontSize: 11,
+                      color: Colors.black38,
+                    ),
+                  ),
+                  if (note != null && note.isNotEmpty) ...[
+                    const SizedBox(width: 4),
+                    GestureDetector(
+                      onTap: () => setState(() => _noteExpanded = !_noteExpanded),
+                      child: Icon(
+                        _noteExpanded || isHighlighted
+                            ? Icons.chat_bubble
+                            : Icons.chat_bubble_outline,
+                        size: 11,
+                        color: _noteExpanded || isHighlighted
+                            ? Colors.black54
+                            : Colors.black38,
                       ),
+                    ),
                   ],
                 ],
               ),
-            ),
-            const SizedBox(width: 8),
-            // Trailing: position % + optional note indicator
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  pct,
-                  style: const TextStyle(
-                    fontFamily: 'Source Sans 3',
-                    fontSize: 11,
-                    color: Colors.black38,
-                  ),
-                ),
-                if (note != null && note.isNotEmpty) ...[
-                  const SizedBox(width: 4),
-                  const Icon(Icons.chat_bubble_outline,
-                      size: 11, color: Colors.black38),
-                ],
-              ],
-            ),
-          ],
+            ],
+          ),
         ),
       ),
-    ),
     );
+
+    if (!editMode && !isEink) {
+      tile = Dismissible(
+        key: ValueKey(annotation.id),
+        direction: DismissDirection.endToStart,
+        confirmDismiss: (_) => confirmDelete(annotation),
+        onDismissed: (_) => onDelete(annotation),
+        background: Container(
+          color: Colors.red.shade400,
+          alignment: Alignment.centerRight,
+          padding: const EdgeInsets.only(right: 16),
+          child: const Icon(Icons.delete_outline, color: Colors.white),
+        ),
+        child: tile,
+      );
+    }
+
+    return tile;
   }
 }
 
@@ -626,8 +895,14 @@ class _AnnotationTile extends StatelessWidget {
 
 class _Header extends StatelessWidget {
   final VoidCallback onClose;
+  final bool editMode;
+  final VoidCallback onToggleEdit;
 
-  const _Header({required this.onClose});
+  const _Header({
+    required this.onClose,
+    required this.editMode,
+    required this.onToggleEdit,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -646,10 +921,22 @@ class _Header extends StatelessWidget {
               ),
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.close, color: Colors.black87),
-            onPressed: onClose,
+          TextButton(
+            onPressed: onToggleEdit,
+            child: Text(
+              editMode ? 'Done' : 'Edit',
+              style: const TextStyle(
+                fontFamily: 'Literata',
+                color: Colors.black54,
+                fontSize: 14,
+              ),
+            ),
           ),
+          if (!editMode)
+            IconButton(
+              icon: const Icon(Icons.close, color: Colors.black87),
+              onPressed: onClose,
+            ),
         ],
       ),
     );

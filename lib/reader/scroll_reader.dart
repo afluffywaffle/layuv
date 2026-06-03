@@ -14,6 +14,7 @@ class ScrollReader extends StatefulWidget {
   final void Function(ReadingPosition) onPositionChanged;
   final VoidCallback? onDismiss;
   final ValueNotifier<double?> jumpNotifier;
+  final String? emphasizedAnnotationId;
 
   const ScrollReader({
     super.key,
@@ -25,6 +26,7 @@ class ScrollReader extends StatefulWidget {
     required this.onPositionChanged,
     required this.jumpNotifier,
     this.onDismiss,
+    this.emphasizedAnnotationId,
   });
 
   @override
@@ -112,6 +114,7 @@ class _ScrollReaderState extends State<ScrollReader> {
             sliceOffset: 0,
             lineHeight: kReaderTextStyle.height! * kReaderTextStyle.fontSize!,
             maxWidth: textWidth,
+            emphasizedAnnotationId: widget.emphasizedAnnotationId,
           );
           return SingleChildScrollView(
             controller: _scrollController,
@@ -174,7 +177,15 @@ class _ScrollReaderState extends State<ScrollReader> {
                 ...marginIndicators.map((m) => Positioned(
                   left: 4,
                   top: padding + m.topOffset,
-                  child: Text(m.label, style: marginIndicatorStyle),
+                  child: Text(
+                    m.label,
+                    style: m.emphasized
+                        ? marginIndicatorStyle.copyWith(
+                            color: const Color(0xCC000000),
+                            fontSize: 13,
+                          )
+                        : marginIndicatorStyle,
+                  ),
                 )),
               ],
             ),
