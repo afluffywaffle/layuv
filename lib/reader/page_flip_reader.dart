@@ -82,7 +82,9 @@ class _PageFlipReaderState extends State<PageFlipReader> {
       return const [(text: '', offset: 0)];
     }
 
-    final colWidth = widget.twoColumn ? (maxWidth - 24) / 2 : maxWidth;
+    final colWidth = (widget.twoColumn && (maxWidth - 24) / 2 >= 280)
+        ? (maxWidth - 24) / 2
+        : maxWidth;
     final pages = <_Page>[];
     int start = 0;
 
