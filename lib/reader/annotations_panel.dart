@@ -25,14 +25,14 @@ class _AnnotationsPanelState extends State<AnnotationsPanel>
 
   List<Annotation> _annotations = [];
   Set<AnnotationTool> _activeFilters = {};
+  String? _highlightedAnnotationId;
+  bool _filterCommentsOnly = false;
 
   static const _filterableTools = [
     AnnotationTool.highlight,
     AnnotationTool.underline,
     AnnotationTool.doubleUnderline,
     AnnotationTool.strikethrough,
-    AnnotationTool.comment,
-    AnnotationTool.inkAnnotation,
   ];
 
   @override
@@ -47,15 +47,26 @@ class _AnnotationsPanelState extends State<AnnotationsPanel>
     if (mounted) setState(() => _annotations = list);
   }
 
+  List<Annotation> get _bookmarks =>
+      _annotations.where((a) => a.tool == AnnotationTool.bookmark).toList();
+
   List<Annotation> get _filtered {
-    if (_activeFilters.isEmpty) return _annotations;
-    return _annotations.where((a) => _activeFilters.contains(a.tool)).toList();
+    var list = _annotations
+        .where((a) => a.tool != AnnotationTool.bookmark)
+        .toList();
+    if (_activeFilters.isNotEmpty) {
+      list = list.where((a) => _activeFilters.contains(a.tool)).toList();
+    }
+    if (_filterCommentsOnly) {
+      list = list.where((a) => a.note != null && a.note!.isNotEmpty).toList();
+    }
+    return list;
   }
 
   String _toolLabel(AnnotationTool tool) => switch (tool) {
         AnnotationTool.highlight => 'Highlight',
         AnnotationTool.underline => 'Underline',
-        AnnotationTool.doubleUnderline => 'Double',
+        AnnotationTool.doubleUnderline => 'Double Underline',
         AnnotationTool.strikethrough => 'Strikethrough',
         AnnotationTool.comment => 'Comment',
         AnnotationTool.inkAnnotation => 'Ink',
@@ -124,27 +135,58 @@ class _AnnotationsPanelState extends State<AnnotationsPanel>
                 children: [
                   _AnnotationsTab(
                     annotations: _filtered,
-                    allAnnotations: _annotations,
+                    allAnnotations: _annotations
+                        .where((a) => a.tool != AnnotationTool.bookmark)
+                        .toList(),
                     activeFilters: _activeFilters,
                     filterableTools: _filterableTools,
                     toolLabel: _toolLabel,
-                    onFilterChanged: (tool, selected) {
+                    onFilterToggle: (tool) {
                       setState(() {
-                        if (selected) {
-                          _activeFilters.add(tool);
-                        } else {
+                        if (_activeFilters.contains(tool)) {
                           _activeFilters.remove(tool);
+                        } else {
+                          _activeFilters.add(tool);
                         }
                       });
                     },
-                    onClearFilters: () => setState(() => _activeFilters.clear()),
+                    onClearFilters: () => setState(() {
+                      _activeFilters.clear();
+                      _filterCommentsOnly = false;
+                    }),
+                    filterCommentsOnly: _filterCommentsOnly,
+                    onToggleCommentsOnly: () =>
+                        setState(() => _filterCommentsOnly = !_filterCommentsOnly),
+                    highlightedAnnotationId: _highlightedAnnotationId,
                     onTap: (a) {
                       widget.onJumpTo(a.position);
-                      widget.onClose();
+                      if (a.note != null && a.note!.isNotEmpty) {
+                        setState(() => _highlightedAnnotationId = a.id);
+                      } else {
+                        widget.onClose();
+                      }
                     },
                     onLongPress: _confirmDelete,
                   ),
-                  const Center(child: Text('Coming soon')),
+                  _AnnotationsTab(
+                    annotations: _bookmarks,
+                    allAnnotations: _bookmarks,
+                    activeFilters: const {},
+                    filterableTools: const [],
+                    toolLabel: _toolLabel,
+                    onFilterToggle: (_) {},
+                    onClearFilters: () {},
+                    showFilters: false,
+                    showSections: false,
+                    emptyText: 'No bookmarks yet',
+                    onTap: (a) {
+                      widget.onJumpTo(a.position);
+                      if (a.note == null || a.note!.isEmpty) {
+                        widget.onClose();
+                      }
+                    },
+                    onLongPress: _confirmDelete,
+                  ),
                 ],
               ),
             ),
@@ -163,10 +205,16 @@ class _AnnotationsTab extends StatelessWidget {
   final Set<AnnotationTool> activeFilters;
   final List<AnnotationTool> filterableTools;
   final String Function(AnnotationTool) toolLabel;
-  final void Function(AnnotationTool, bool) onFilterChanged;
+  final void Function(AnnotationTool) onFilterToggle;
   final VoidCallback onClearFilters;
   final void Function(Annotation) onTap;
   final void Function(Annotation) onLongPress;
+  final bool showFilters;
+  final bool showSections;
+  final String emptyText;
+  final String? highlightedAnnotationId;
+  final bool filterCommentsOnly;
+  final VoidCallback onToggleCommentsOnly;
 
   const _AnnotationsTab({
     required this.annotations,
@@ -174,114 +222,274 @@ class _AnnotationsTab extends StatelessWidget {
     required this.activeFilters,
     required this.filterableTools,
     required this.toolLabel,
-    required this.onFilterChanged,
+    required this.onFilterToggle,
     required this.onClearFilters,
     required this.onTap,
     required this.onLongPress,
+    this.showFilters = true,
+    this.showSections = true,
+    this.emptyText = 'No annotations yet',
+    this.highlightedAnnotationId,
+    this.filterCommentsOnly = false,
+    this.onToggleCommentsOnly = _noOp,
   });
+
+  static void _noOp() {}
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _FilterRow(
-          activeFilters: activeFilters,
-          filterableTools: filterableTools,
-          toolLabel: toolLabel,
-          onFilterChanged: onFilterChanged,
-          onClearFilters: onClearFilters,
-        ),
+        if (showFilters)
+          _IconToggleRow(
+            activeFilters: activeFilters,
+            filterableTools: filterableTools,
+            onFilterToggle: onFilterToggle,
+            onClearFilters: onClearFilters,
+            filterCommentsOnly: filterCommentsOnly,
+            onToggleCommentsOnly: onToggleCommentsOnly,
+          ),
         Expanded(
           child: allAnnotations.isEmpty
-              ? const Center(
+              ? Center(
                   child: Text(
-                    'No annotations yet',
-                    style: TextStyle(
+                    emptyText,
+                    style: const TextStyle(
                       fontFamily: 'Literata',
                       fontSize: 14,
                       color: Colors.black38,
                     ),
                   ),
                 )
-              : ListView.builder(
-                  itemCount: annotations.length,
-                  itemBuilder: (_, i) => _AnnotationTile(
-                    annotation: annotations[i],
-                    onTap: onTap,
-                    onLongPress: onLongPress,
-                  ),
-                ),
+              : showSections
+                  ? _SectionedList(
+                      annotations: annotations,
+                      filterableTools: filterableTools,
+                      toolLabel: toolLabel,
+                      onTap: onTap,
+                      onLongPress: onLongPress,
+                      highlightedAnnotationId: highlightedAnnotationId,
+                    )
+                  : ListView.builder(
+                      itemCount: annotations.length,
+                      itemBuilder: (_, i) => _AnnotationTile(
+                        annotation: annotations[i],
+                        onTap: onTap,
+                        onLongPress: onLongPress,
+                        isHighlighted: annotations[i].id == highlightedAnnotationId,
+                      ),
+                    ),
         ),
       ],
     );
   }
 }
 
-// ─── Filter chips row ─────────────────────────────────────────────────────────
+// ─── Icon toggle row ──────────────────────────────────────────────────────────
 
-class _FilterRow extends StatelessWidget {
+class _IconToggleRow extends StatelessWidget {
   final Set<AnnotationTool> activeFilters;
   final List<AnnotationTool> filterableTools;
-  final String Function(AnnotationTool) toolLabel;
-  final void Function(AnnotationTool, bool) onFilterChanged;
+  final void Function(AnnotationTool) onFilterToggle;
   final VoidCallback onClearFilters;
+  final bool filterCommentsOnly;
+  final VoidCallback onToggleCommentsOnly;
 
-  const _FilterRow({
+  const _IconToggleRow({
     required this.activeFilters,
     required this.filterableTools,
-    required this.toolLabel,
-    required this.onFilterChanged,
+    required this.onFilterToggle,
     required this.onClearFilters,
+    required this.filterCommentsOnly,
+    required this.onToggleCommentsOnly,
   });
 
   @override
   Widget build(BuildContext context) {
-    final allSelected = activeFilters.isEmpty;
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
+    final allActive = activeFilters.isEmpty;
+    return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: Row(
         children: [
-          FilterChip(
-            label: const Text('All'),
-            selected: allSelected,
-            onSelected: (_) => onClearFilters(),
-            labelStyle: TextStyle(
-              fontFamily: 'Literata',
-              fontSize: 12,
-              color: allSelected ? Colors.black87 : Colors.black54,
-            ),
-            visualDensity: VisualDensity.compact,
-            showCheckmark: false,
-            selectedColor: Colors.black12,
-            backgroundColor: Colors.transparent,
-            side: BorderSide(color: allSelected ? Colors.black38 : Colors.black12),
-          ),
-          const SizedBox(width: 6),
-          ...filterableTools.map((tool) {
-            final selected = activeFilters.contains(tool);
-            return Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: FilterChip(
-                label: Text(toolLabel(tool)),
-                selected: selected,
-                onSelected: (v) => onFilterChanged(tool, v),
-                labelStyle: TextStyle(
-                  fontFamily: 'Literata',
-                  fontSize: 12,
-                  color: selected ? Colors.black87 : Colors.black54,
+          // "All" toggle
+          GestureDetector(
+            onTap: onClearFilters,
+            child: Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: allActive ? Colors.black12 : Colors.transparent,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: const Center(
+                child: Text(
+                  'All',
+                  style: TextStyle(
+                    fontFamily: 'Literata',
+                    fontSize: 10,
+                    color: Colors.black87,
+                  ),
                 ),
-                visualDensity: VisualDensity.compact,
-                showCheckmark: false,
-                selectedColor: Colors.black12,
-                backgroundColor: Colors.transparent,
-                side: BorderSide(color: selected ? Colors.black38 : Colors.black12),
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          // Tool toggles
+          ...filterableTools.map((tool) {
+            final active = activeFilters.contains(tool);
+            return Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: GestureDetector(
+                onTap: () => onFilterToggle(tool),
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: active ? Colors.black12 : Colors.transparent,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Center(child: ToolIcon(tool: tool, size: 16)),
+                ),
               ),
             );
           }),
+          // Comments-only toggle
+          GestureDetector(
+            onTap: onToggleCommentsOnly,
+            child: Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: filterCommentsOnly ? Colors.black12 : Colors.transparent,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: const Center(
+                child: Icon(Icons.chat_bubble_outline, size: 16, color: Colors.black87),
+              ),
+            ),
+          ),
         ],
       ),
+    );
+  }
+}
+
+// ─── Sectioned list ───────────────────────────────────────────────────────────
+
+class _SectionedList extends StatelessWidget {
+  final List<Annotation> annotations;
+  final List<AnnotationTool> filterableTools;
+  final String Function(AnnotationTool) toolLabel;
+  final void Function(Annotation) onTap;
+  final void Function(Annotation) onLongPress;
+  final String? highlightedAnnotationId;
+
+  const _SectionedList({
+    required this.annotations,
+    required this.filterableTools,
+    required this.toolLabel,
+    required this.onTap,
+    required this.onLongPress,
+    this.highlightedAnnotationId,
+  });
+
+  static const _sectionTitleStyle = TextStyle(
+    fontFamily: 'Source Sans 3',
+    fontSize: 13,
+    fontWeight: FontWeight.bold,
+    color: Colors.black87,
+  );
+
+  static const _sectionCountStyle = TextStyle(
+    fontFamily: 'Source Sans 3',
+    fontSize: 11,
+    color: Colors.black45,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    // Group by tool (excluding comment tool), preserving document order
+    final grouped = <AnnotationTool, List<Annotation>>{};
+    for (final a in annotations) {
+      if (a.tool != AnnotationTool.comment) {
+        (grouped[a.tool] ??= []).add(a);
+      }
+    }
+
+    // Tool sections in filterableTools order, skipping comment and empty groups
+    final toolSections = filterableTools
+        .where((t) => t != AnnotationTool.comment && grouped.containsKey(t))
+        .toList();
+
+    // Comments section: all annotations with a non-empty note, sorted by position
+    final commented = annotations
+        .where((a) => a.note != null && a.note!.isNotEmpty)
+        .toList();
+
+    final totalSections = toolSections.length + (commented.isNotEmpty ? 1 : 0);
+
+    if (totalSections == 0) {
+      return const Center(
+        child: Text(
+          'No annotations match filter',
+          style: TextStyle(
+            fontFamily: 'Literata',
+            fontSize: 14,
+            color: Colors.black38,
+          ),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      itemCount: totalSections,
+      itemBuilder: (_, i) {
+        // Comments section is always last
+        if (i == toolSections.length) {
+          return Material(
+            color: const Color(0xFFF5F0E8),
+            child: ExpansionTile(
+              leading: const Icon(Icons.chat_bubble_outline,
+                  size: 16, color: Colors.black87),
+              title: const Text('Comments', style: _sectionTitleStyle),
+              trailing: Text('${commented.length}', style: _sectionCountStyle),
+              initiallyExpanded: true,
+              tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+              children: commented
+                  .map((a) => _AnnotationTile(
+                        annotation: a,
+                        onTap: onTap,
+                        onLongPress: onLongPress,
+                        showToolIcon: true,
+                        isHighlighted: a.id == highlightedAnnotationId,
+                      ))
+                  .toList(),
+            ),
+          );
+        }
+
+        final tool = toolSections[i];
+        final items = grouped[tool]!;
+        return Material(
+          color: const Color(0xFFF5F0E8),
+          child: ExpansionTile(
+            leading: ToolIcon(tool: tool, size: 16),
+            title: Text(toolLabel(tool), style: _sectionTitleStyle),
+            trailing: Text('${items.length}', style: _sectionCountStyle),
+            initiallyExpanded: true,
+            tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+            children: items
+                .map((a) => _AnnotationTile(
+                      annotation: a,
+                      onTap: onTap,
+                      onLongPress: onLongPress,
+                      isHighlighted: a.id == highlightedAnnotationId,
+                    ))
+                .toList(),
+          ),
+        );
+      },
     );
   }
 }
@@ -292,11 +500,15 @@ class _AnnotationTile extends StatelessWidget {
   final Annotation annotation;
   final void Function(Annotation) onTap;
   final void Function(Annotation) onLongPress;
+  final bool showToolIcon;
+  final bool isHighlighted;
 
   const _AnnotationTile({
     required this.annotation,
     required this.onTap,
     required this.onLongPress,
+    this.showToolIcon = false,
+    this.isHighlighted = false,
   });
 
   @override
@@ -305,7 +517,9 @@ class _AnnotationTile extends StatelessWidget {
     final note = annotation.note;
     final pct = '${(annotation.position * 100).round()}%';
 
-    return InkWell(
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
       onTap: () => onTap(annotation),
       onLongPress: () => onLongPress(annotation),
       child: Padding(
@@ -313,26 +527,24 @@ class _AnnotationTile extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Leading: tool icon + optional tag chip
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                ToolIcon(tool: annotation.tool, size: 16),
-                if (tag != null) ...[
-                  const SizedBox(height: 4),
-                  Chip(
-                    label: Text(tag.name),
-                    labelStyle: const TextStyle(fontSize: 10),
-                    labelPadding: EdgeInsets.zero,
-                    visualDensity: VisualDensity.compact,
-                    padding: EdgeInsets.zero,
-                    side: BorderSide.none,
-                    backgroundColor: Colors.black.withValues(alpha: 0.08),
-                  ),
-                ],
-              ],
-            ),
-            const SizedBox(width: 12),
+            // Tool icon (Comments section only)
+            if (showToolIcon) ...[
+              ToolIcon(tool: annotation.tool, size: 12),
+              const SizedBox(width: 6),
+            ],
+            // Tag chip (optional)
+            if (tag != null) ...[
+              Chip(
+                label: Text(tag.name),
+                labelStyle: const TextStyle(fontSize: 10),
+                labelPadding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                side: BorderSide.none,
+                backgroundColor: Colors.black.withValues(alpha: 0.08),
+              ),
+              const SizedBox(width: 8),
+            ],
             // Body
             Expanded(
               child: Column(
@@ -348,35 +560,64 @@ class _AnnotationTile extends StatelessWidget {
                       color: Colors.black87,
                     ),
                   ),
-                  if (note != null) ...[
+                  if (note != null && note.isNotEmpty) ...[
                     const SizedBox(height: 2),
-                    Text(
-                      note,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontFamily: 'Source Sans 3',
-                        fontSize: 12,
-                        color: Colors.black54,
+                    if (isHighlighted)
+                      Container(
+                        margin: const EdgeInsets.only(top: 6, bottom: 4),
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.06),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          note,
+                          style: const TextStyle(
+                            fontFamily: 'Source Sans 3',
+                            fontSize: 12,
+                            color: Colors.black87,
+                          ),
+                        ),
+                      )
+                    else
+                      Text(
+                        note,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontFamily: 'Source Sans 3',
+                          fontSize: 12,
+                          color: Colors.black54,
+                        ),
                       ),
-                    ),
                   ],
                 ],
               ),
             ),
             const SizedBox(width: 8),
-            // Trailing: position
-            Text(
-              pct,
-              style: const TextStyle(
-                fontFamily: 'Source Sans 3',
-                fontSize: 11,
-                color: Colors.black38,
-              ),
+            // Trailing: position % + optional note indicator
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  pct,
+                  style: const TextStyle(
+                    fontFamily: 'Source Sans 3',
+                    fontSize: 11,
+                    color: Colors.black38,
+                  ),
+                ),
+                if (note != null && note.isNotEmpty) ...[
+                  const SizedBox(width: 4),
+                  const Icon(Icons.chat_bubble_outline,
+                      size: 11, color: Colors.black38),
+                ],
+              ],
             ),
           ],
         ),
       ),
+    ),
     );
   }
 }
@@ -396,7 +637,7 @@ class _Header extends StatelessWidget {
         children: [
           const Expanded(
             child: Text(
-              'Annotations',
+              'Annotations / Bookmarks',
               style: TextStyle(
                 fontFamily: 'Source Sans 3',
                 fontWeight: FontWeight.bold,

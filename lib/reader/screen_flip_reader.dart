@@ -12,6 +12,7 @@ class ScreenFlipReader extends StatefulWidget {
   final void Function(String selectedText, String prefix, String suffix, Offset anchor) onSelection;
   final void Function(Annotation) onAnnotationTap;
   final void Function(ReadingPosition) onPositionChanged;
+  final ValueNotifier<double?> jumpNotifier;
 
   const ScreenFlipReader({
     super.key,
@@ -21,6 +22,7 @@ class ScreenFlipReader extends StatefulWidget {
     required this.onSelection,
     required this.onAnnotationTap,
     required this.onPositionChanged,
+    required this.jumpNotifier,
   });
 
   @override
@@ -37,13 +39,26 @@ class _ScreenFlipReaderState extends State<ScreenFlipReader> {
     final initialOffset = widget.savedPosition?.scrollOffset ?? 0.0;
     _scrollController = ScrollController(initialScrollOffset: initialOffset);
     _scrollController.addListener(_onScroll);
+    widget.jumpNotifier.addListener(_onJumpRequested);
   }
 
   @override
   void dispose() {
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
+    widget.jumpNotifier.removeListener(_onJumpRequested);
     super.dispose();
+  }
+
+  void _onJumpRequested() {
+    final fraction = widget.jumpNotifier.value;
+    if (fraction == null) return;
+    final max = _scrollController.position.maxScrollExtent;
+    _scrollController.animateTo(
+      max * fraction,
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeInOut,
+    );
   }
 
   void _onScroll() {

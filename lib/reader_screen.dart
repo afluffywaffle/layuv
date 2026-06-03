@@ -40,6 +40,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   bool _showAnnotationsPanel = false;
   double _panelWidth = 320.0;
   double _currentFraction = 0.0;
+  final _jumpNotifier = ValueNotifier<double?>(null);
 
   @override
   void initState() {
@@ -55,6 +56,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _positionSaveTimer?.cancel();
     _toolbarDebounce?.cancel();
     _toolbarOverlay?.remove();
+    _jumpNotifier.dispose();
     super.dispose();
   }
 
@@ -324,7 +326,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 clipBehavior: Clip.antiAlias,
                 child: AnnotationsPanel(
                   store: _store,
-                  onJumpTo: (pos) {},
+                  onJumpTo: (pos) {
+                    _jumpNotifier.value = pos;
+                    Future.microtask(() => _jumpNotifier.value = null);
+                  },
                   onClose: _toggleAnnotationsPanel,
                 ),
               ),
@@ -421,6 +426,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     existing: a,
                   ),
                   onPositionChanged: _onPositionChanged,
+                  jumpNotifier: _jumpNotifier,
                 );
               case ReadingMode.screenFlip:
                 reader = ScreenFlipReader(
@@ -435,6 +441,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     existing: a,
                   ),
                   onPositionChanged: _onPositionChanged,
+                  jumpNotifier: _jumpNotifier,
                 );
               case ReadingMode.pageFlip:
                 reader = PageFlipReader(
@@ -449,6 +456,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     existing: a,
                   ),
                   onPositionChanged: _onPositionChanged,
+                  jumpNotifier: _jumpNotifier,
                 );
             }
             return Stack(

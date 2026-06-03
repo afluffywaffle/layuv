@@ -13,6 +13,7 @@ class ScrollReader extends StatefulWidget {
   final void Function(Annotation) onAnnotationTap;
   final void Function(ReadingPosition) onPositionChanged;
   final VoidCallback? onDismiss;
+  final ValueNotifier<double?> jumpNotifier;
 
   const ScrollReader({
     super.key,
@@ -22,6 +23,7 @@ class ScrollReader extends StatefulWidget {
     required this.onSelection,
     required this.onAnnotationTap,
     required this.onPositionChanged,
+    required this.jumpNotifier,
     this.onDismiss,
   });
 
@@ -40,13 +42,26 @@ class _ScrollReaderState extends State<ScrollReader> {
     final initialOffset = widget.savedPosition?.scrollOffset ?? 0.0;
     _scrollController = ScrollController(initialScrollOffset: initialOffset);
     _scrollController.addListener(_onScroll);
+    widget.jumpNotifier.addListener(_onJumpRequested);
   }
 
   @override
   void dispose() {
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
+    widget.jumpNotifier.removeListener(_onJumpRequested);
     super.dispose();
+  }
+
+  void _onJumpRequested() {
+    final fraction = widget.jumpNotifier.value;
+    if (fraction == null) return;
+    final max = _scrollController.position.maxScrollExtent;
+    _scrollController.animateTo(
+      max * fraction,
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeInOut,
+    );
   }
 
   Offset _anchorForSelection(TextSelection selection) {

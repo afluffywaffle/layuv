@@ -14,6 +14,7 @@ class PageFlipReader extends StatefulWidget {
   final void Function(String selectedText, String prefix, String suffix, Offset anchor) onSelection;
   final void Function(Annotation) onAnnotationTap;
   final void Function(ReadingPosition) onPositionChanged;
+  final ValueNotifier<double?> jumpNotifier;
 
   const PageFlipReader({
     super.key,
@@ -23,6 +24,7 @@ class PageFlipReader extends StatefulWidget {
     required this.onSelection,
     required this.onAnnotationTap,
     required this.onPositionChanged,
+    required this.jumpNotifier,
   });
 
   @override
@@ -47,12 +49,26 @@ class _PageFlipReaderState extends State<PageFlipReader> {
     final initialPage = widget.savedPosition?.page ?? 0;
     _currentPage = initialPage;
     _pageController = PageController(initialPage: initialPage);
+    widget.jumpNotifier.addListener(_onJumpRequested);
   }
 
   @override
   void dispose() {
     _pageController.dispose();
+    widget.jumpNotifier.removeListener(_onJumpRequested);
     super.dispose();
+  }
+
+  void _onJumpRequested() {
+    final fraction = widget.jumpNotifier.value;
+    if (fraction == null) return;
+    final page = ((fraction * (_pages.length - 1)).round())
+        .clamp(0, _pages.length - 1);
+    _pageController.animateToPage(
+      page,
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeInOut,
+    );
   }
 
   List<_Page> _paginate(String text, double maxWidth, double maxHeight) {
