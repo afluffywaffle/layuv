@@ -51,7 +51,14 @@ class AppBarPill extends StatelessWidget {
     return Stack(
       clipBehavior: Clip.none,
       children: [
-        ToolIcon(tool: tool, size: 20),
+        SizedBox(
+          width: 20,
+          height: 20,
+          child: Align(
+            alignment: Alignment.center,
+            child: ToolIcon(tool: tool, size: 20),
+          ),
+        ),
         Positioned(
           right: -4,
           bottom: -4,
@@ -140,13 +147,15 @@ class AppBarPill extends StatelessWidget {
     );
 
     // Subtle cross-fade when lock slot appears/disappears on non-e-ink.
-    if (isEink) return pill;
+    if (isEink) return IntrinsicWidth(child: pill);
 
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 150),
-      child: KeyedSubtree(
-        key: ValueKey(locked),
-        child: pill,
+    return IntrinsicWidth(
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 150),
+        child: KeyedSubtree(
+          key: ValueKey(locked),
+          child: pill,
+        ),
       ),
     );
   }
@@ -194,27 +203,67 @@ class ToolIcon extends StatelessWidget {
           ),
         );
       case AnnotationTool.underline:
-        return Text('U', style: base);
+        return SizedBox(
+          width: size,
+          height: size,
+          child: Stack(
+            clipBehavior: Clip.hardEdge,
+            children: [
+              Center(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text('U', style: base.copyWith(decoration: TextDecoration.none)),
+                ),
+              ),
+              Positioned(bottom: 1, left: 2, right: 2, child: Container(height: 1, color: Colors.black87)),
+            ],
+          ),
+        );
       case AnnotationTool.doubleUnderline:
-        return Text('U',
-            style: base.copyWith(
-              decoration: TextDecoration.underline,
-              decorationStyle: TextDecorationStyle.double,
-              decorationColor: Colors.black87,
-            ));
+        return SizedBox(
+          width: size,
+          height: size,
+          child: Stack(
+            clipBehavior: Clip.hardEdge,
+            children: [
+              Center(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text('U', style: base.copyWith(decoration: TextDecoration.none)),
+                ),
+              ),
+              Positioned(bottom: 3, left: 2, right: 2, child: Container(height: 1, color: Colors.black87)),
+              Positioned(bottom: 1, left: 2, right: 2, child: Container(height: 1, color: Colors.black87)),
+            ],
+          ),
+        );
       case AnnotationTool.strikethrough:
-        return Text('S',
-            style: base.copyWith(
-              decoration: TextDecoration.lineThrough,
-              decorationColor: Colors.black87,
-            ));
+        return SizedBox(
+          width: size,
+          height: size,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text('S',
+                style: base.copyWith(
+                  decoration: TextDecoration.lineThrough,
+                  decorationColor: Colors.black87,
+                )),
+          ),
+        );
       case AnnotationTool.wavyUnderline:
-        return Text('W',
-            style: base.copyWith(
-              decoration: TextDecoration.underline,
-              decorationStyle: TextDecorationStyle.wavy,
-              decorationColor: Colors.black87,
-            ));
+        return SizedBox(
+          width: size,
+          height: size,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text('W',
+                style: base.copyWith(
+                  decoration: TextDecoration.underline,
+                  decorationStyle: TextDecorationStyle.wavy,
+                  decorationColor: Colors.black87,
+                )),
+          ),
+        );
       case AnnotationTool.bookmark:
         return Icon(Icons.bookmark_border, size: size, color: Colors.black87);
       case AnnotationTool.comment:

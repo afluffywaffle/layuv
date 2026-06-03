@@ -34,7 +34,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   AnnotationTool? _lockedTool;
   Timer? _toolbarDebounce;
   OverlayEntry? _toolbarOverlay;
-  DateTime _lastSelectionTime = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _dismissToolbarOnTapOutside = true;
 
   @override
   void initState() {
@@ -64,6 +64,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     setState(() {
       _annotations = annotations;
       _savedPosition = position;
+      _dismissToolbarOnTapOutside = prefs.getBool('dismissToolbarOnTapOutside') ?? true;
       if (!_modeSetByUser) {
         final saved = prefs.getString('reading_mode');
         if (saved != null) {
@@ -186,26 +187,25 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   void _onSelection(String selectedText, String prefix, String suffix, Offset anchor) {
+    _toolbarDebounce?.cancel();
     if (selectedText.trim().isEmpty) {
       _dismissToolbar();
       return;
     }
-
-    final now = DateTime.now();
-    if (now.difference(_lastSelectionTime).inMilliseconds < 500) return;
-    _lastSelectionTime = now;
 
     if (_lockedTool != null) {
       _onToolSelected(_lockedTool!, selectedText, prefix, suffix);
       return;
     }
 
-    _showToolbarOverlay(
-      anchor: anchor,
-      selectedText: selectedText,
-      prefix: prefix,
-      suffix: suffix,
-    );
+    _toolbarDebounce = Timer(const Duration(milliseconds: 300), () {
+      _showToolbarOverlay(
+        anchor: anchor,
+        selectedText: selectedText,
+        prefix: prefix,
+        suffix: suffix,
+      );
+    });
   }
 
   void _showToolbarOverlay({
@@ -221,6 +221,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       builder: (ctx) => AnnotationToolbar(
         anchors: anchors,
         onDismiss: _dismissToolbar,
+        dismissOnTapOutside: _dismissToolbarOnTapOutside,
         onToolSelected: (tool) {
           _dismissToolbar();
           _onToolSelected(tool, selectedText, prefix, suffix);
@@ -310,6 +311,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   annotations: _annotations,
                   savedPosition: _savedPosition,
                   onSelection: _onSelection,
+                  onDismiss: _dismissToolbar,
                   onAnnotationTap: (a) => _openAnnotationPanel(
                     selectedText: a.selectedText,
                     prefix: a.prefix,
