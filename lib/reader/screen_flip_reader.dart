@@ -47,10 +47,14 @@ class _ScreenFlipReaderState extends State<ScreenFlipReader> {
   }
 
   void _onScroll() {
+    final max = _scrollController.position.maxScrollExtent;
     widget.onPositionChanged(ReadingPosition(
       mode: ReadingMode.screenFlip,
       page: 0,
       scrollOffset: _scrollController.offset,
+      fraction: max > 0
+          ? (_scrollController.offset / max).clamp(0.0, 1.0)
+          : 0.0,
     ));
   }
 

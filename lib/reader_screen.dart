@@ -13,6 +13,8 @@ import 'reader/screen_flip_reader.dart';
 import 'reader/page_flip_reader.dart';
 import 'reader/annotation_toolbar.dart';
 import 'reader/annotation_panel.dart';
+import 'reader/annotations_panel.dart';
+import 'utils/platform_utils.dart';
 
 class ReaderScreen extends StatefulWidget {
   final String filePath;
@@ -35,6 +37,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
   Timer? _toolbarDebounce;
   OverlayEntry? _toolbarOverlay;
   bool _dismissToolbarOnTapOutside = true;
+  bool _showAnnotationsPanel = false;
+  double _panelWidth = 320.0;
+  double _currentFraction = 0.0;
 
   @override
   void initState() {
@@ -91,6 +96,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   void _onPositionChanged(ReadingPosition position) {
+    _currentFraction = position.fraction;
     _positionSaveTimer?.cancel();
     _positionSaveTimer = Timer(
       const Duration(seconds: 1),
@@ -182,6 +188,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       suffix: suffix,
       tool: tool,
       timestamp: DateTime.now(),
+      position: _currentFraction,
     ));
     await _reloadAnnotations();
   }
@@ -233,6 +240,99 @@ class _ReaderScreenState extends State<ReaderScreen> {
       ),
     );
     Overlay.of(context).insert(_toolbarOverlay!);
+  }
+
+  void _toggleAnnotationsPanel() {
+    setState(() => _showAnnotationsPanel = !_showAnnotationsPanel);
+  }
+
+  Widget _buildAnnotationsPanel() {
+    if (isEink) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => Scaffold(
+              body: AnnotationsPanel(
+                store: _store,
+                onJumpTo: (pos) {},
+                onClose: () {
+                  Navigator.pop(context);
+                  setState(() => _showAnnotationsPanel = false);
+                },
+              ),
+            ),
+          ),
+        ).then((_) => setState(() => _showAnnotationsPanel = false));
+      });
+      return const SizedBox.shrink();
+    }
+
+    return Positioned(
+      top: 16,
+      right: 16,
+      bottom: 16,
+      width: _panelWidth,
+      child: Row(
+        children: [
+          GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onHorizontalDragUpdate: (details) {
+              setState(() {
+                _panelWidth = (_panelWidth - details.delta.dx).clamp(240.0, 800.0);
+              });
+            },
+            child: MouseRegion(
+              cursor: SystemMouseCursors.resizeLeftRight,
+              child: SizedBox(
+                width: 8,
+                height: double.infinity,
+                child: Center(
+                  child: Container(
+                    width: 2,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: Colors.black12,
+                      borderRadius: BorderRadius.circular(1),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.12),
+                    blurRadius: 24,
+                    offset: const Offset(0, 4),
+                  ),
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.06),
+                    blurRadius: 6,
+                    offset: const Offset(0, 1),
+                  ),
+                ],
+              ),
+              child: Material(
+                elevation: 0,
+                color: const Color(0xFFF5F0E8),
+                borderRadius: BorderRadius.circular(16),
+                clipBehavior: Clip.antiAlias,
+                child: AnnotationsPanel(
+                  store: _store,
+                  onJumpTo: (pos) {},
+                  onClose: _toggleAnnotationsPanel,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _dismissToolbar() {
@@ -290,6 +390,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 onClose: _confirmClose,
                 onModeSelected: _setReadingMode,
                 onUnlock: () => setState(() => _lockedTool = null),
+                onAnnotations: _toggleAnnotationsPanel,
               ),
             ),
           ],
@@ -304,9 +405,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
               return Center(child: Text('Error: ${snapshot.error}'));
             }
             final content = snapshot.data ?? '';
+            Widget reader;
             switch (_readingMode) {
               case ReadingMode.scroll:
-                return ScrollReader(
+                reader = ScrollReader(
                   content: content,
                   annotations: _annotations,
                   savedPosition: _savedPosition,
@@ -321,7 +423,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   onPositionChanged: _onPositionChanged,
                 );
               case ReadingMode.screenFlip:
-                return ScreenFlipReader(
+                reader = ScreenFlipReader(
                   content: content,
                   annotations: _annotations,
                   savedPosition: _savedPosition,
@@ -335,7 +437,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   onPositionChanged: _onPositionChanged,
                 );
               case ReadingMode.pageFlip:
-                return PageFlipReader(
+                reader = PageFlipReader(
                   content: content,
                   annotations: _annotations,
                   savedPosition: _savedPosition,
@@ -349,6 +451,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   onPositionChanged: _onPositionChanged,
                 );
             }
+            return Stack(
+              children: [
+                reader,
+                if (_showAnnotationsPanel) _buildAnnotationsPanel(),
+              ],
+            );
           },
         ),
       ),

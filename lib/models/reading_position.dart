@@ -4,11 +4,13 @@ class ReadingPosition {
   final ReadingMode mode;
   final int page;
   final double scrollOffset;
+  final double fraction;
 
   const ReadingPosition({
     required this.mode,
     required this.page,
     required this.scrollOffset,
+    this.fraction = 0.0,
   });
 
   Map<String, dynamic> toJson() => {

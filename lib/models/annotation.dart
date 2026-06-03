@@ -24,6 +24,7 @@ class Annotation {
   final String? note;
   final AnnotationTag? tag;
   final DateTime timestamp;
+  final double position;
 
   Annotation({
     required this.id,
@@ -34,12 +35,14 @@ class Annotation {
     this.note,
     this.tag,
     required this.timestamp,
+    this.position = 0.0,
   });
 
   Annotation copyWith({
     String? note,
     AnnotationTag? tag,
     AnnotationTool? tool,
+    double? position,
   }) =>
       Annotation(
         id: id,
@@ -50,6 +53,7 @@ class Annotation {
         note: note ?? this.note,
         tag: tag ?? this.tag,
         timestamp: timestamp,
+        position: position ?? this.position,
       );
 
   Map<String, dynamic> toJson() => {
@@ -61,6 +65,7 @@ class Annotation {
         'note': note,
         'tag': tag?.name,
         'timestamp': timestamp.toIso8601String(),
+        'position': position,
       };
 
   factory Annotation.fromJson(Map<String, dynamic> json) {
@@ -80,6 +85,7 @@ class Annotation {
               .where((t) => t.name == json['tag'])
               .firstOrNull,
       timestamp: DateTime.parse(json['timestamp'] as String),
+      position: (json['position'] as num?)?.toDouble() ?? 0.0,
     );
   }
 }

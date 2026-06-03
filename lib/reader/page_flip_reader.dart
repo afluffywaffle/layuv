@@ -103,10 +103,12 @@ class _PageFlipReaderState extends State<PageFlipReader> {
 
   void _onPageChanged(int page) {
     setState(() => _currentPage = page);
+    final total = _pages.length;
     widget.onPositionChanged(ReadingPosition(
       mode: ReadingMode.pageFlip,
       page: page,
       scrollOffset: 0,
+      fraction: total > 1 ? (page / (total - 1)).clamp(0.0, 1.0) : 0.0,
     ));
   }
 
