@@ -172,3 +172,39 @@ After every task:
 
 Do not refactor, rename, or restructure code that is not part of the
 assigned task. Do not add features that were not requested.
+
+---
+
+## PageFlipReader — sizing contract
+
+`PageFlipReader` uses a single `LayoutBuilder` whose `pageConstraints`
+is the only source of truth for dimensions. The invariant that must hold:
+
+- Every `PageView` item must be exactly `pageConstraints.maxHeight` tall
+  and `pageConstraints.maxWidth` wide — enforced by wrapping all three
+  `itemBuilder` return paths in `SizedBox.expand()`
+- `_paginate()` receives `maxHeight = textAreaHeight` (2-col) or
+  `textAreaHeight - _padding * 2` (1-col)
+- `_paginate()` cuts at `safeHeight = maxHeight - (lineHeight * 3)` to
+  prevent mid-line clipping — do not remove this without testing
+- `SelectableText` has `scrollPhysics: NeverScrollableScrollPhysics()` —
+  do not remove this; it prevents internal scroll escaping the page bounds
+- `_actuallyTwoCol` is a state variable — `itemCount`, `_onJumpRequested`,
+  and `_onPageChanged` all read from it; never use `widget.twoColumn`
+  directly for page count arithmetic
+
+---
+
+## Known issues
+
+### PageFlipReader — column width resize race
+During live window resize, a brief mismatch can occur between the
+`colWidth` used by `_paginate` and the `colWidth` used by `itemBuilder`.
+Currently mitigated by the 3-line-height `safeHeight` margin.
+
+Proper fix: store the `colWidth` used for the last paginate run as a
+state variable and pass it explicitly to `itemBuilder`, so render always
+uses the same width as paginate. Once fixed, `safeHeight` can reduce
+from 3 line heights to 2.
+
+Do not attempt this fix without explicit instruction.

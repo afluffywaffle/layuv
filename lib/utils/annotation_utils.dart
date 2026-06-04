@@ -239,6 +239,24 @@ double overlapScore(String a, String b) {
   return matches / len;
 }
 
+/// Snaps [start] and [end] outward to full word boundaries within [text].
+/// Only expands — never shrinks a selection.
+TextRange snapToWordBoundaries(String text, int start, int end) {
+  int s = start;
+  while (s > 0 && !_isWordBoundary(text[s - 1])) { s--; }
+  int e = end;
+  while (e < text.length && !_isWordBoundary(text[e])) { e++; }
+  return TextRange(start: s, end: e);
+}
+
+bool _isWordBoundary(String char) {
+  return char == ' ' || char == '\n' || char == '\r' || char == '\t'
+      || char == '.' || char == ',' || char == '!' || char == '?'
+      || char == ';' || char == ':' || char == '"' || char == "'"
+      || char == '(' || char == ')' || char == '[' || char == ']'
+      || char == '—' || char == '–';
+}
+
 /// Returns the margin indicator style (exported for use in reader Stacks).
 const marginIndicatorStyle = _kMarginIndicatorStyle;
 

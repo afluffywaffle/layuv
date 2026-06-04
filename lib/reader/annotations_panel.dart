@@ -823,8 +823,6 @@ class _AnnotationTileState extends State<_AnnotationTile> {
                       else
                         Text(
                           note,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             fontFamily: 'Source Sans 3',
                             fontSize: 12,

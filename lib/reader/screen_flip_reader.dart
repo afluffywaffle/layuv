@@ -141,11 +141,12 @@ class _ScreenFlipReaderState extends State<ScreenFlipReader> {
                             final sel = editableTextState.textEditingValue.selection;
                             if (sel.isValid && !sel.isCollapsed) {
                               final text = editableTextState.textEditingValue.text;
-                              final selectedText = text.substring(sel.start, sel.end);
+                              final snapped = snapToWordBoundaries(text, sel.start, sel.end);
+                              final selectedText = text.substring(snapped.start, snapped.end);
                               final prefix = text.substring(
-                                  (sel.start - 20).clamp(0, sel.start), sel.start);
+                                  (snapped.start - 20).clamp(0, snapped.start), snapped.start);
                               final suffix = text.substring(
-                                  sel.end, (sel.end + 20).clamp(sel.end, text.length));
+                                  snapped.end, (snapped.end + 20).clamp(snapped.end, text.length));
                               final anchor =
                                   editableTextState.contextMenuAnchors.primaryAnchor;
                               scheduleMicrotask(() {

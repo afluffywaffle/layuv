@@ -12,5 +12,7 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    let messenger = engineBridge.pluginRegistry.registrar(forPlugin: "BookmarkChannel").messenger()
+    BookmarkChannel.register(with: messenger)
   }
 }

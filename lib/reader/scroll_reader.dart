@@ -137,14 +137,15 @@ class _ScrollReaderState extends State<ScrollReader> {
                       onSelectionChanged: (selection, _) {
                         if (selection.isValid && !selection.isCollapsed) {
                           final text = widget.content;
-                          final selectedText = text.substring(selection.start, selection.end);
+                          final snapped = snapToWordBoundaries(text, selection.start, selection.end);
+                          final selectedText = text.substring(snapped.start, snapped.end);
                           final prefix = text.substring(
-                            (selection.start - 20).clamp(0, selection.start),
-                            selection.start,
+                            (snapped.start - 20).clamp(0, snapped.start),
+                            snapped.start,
                           );
                           final suffix = text.substring(
-                            selection.end,
-                            (selection.end + 20).clamp(selection.end, text.length),
+                            snapped.end,
+                            (snapped.end + 20).clamp(snapped.end, text.length),
                           );
                           final anchor = _anchorForSelection(selection);
                           scheduleMicrotask(() {
@@ -158,11 +159,12 @@ class _ScrollReaderState extends State<ScrollReader> {
                         final sel = editableTextState.textEditingValue.selection;
                         if (sel.isValid && !sel.isCollapsed) {
                           final text = editableTextState.textEditingValue.text;
-                          final selectedText = text.substring(sel.start, sel.end);
+                          final snapped = snapToWordBoundaries(text, sel.start, sel.end);
+                          final selectedText = text.substring(snapped.start, snapped.end);
                           final prefix = text.substring(
-                              (sel.start - 20).clamp(0, sel.start), sel.start);
+                              (snapped.start - 20).clamp(0, snapped.start), snapped.start);
                           final suffix = text.substring(
-                              sel.end, (sel.end + 20).clamp(sel.end, text.length));
+                              snapped.end, (snapped.end + 20).clamp(snapped.end, text.length));
                           _lastAnchor =
                               editableTextState.contextMenuAnchors.primaryAnchor;
                           scheduleMicrotask(() {

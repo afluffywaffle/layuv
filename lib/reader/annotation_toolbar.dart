@@ -8,6 +8,7 @@ class AnnotationToolbar extends StatefulWidget {
   final void Function(AnnotationTool) onToolSelected;
   final void Function(AnnotationTool) onLockTool;
   final VoidCallback onDismiss;
+  final bool dismissOnTapOutside;
 
   const AnnotationToolbar({
     super.key,
@@ -15,6 +16,7 @@ class AnnotationToolbar extends StatefulWidget {
     required this.onToolSelected,
     required this.onLockTool,
     required this.onDismiss,
+    this.dismissOnTapOutside = true,
   });
 
   @override
@@ -29,7 +31,7 @@ class _AnnotationToolbarState extends State<AnnotationToolbar> {
   static const double _height = 48;
   static const double _buttonWidth = 44;
   static const double _hPadding = 4;
-  static const int _toolCount = 7;
+  static const int _toolCount = 6;
   static const double _totalWidth = _buttonWidth * _toolCount + _hPadding * 2;
 
   static const _tools = [
@@ -37,7 +39,6 @@ class _AnnotationToolbarState extends State<AnnotationToolbar> {
     AnnotationTool.underline,
     AnnotationTool.doubleUnderline,
     AnnotationTool.strikethrough,
-    AnnotationTool.wavyUnderline,
     AnnotationTool.bookmark,
     AnnotationTool.comment,
   ];
@@ -92,29 +93,32 @@ class _AnnotationToolbarState extends State<AnnotationToolbar> {
             child: toolbar,
           );
 
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: Listener(
-            behavior: HitTestBehavior.translucent,
-            onPointerDown: (_) {
-              if (_ignoreNextTap) {
-                _ignoreNextTap = false;
-                return;
-              }
-              widget.onDismiss();
-            },
+    return Material(
+      type: MaterialType.transparency,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerDown: (_) {
+                if (_ignoreNextTap) {
+                  _ignoreNextTap = false;
+                  return;
+                }
+                if (widget.dismissOnTapOutside) widget.onDismiss();
+              },
+            ),
           ),
-        ),
-        Positioned(
-          left: left,
-          top: top,
-          child: Material(
-            color: Colors.transparent,
-            child: positioned,
+          Positioned(
+            left: left,
+            top: top,
+            child: Material(
+              color: Colors.transparent,
+              child: positioned,
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -263,16 +267,19 @@ class LockPickerOverlay extends StatelessWidget {
             child: card,
           );
 
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onTap: onDismiss,
+    return Material(
+      type: MaterialType.transparency,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: onDismiss,
+            ),
           ),
-        ),
-        Positioned(left: left, top: top, child: animated),
-      ],
+          Positioned(left: left, top: top, child: animated),
+        ],
+      ),
     );
   }
 }

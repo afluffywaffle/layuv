@@ -2,10 +2,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:archive/archive_io.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'reader_screen.dart';
+import 'services/bookmark_service.dart';
 
 void main() {
   runApp(const LeamhApp());
@@ -41,15 +42,31 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  static const _bookmarkChannel =
-      MethodChannel('com.afluffywaffle.layuv/bookmarks');
+  final _bookmarks = BookmarkService();
 
-  Future<void> _saveBookmark(String path) async {
-    if (!Platform.isMacOS) return;
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _tryReopenLast());
+  }
+
+  Future<void> _tryReopenLast() async {
+    String? lastPath;
     try {
-      await _bookmarkChannel.invokeMethod('saveBookmark', path);
+      final prefs = await SharedPreferences.getInstance();
+      lastPath = prefs.getString('bookmark_last_path');
+      final path = await _bookmarks.resolveLastFile();
+      if (path == null || !mounted) return;
+      if (!File(path).existsSync()) {
+        if (lastPath != null) await _bookmarks.clearBookmark(lastPath);
+        return;
+      }
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => ReaderScreen(filePath: path)),
+      );
     } catch (e) {
-      debugPrint('saveBookmark error: $e');
+      debugPrint('_tryReopenLast: bookmark stale or unresolvable, clearing ($e)');
+      if (lastPath != null) await _bookmarks.clearBookmark(lastPath);
     }
   }
 
@@ -203,7 +220,7 @@ $paragraphs
         }
       }
 
-      await _saveBookmark(filePath);
+      await _bookmarks.saveBookmark(filePath);
 
       if (!mounted) return;
       Navigator.of(context).push(

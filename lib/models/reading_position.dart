@@ -17,6 +17,7 @@ class ReadingPosition {
         'mode': mode.name,
         'page': page,
         'scrollOffset': scrollOffset,
+        'fraction': fraction,
       };
 
   factory ReadingPosition.fromJson(Map<String, dynamic> json) =>
@@ -24,5 +25,6 @@ class ReadingPosition {
         mode: ReadingMode.values.byName(json['mode'] as String),
         page: json['page'] as int,
         scrollOffset: (json['scrollOffset'] as num).toDouble(),
+        fraction: (json['fraction'] as num?)?.toDouble() ?? 0.0,
       );
 }

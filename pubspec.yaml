@@ -40,6 +40,7 @@ dependencies:
   shared_preferences: ^2.5.5
   path_provider: ^2.1.4
   path: ^1.8.3
+  archive: ^3.6.1
 
 dev_dependencies:
   flutter_test:

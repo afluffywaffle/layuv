@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/annotation.dart';
-import '../models/annotation_store.dart';
+import '../models/annotation_store_interface.dart';
 import '../utils/platform_utils.dart';
 import 'annotation_toolbar.dart';
 
@@ -8,7 +8,7 @@ class AnnotationPanel extends StatefulWidget {
   final String selectedText;
   final String prefix;
   final String suffix;
-  final AnnotationStore store;
+  final AnnotationStoreInterface store;
   final AnnotationTool initialTool;
   final Annotation? existing;
   final Future<void> Function() onSaved;
@@ -54,7 +54,6 @@ class _AnnotationPanelState extends State<AnnotationPanel> {
     AnnotationTool.underline,
     AnnotationTool.doubleUnderline,
     AnnotationTool.strikethrough,
-    AnnotationTool.wavyUnderline,
     AnnotationTool.bookmark,
   ];
 
