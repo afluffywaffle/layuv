@@ -10,6 +10,9 @@ class MainFlutterWindow: NSWindow {
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 
+    // Register security-scoped bookmark channel
+    BookmarkChannel.register(with: flutterViewController.registrar(forPlugin: "BookmarkChannel"))
+
     super.awakeFromNib()
   }
 }
