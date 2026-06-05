@@ -15,6 +15,7 @@ class ScrollReader extends StatefulWidget {
   final VoidCallback? onDismiss;
   final ValueNotifier<double?> jumpNotifier;
   final String? emphasizedAnnotationId;
+  final ValueNotifier<int>? cancelSelectionNotifier;
 
   const ScrollReader({
     super.key,
@@ -27,6 +28,7 @@ class ScrollReader extends StatefulWidget {
     required this.jumpNotifier,
     this.onDismiss,
     this.emphasizedAnnotationId,
+    this.cancelSelectionNotifier,
   });
 
   @override
@@ -35,8 +37,9 @@ class ScrollReader extends StatefulWidget {
 
 class _ScrollReaderState extends State<ScrollReader> {
   late ScrollController _scrollController;
-  Offset _lastAnchor = Offset.zero;
+  final Offset _lastAnchor = Offset.zero;
   final _selectableTextKey = GlobalKey();
+  Timer? _selectionDebounce;
 
   @override
   void initState() {
@@ -45,31 +48,27 @@ class _ScrollReaderState extends State<ScrollReader> {
     _scrollController = ScrollController(initialScrollOffset: initialOffset);
     _scrollController.addListener(_onScroll);
     widget.jumpNotifier.addListener(_onJumpRequested);
+    widget.cancelSelectionNotifier?.addListener(_onCancelSelection);
+  }
+
+  void _onCancelSelection() {
+    _selectionDebounce?.cancel();
+    _selectionDebounce = null;
   }
 
   @override
   void dispose() {
+    _selectionDebounce?.cancel();
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     widget.jumpNotifier.removeListener(_onJumpRequested);
+    widget.cancelSelectionNotifier?.removeListener(_onCancelSelection);
     super.dispose();
-  }
-
-  void _onJumpRequested() {
-    final fraction = widget.jumpNotifier.value;
-    if (fraction == null) return;
-    final max = _scrollController.position.maxScrollExtent;
-    _scrollController.animateTo(
-      max * fraction,
-      duration: const Duration(milliseconds: 400),
-      curve: Curves.easeInOut,
-    );
   }
 
   Offset _anchorForSelection(TextSelection selection) {
     final renderBox = _selectableTextKey.currentContext?.findRenderObject() as RenderBox?;
     if (renderBox == null) return _lastAnchor;
-
     RenderEditable? renderEditable;
     void visit(RenderObject obj) {
       if (renderEditable != null) return;
@@ -81,11 +80,21 @@ class _ScrollReaderState extends State<ScrollReader> {
     }
     renderBox.visitChildren(visit);
     if (renderEditable == null) return _lastAnchor;
-
     final caretRect = renderEditable!.getLocalRectForCaret(
       TextPosition(offset: selection.start),
     );
     return renderEditable!.localToGlobal(caretRect.topCenter);
+  }
+
+  void _onJumpRequested() {
+    final fraction = widget.jumpNotifier.value;
+    if (fraction == null) return;
+    final max = _scrollController.position.maxScrollExtent;
+    _scrollController.animateTo(
+      max * fraction,
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeInOut,
+    );
   }
 
   void _onScroll() {
@@ -135,42 +144,25 @@ class _ScrollReaderState extends State<ScrollReader> {
                         onAnnotationTap: widget.onAnnotationTap,
                       ),
                       onSelectionChanged: (selection, _) {
-                        if (selection.isValid && !selection.isCollapsed) {
+                        if (!selection.isValid || selection.isCollapsed) {
+                          _selectionDebounce?.cancel();
+                          if (mounted) widget.onDismiss?.call();
+                          return;
+                        }
+                        _selectionDebounce?.cancel();
+                        _selectionDebounce = Timer(const Duration(milliseconds: 350), () {
+                          if (!mounted) return;
                           final text = widget.content;
                           final snapped = snapToWordBoundaries(text, selection.start, selection.end);
                           final selectedText = text.substring(snapped.start, snapped.end);
-                          final prefix = text.substring(
-                            (snapped.start - 20).clamp(0, snapped.start),
-                            snapped.start,
-                          );
-                          final suffix = text.substring(
-                            snapped.end,
-                            (snapped.end + 20).clamp(snapped.end, text.length),
-                          );
+                          if (selectedText.trim().isEmpty) return;
+                          final prefix = text.substring((snapped.start - 20).clamp(0, snapped.start), snapped.start);
+                          final suffix = text.substring(snapped.end, (snapped.end + 20).clamp(snapped.end, text.length));
                           final anchor = _anchorForSelection(selection);
-                          scheduleMicrotask(() {
-                            if (mounted) widget.onSelection(selectedText, prefix, suffix, anchor);
-                          });
-                        } else {
-                          if (mounted) widget.onDismiss?.call();
-                        }
+                          widget.onSelection(selectedText, prefix, suffix, anchor);
+                        });
                       },
                       contextMenuBuilder: (context, editableTextState) {
-                        final sel = editableTextState.textEditingValue.selection;
-                        if (sel.isValid && !sel.isCollapsed) {
-                          final text = editableTextState.textEditingValue.text;
-                          final snapped = snapToWordBoundaries(text, sel.start, sel.end);
-                          final selectedText = text.substring(snapped.start, snapped.end);
-                          final prefix = text.substring(
-                              (snapped.start - 20).clamp(0, snapped.start), snapped.start);
-                          final suffix = text.substring(
-                              snapped.end, (snapped.end + 20).clamp(snapped.end, text.length));
-                          _lastAnchor =
-                              editableTextState.contextMenuAnchors.primaryAnchor;
-                          scheduleMicrotask(() {
-                            if (mounted) widget.onSelection(selectedText, prefix, suffix, _lastAnchor);
-                          });
-                        }
                         return const SizedBox.shrink();
                       },
                     ),

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/rendering.dart';
 import '../models/annotation.dart';
 import '../models/reading_position.dart';
 import '../utils/annotation_utils.dart';
@@ -17,6 +18,7 @@ class PageFlipReader extends StatefulWidget {
   final ValueNotifier<double?> jumpNotifier;
   final String? emphasizedAnnotationId;
   final bool twoColumn;
+  final ValueNotifier<int>? cancelSelectionNotifier;
 
   const PageFlipReader({
     super.key,
@@ -29,6 +31,7 @@ class PageFlipReader extends StatefulWidget {
     required this.jumpNotifier,
     this.emphasizedAnnotationId,
     this.twoColumn = false,
+    this.cancelSelectionNotifier,
   });
 
   @override
@@ -45,6 +48,9 @@ class _PageFlipReaderState extends State<PageFlipReader> {
   DateTime _lastWheelEvent = DateTime.fromMillisecondsSinceEpoch(0);
   bool _actuallyTwoCol = false;
   double _paginatedColWidth = 0;
+  Timer? _selectionDebounce;
+  final Map<int, GlobalKey> _pageKeys = {};
+  final Offset _lastAnchor = Offset.zero;
 
   static const double _padding = 32.0;
   static const double _counterZone = 52.0;
@@ -57,12 +63,20 @@ class _PageFlipReaderState extends State<PageFlipReader> {
     _currentPage = initialPage;
     _pageController = PageController(initialPage: initialPage);
     widget.jumpNotifier.addListener(_onJumpRequested);
+    widget.cancelSelectionNotifier?.addListener(_onCancelSelection);
+  }
+
+  void _onCancelSelection() {
+    _selectionDebounce?.cancel();
+    _selectionDebounce = null;
   }
 
   @override
   void dispose() {
+    _selectionDebounce?.cancel();
     _pageController.dispose();
     widget.jumpNotifier.removeListener(_onJumpRequested);
+    widget.cancelSelectionNotifier?.removeListener(_onCancelSelection);
     super.dispose();
   }
 
@@ -147,8 +161,29 @@ class _PageFlipReaderState extends State<PageFlipReader> {
     ));
   }
 
+  Offset _anchorForKey(GlobalKey key, TextSelection selection) {
+    final renderBox = key.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox == null) return _lastAnchor;
+    RenderEditable? renderEditable;
+    void visit(RenderObject obj) {
+      if (renderEditable != null) return;
+      if (obj is RenderEditable) {
+        renderEditable = obj;
+      } else {
+        obj.visitChildren(visit);
+      }
+    }
+    renderBox.visitChildren(visit);
+    if (renderEditable == null) return _lastAnchor;
+    final caretRect = renderEditable!.getLocalRectForCaret(
+      TextPosition(offset: selection.start),
+    );
+    return renderEditable!.localToGlobal(caretRect.topCenter);
+  }
+
   Widget _buildPageContent(
     _Page page, {
+    required int pageIndex,
     required double textWidth,
     required double maxHeight,
   }) {
@@ -171,6 +206,7 @@ class _PageFlipReaderState extends State<PageFlipReader> {
           DefaultSelectionStyle(
             selectionColor: const Color(0xFFF5D76E),
             child: SelectableText.rich(
+              key: _pageKeys.putIfAbsent(pageIndex, GlobalKey.new),
               buildAnnotatedText(
                 sliceContent: page.text,
                 fullContent: widget.content,
@@ -179,22 +215,26 @@ class _PageFlipReaderState extends State<PageFlipReader> {
                 baseStyle: kReaderTextStyle,
                 onAnnotationTap: widget.onAnnotationTap,
               ),
-              contextMenuBuilder: (context, editableTextState) {
-                final sel = editableTextState.textEditingValue.selection;
-                if (sel.isValid && !sel.isCollapsed) {
-                  final text = editableTextState.textEditingValue.text;
-                  final snapped = snapToWordBoundaries(text, sel.start, sel.end);
-                  final selectedText = text.substring(snapped.start, snapped.end);
-                  final prefix = text.substring(
-                      (snapped.start - 20).clamp(0, snapped.start), snapped.start);
-                  final suffix = text.substring(
-                      snapped.end, (snapped.end + 20).clamp(snapped.end, text.length));
-                  final anchor =
-                      editableTextState.contextMenuAnchors.primaryAnchor;
-                  scheduleMicrotask(() {
-                    if (mounted) widget.onSelection(selectedText, prefix, suffix, anchor);
-                  });
+              onSelectionChanged: (selection, _) {
+                if (!selection.isValid || selection.isCollapsed) {
+                  _selectionDebounce?.cancel();
+                  return;
                 }
+                _selectionDebounce?.cancel();
+                _selectionDebounce = Timer(const Duration(milliseconds: 350), () {
+                  if (!mounted) return;
+                  final text = page.text;
+                  final snapped = snapToWordBoundaries(text, selection.start, selection.end);
+                  final selectedText = text.substring(snapped.start, snapped.end);
+                  if (selectedText.trim().isEmpty) return;
+                  final prefix = text.substring((snapped.start - 20).clamp(0, snapped.start), snapped.start);
+                  final suffix = text.substring(snapped.end, (snapped.end + 20).clamp(snapped.end, text.length));
+                  final key = _pageKeys[pageIndex];
+                  final anchor = key != null ? _anchorForKey(key, selection) : _lastAnchor;
+                  widget.onSelection(selectedText, prefix, suffix, anchor);
+                });
+              },
+              contextMenuBuilder: (context, editableTextState) {
                 return const SizedBox.shrink();
               },
               scrollPhysics: const NeverScrollableScrollPhysics(),
@@ -310,7 +350,7 @@ class _PageFlipReaderState extends State<PageFlipReader> {
                                 return SizedBox.expand(
                                   child: Padding(
                                     padding: const EdgeInsets.symmetric(horizontal: _padding, vertical: _padding),
-                                    child: _buildPageContent(page, textWidth: availableWidth, maxHeight: textAreaHeight - _padding * 2),
+                                    child: _buildPageContent(page, pageIndex: index * 2, textWidth: availableWidth, maxHeight: textAreaHeight - _padding * 2),
                                   ),
                                 );
                               }
@@ -324,6 +364,7 @@ class _PageFlipReaderState extends State<PageFlipReader> {
                                     children: [
                                       _buildPageContent(
                                         leftPage,
+                                        pageIndex: leftIdx,
                                         textWidth: _paginatedColWidth,
                                         maxHeight: textAreaHeight,
                                       ),
@@ -331,6 +372,7 @@ class _PageFlipReaderState extends State<PageFlipReader> {
                                       rightPage != null
                                           ? _buildPageContent(
                                               rightPage,
+                                              pageIndex: rightIdx,
                                               textWidth: _paginatedColWidth,
                                               maxHeight: textAreaHeight,
                                             )
@@ -346,6 +388,7 @@ class _PageFlipReaderState extends State<PageFlipReader> {
                                 padding: const EdgeInsets.symmetric(horizontal: _padding, vertical: _padding),
                                 child: _buildPageContent(
                                   page,
+                                  pageIndex: index,
                                   textWidth: availableWidth,
                                   maxHeight: textAreaHeight - _padding * 2,
                                 ),

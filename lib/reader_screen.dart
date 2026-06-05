@@ -41,9 +41,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
   double _panelWidth = 320.0;
   double _currentFraction = 0.0;
   final _jumpNotifier = ValueNotifier<double?>(null);
+  final _cancelSelectionNotifier = ValueNotifier<int>(0);
   String? _emphasizedAnnotationId;
   Timer? _emphasisTimer;
   bool _twoColumnEnabled = true;
+  DateTime _suppressToolbarUntil = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
   void initState() {
@@ -61,6 +63,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _emphasisTimer?.cancel();
     _toolbarOverlay?.remove();
     _jumpNotifier.dispose();
+    _cancelSelectionNotifier.dispose();
     super.dispose();
   }
 
@@ -201,9 +204,24 @@ class _ReaderScreenState extends State<ReaderScreen> {
     await _reloadAnnotations();
   }
 
-  void _onSelection(String selectedText, String prefix, String suffix, Offset anchor) {
+  void _dismissToolbar() {
+    debugPrint('[TOOLBAR] _dismissToolbar called, suppress set for 600ms');
     _toolbarDebounce?.cancel();
+    _toolbarOverlay?.remove();
+    _toolbarOverlay = null;
+    _suppressToolbarUntil = DateTime.now().add(const Duration(milliseconds: 600));
+    _cancelSelectionNotifier.value++;
+  }
+
+  void _onSelection(String selectedText, String prefix, String suffix, Offset anchor) {
+    final suppressed = DateTime.now().isBefore(_suppressToolbarUntil);
+    debugPrint('[TOOLBAR] _onSelection called: "${selectedText.substring(0, selectedText.length.clamp(0, 20))}" suppressed=$suppressed');
+    if (suppressed) return;
+
     if (selectedText.trim().isEmpty) {
+      debugPrint('[TOOLBAR] empty selection → dismissing');
+      _toolbarDebounce?.cancel();
+      _toolbarDebounce = null;
       _dismissToolbar();
       return;
     }
@@ -213,13 +231,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return;
     }
 
+    _toolbarDebounce?.cancel();
     _toolbarDebounce = Timer(const Duration(milliseconds: 300), () {
-      _showToolbarOverlay(
-        anchor: anchor,
-        selectedText: selectedText,
-        prefix: prefix,
-        suffix: suffix,
-      );
+      final suppressed2 = DateTime.now().isBefore(_suppressToolbarUntil);
+      debugPrint('[TOOLBAR] debounce fired: suppressed=$suppressed2');
+      if (suppressed2) return;
+      _showToolbarOverlay(anchor: anchor, selectedText: selectedText, prefix: prefix, suffix: suffix);
     });
   }
 
@@ -229,8 +246,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
     required String prefix,
     required String suffix,
   }) {
-    if (_toolbarOverlay != null) return;
+    debugPrint('[TOOLBAR] _showToolbarOverlay called');
     _dismissToolbar();
+    if (_toolbarOverlay != null) return;
     final anchors = TextSelectionToolbarAnchors(primaryAnchor: anchor);
     _toolbarOverlay = OverlayEntry(
       builder: (ctx) => AnnotationToolbar(
@@ -357,11 +375,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
-  void _dismissToolbar() {
-    _toolbarDebounce?.cancel();
-    _toolbarOverlay?.remove();
-    _toolbarOverlay = null;
-  }
+
 
   Future<void> _confirmClose() async {
     final shouldPop = await showDialog<bool>(
@@ -447,6 +461,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   onPositionChanged: _onPositionChanged,
                   jumpNotifier: _jumpNotifier,
                   emphasizedAnnotationId: _emphasizedAnnotationId,
+                  cancelSelectionNotifier: _cancelSelectionNotifier,
                 );
               case ReadingMode.screenFlip:
                 reader = ScreenFlipReader(
@@ -463,6 +478,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   onPositionChanged: _onPositionChanged,
                   jumpNotifier: _jumpNotifier,
                   emphasizedAnnotationId: _emphasizedAnnotationId,
+                  cancelSelectionNotifier: _cancelSelectionNotifier,
                 );
               case ReadingMode.pageFlip:
                 reader = PageFlipReader(
@@ -480,6 +496,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   jumpNotifier: _jumpNotifier,
                   emphasizedAnnotationId: _emphasizedAnnotationId,
                   twoColumn: _twoColumnEnabled,
+                  cancelSelectionNotifier: _cancelSelectionNotifier,
                 );
             }
             return Stack(

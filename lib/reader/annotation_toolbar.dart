@@ -24,10 +24,6 @@ class AnnotationToolbar extends StatefulWidget {
 }
 
 class _AnnotationToolbarState extends State<AnnotationToolbar> {
-  // Ignore the first pointer-down — it is the tail end of the selection
-  // gesture that opened the toolbar and would otherwise dismiss it immediately.
-  bool _ignoreNextTap = true;
-
   static const double _height = 48;
   static const double _buttonWidth = 44;
   static const double _hPadding = 4;
@@ -98,13 +94,9 @@ class _AnnotationToolbarState extends State<AnnotationToolbar> {
       child: Stack(
         children: [
           Positioned.fill(
-            child: Listener(
-              behavior: HitTestBehavior.translucent,
-              onPointerDown: (_) {
-                if (_ignoreNextTap) {
-                  _ignoreNextTap = false;
-                  return;
-                }
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () {
                 if (widget.dismissOnTapOutside) widget.onDismiss();
               },
             ),
