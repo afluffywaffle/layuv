@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Supernote SAF providers hand back READ-ONLY content URIs, so the reader
+         opens/saves DOCX files by real path (matching the Flutter app, which
+         writes filePath directly). That needs All-files access on Android 11. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="false"
+        android:theme="@style/Theme.Leamh">
+
+        <activity
+            android:name=".reader.ReaderActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".reader.FileBrowserActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Leamh" />
+
+        <activity
+            android:name=".reader.NoteActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Leamh"
+            android:windowSoftInputMode="stateAlwaysVisible|adjustResize" />
+
+        <activity
+            android:name=".reader.AnnotationsPanelActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Leamh" />
+
+        <!-- SPIKE: drawPath low-latency handwriting test. Not in the launcher;
+             start with `am start -n .../com.afluffywaffle.layuv.spike.DrawPathSpikeActivity`. -->
+        <activity
+            android:name=".spike.DrawPathSpikeActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Leamh"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|keyboardHidden" />
+    </application>
+
+</manifest>

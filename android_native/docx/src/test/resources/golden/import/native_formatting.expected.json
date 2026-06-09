@@ -1,0 +1,74 @@
+[
+  {
+    "id": "1767225600000000",
+    "selectedText": "highlighted",
+    "prefix": "This is ",
+    "suffix": " and underlined text",
+    "tool": "highlight",
+    "note": null,
+    "tag": null,
+    "timestamp": "2026-01-01T00:00:00.000Z",
+    "position": 0.09090909090909091,
+    "hasInk": false
+  },
+  {
+    "id": "1767225600000001",
+    "selectedText": "underlined",
+    "prefix": " is highlighted and ",
+    "suffix": " text.\nstruck and wa",
+    "tool": "underline",
+    "note": null,
+    "tag": null,
+    "timestamp": "2026-01-01T00:00:00.000Z",
+    "position": 0.2727272727272727,
+    "hasInk": false
+  },
+  {
+    "id": "1767225600000002",
+    "selectedText": "struck",
+    "prefix": "nd underlined text.\n",
+    "suffix": " and wavy words\ndoub",
+    "tool": "strikethrough",
+    "note": null,
+    "tag": null,
+    "timestamp": "2026-01-01T00:00:00.000Z",
+    "position": 0.4659090909090909,
+    "hasInk": false
+  },
+  {
+    "id": "1767225600000003",
+    "selectedText": "wavy",
+    "prefix": "ed text.\nstruck and ",
+    "suffix": " words\ndouble-underl",
+    "tool": "wavyUnderline",
+    "note": null,
+    "tag": null,
+    "timestamp": "2026-01-01T00:00:00.000Z",
+    "position": 0.5909090909090909,
+    "hasInk": false
+  },
+  {
+    "id": "1767225600000004",
+    "selectedText": "double-underlined",
+    "prefix": "ruck and wavy words\n",
+    "suffix": "\nfoobar\n",
+    "tool": "doubleUnderline",
+    "note": null,
+    "tag": null,
+    "timestamp": "2026-01-01T00:00:00.000Z",
+    "position": 0.7159090909090909,
+    "hasInk": false
+  },
+  {
+    "id": "1767225600000005",
+    "selectedText": "foobar",
+    "prefix": "s\ndouble-underlined\n",
+    "suffix": "\n",
+    "tool": "highlight",
+    "note": null,
+    "tag": null,
+    "timestamp": "2026-01-01T00:00:00.000Z",
+    "position": 0.9204545454545454,
+    "hasInk": false
+  }
+]

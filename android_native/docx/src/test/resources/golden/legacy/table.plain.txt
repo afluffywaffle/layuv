@@ -1,0 +1,4 @@
+intro
+<w:tr><w:tc><w:p><w:r><w:t>cell A
+<w:p><w:r><w:t>cell B
+outro

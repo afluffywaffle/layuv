@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Material (not AppCompat) base so the app pulls in NO AndroidX. Light,
+         no action bar, paper window background, and animations stripped — e-ink
+         must never animate. -->
+    <style name="Theme.Leamh" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/paper</item>
+        <item name="android:colorBackground">@color/paper</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:statusBarColor">@color/paper</item>
+        <item name="android:navigationBarColor">@color/paper</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <!-- Boxed, opaque, shadow-free dropdown popups (breadcrumb sub-folders). -->
+        <item name="android:popupMenuStyle">@style/Leamh.PopupMenu</item>
+    </style>
+
+    <style name="Leamh.PopupMenu" parent="@android:style/Widget.Material.Light.PopupMenu">
+        <item name="android:popupBackground">@drawable/popup_bg</item>
+        <item name="android:popupElevation">0dp</item>
+    </style>
+</resources>
