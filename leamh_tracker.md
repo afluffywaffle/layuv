@@ -83,7 +83,20 @@ Launch:
 | 99999 | `setDebugMode(app, int)` | `int` | debug |
 
 - **Post-resume order (per Ratta PDF):** first call must be the reset = `setWritableAndNonWritableArea` with one full-screen rect `(0,0,18888,18888, flag)` (acts as a reset sentinel — drawing still works after it), *then* pen, *then* the real disable areas.
-- **Regional refresh:** drawPath does regional EPD updates **internally** via the hteink HAL (`win_update_2_area_display`, `display_rect_after_set(hteink_area_display)`, ioctl `CLEAR_PW_RECT` = clear partial-window rect) but **exposes only the FULL `clearScreen` over binder**. True regional refresh from our app would need the Supernote **`hteink` (`hteink.IDeviceManagerService`) / `eink` (`android.os.IEinkManager`)** system service directly — not yet mapped.
+- **Regional refresh:** drawPath does regional EPD updates **internally** via the hteink HAL (`win_update_2_area_display`, `display_rect_after_set(hteink_area_display)`, ioctl `CLEAR_PW_RECT` = clear partial-window rect) but **exposes only the FULL `clearScreen` over binder**. The Ratta **`android.os.EinkManager`** system service (see below) is now mapped but its public methods are also full-screen only — true regional refresh would need `EinkManager.sendHwcCmd(cmd, int[])` with an undocumented cmd id + region array (the `CLEAR_PW_RECT` path), still an RE task.
+
+### Ratta e-ink control API — `android.os.EinkManager` (found 2026-06-09)
+Discovered via **plateaukao/AssistiveTouch** (release `sn1.0`) + dumping `/system/framework/framework.jar`. Reached with `getSystemService("eink")` → `android.os.EinkManager` (reflection; **no** raw ServiceManager binder needed). This is the **correct refresh/waveform API for Ratta** — and it's what the native-port **reader** should use instead of the Onyx `EpdController` in `Epd.kt` (Boox; wrong for Ratta).
+
+| Method | Signature | Use |
+|---|---|---|
+| `sendOneFullFrame()` | `()V` | full-screen refresh (what the swipe / AssistiveTouch long-press do) — clean programmatic full refresh |
+| `screenRefresh(force, mode)` | `(ZI)V` | full refresh with flag + mode (no rect → not regional) |
+| `setScreenMode(mode, …)` | `(IZ)V` | waveform mode: `EINK_SCREEN_MODE_CLEAR / DEFAULT / SMOOTH / SPEED` (**untested** — try for page turns vs Onyx GU/GC) |
+| `sendHwcCmd(cmd, int[])` | `(I[I)V` | low-level command channel; only plausible **regional** route (RE the cmd ids) |
+| `setScreenRotation`, `enter/exitSplitScreenMode`, gamma, `standby`/`quitStandby` | — | misc |
+
+The AssistiveTouch repo itself is just a floating overlay button (Accessibility back/home) — **no drawPath knowledge**; its only value was the `EinkManager.sendOneFullFrame()` reflection snippet.
 
 ### Implementation architecture (the plan when we resume)
 1. **Capture** stroke geometry in our canvas `View.onTouchEvent` (proven; pressure available if we ever want variable width).
@@ -97,7 +110,8 @@ Launch:
 - [x] **CONFIRMED 2026-06-09** — disable **FlagRect flag**: `flag 0` = disable/non-writable (blacklist, rest writable) → use for chrome; `flag 1` = writable whitelist (blocks everything else). Harness `fullInit` updated to `flag 0`.
 - [x] **CONFIRMED 2026-06-09** — `clearScreen` (code 6, `app + int 255`) flushes drawPath's buffer; strokes vanish from the EPD. Replaces the no-op `invalidate()` clear.
 - [ ] **Hidden-API:** find a non-reflection route to the binder, OR accept the policy workaround. The real app **cannot** rely on `adb shell settings put global hidden_api_policy 0` (test-only). (It was set to `0` on the device for testing — restore with `settings put global hidden_api_policy null`.)
-- [ ] **Reader-wide refresh concern:** the native port's `app/.../reader/Epd.kt` uses the **Onyx** `EpdController` (Boox) — likely a no-op on Ratta, so page-turn / selection partial refreshes in the READER may also be broken on Supernote. The real refresh path here is `hteink`/`eink`. Investigate — this affects more than ink.
+- [ ] **Reader-wide refresh concern (now has a fix):** the native port's `app/.../reader/Epd.kt` uses the **Onyx** `EpdController` (Boox) — likely a no-op on Ratta, so page-turn / selection refreshes in the READER may be broken on Supernote. **Fix = `android.os.EinkManager`** via `getSystemService("eink")` (`sendOneFullFrame()` / `screenRefresh()` / `setScreenMode(CLEAR/SMOOTH/SPEED)`) — see the EinkManager table above. Rework `Epd.kt` onto this. Affects more than ink.
+- [ ] **Try `EinkManager.setScreenMode`** waveform modes (`CLEAR/DEFAULT/SMOOTH/SPEED`) for page turns — not yet tested.
 - [ ] Build the real ink layer (capture → preview → commit → persist via `InkDrawing.kt` → redraw); promote `DrawPathClient`, delete the spike harness.
 - [ ] Optional: regional refresh via `hteink`/`eink` for flash-free erase.
 
