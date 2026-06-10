@@ -14,6 +14,7 @@ class LoadedDocument(
     val position: ReadingPosition?,
 ) {
     val plainText: String get() = plainMap.plain
+    val formatSpans: List<FormatSpan> get() = plainMap.formats
 }
 
 /**

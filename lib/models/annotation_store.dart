@@ -142,4 +142,10 @@ class AnnotationStore implements AnnotationStoreInterface {
       }).catchError((e) {
         debugPrint('AnnotationStore savePosition error: $e');
       });
+
+  @override
+  Future<void> saveInkPng(String annotationId, List<int> pngBytes) async {
+    // JSON sidecar store does not support ink — no-op.
+    debugPrint('AnnotationStore.saveInkPng: ink not supported on this store');
+  }
 }

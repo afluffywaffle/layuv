@@ -5,8 +5,9 @@ import 'dart:async';
 import 'dart:io';
 
 import 'models/annotation.dart';
-import 'models/reading_position.dart';
 import 'models/docx_store.dart';
+import 'models/reading_position.dart';
+import 'utils/annotation_utils.dart' show DocxFormatSpan;
 import 'reader/appbar_pill.dart';
 import 'reader/scroll_reader.dart';
 import 'reader/screen_flip_reader.dart';
@@ -15,6 +16,7 @@ import 'reader/annotation_toolbar.dart';
 import 'reader/annotation_panel.dart';
 import 'reader/annotations_panel.dart';
 import 'utils/platform_utils.dart';
+import 'eink_settings_screen.dart';
 
 class ReaderScreen extends StatefulWidget {
   final String filePath;
@@ -26,7 +28,7 @@ class ReaderScreen extends StatefulWidget {
 }
 
 class _ReaderScreenState extends State<ReaderScreen> {
-  late Future<String> _fileContentFuture;
+  late Future<({String text, List<DocxFormatSpan> spans, String? docTitle})> _fileContentFuture;
   late ReadingMode _readingMode;
   bool _modeSetByUser = false;
   late DocxStore _store;
@@ -39,13 +41,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
   bool _dismissToolbarOnTapOutside = true;
   bool _showAnnotationsPanel = false;
   double _panelWidth = 320.0;
-  double _currentFraction = 0.0;
   final _jumpNotifier = ValueNotifier<double?>(null);
   final _cancelSelectionNotifier = ValueNotifier<int>(0);
   String? _emphasizedAnnotationId;
   Timer? _emphasisTimer;
   bool _twoColumnEnabled = true;
   DateTime _suppressToolbarUntil = DateTime.fromMillisecondsSinceEpoch(0);
+  String _einkNavSide = 'both';
 
   @override
   void initState() {
@@ -67,8 +69,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
     super.dispose();
   }
 
-  ReadingMode _defaultMode() =>
-      (Platform.isMacOS || Platform.isIOS) ? ReadingMode.screenFlip : ReadingMode.pageFlip;
+  ReadingMode _defaultMode() {
+    if (isEink) return ReadingMode.pageFlip;
+    return (Platform.isMacOS || Platform.isIOS) ? ReadingMode.screenFlip : ReadingMode.pageFlip;
+  }
 
   Future<void> _loadPrefs() async {
     final prefs = await SharedPreferences.getInstance();
@@ -80,7 +84,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _savedPosition = position;
       _dismissToolbarOnTapOutside = prefs.getBool('dismissToolbarOnTapOutside') ?? true;
       _twoColumnEnabled = prefs.getBool('two_column_enabled') ?? true;
-      if (!_modeSetByUser) {
+      if (isEink) {
+        _readingMode = ReadingMode.pageFlip;
+        _einkNavSide = prefs.getString('eink_nav_side') ?? 'both';
+      } else if (!_modeSetByUser) {
         final saved = prefs.getString('reading_mode');
         if (saved != null) {
           _readingMode = ReadingMode.values.byName(saved);
@@ -102,6 +109,23 @@ class _ReaderScreenState extends State<ReaderScreen> {
         .then((p) => p.setBool('two_column_enabled', _twoColumnEnabled));
   }
 
+  Future<void> _openEinkSettings() async {
+    await Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (_, _, _) => const EinkSettingsScreen(),
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+      ),
+    );
+    if (!mounted) return;
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _einkNavSide = prefs.getString('eink_nav_side') ?? 'both';
+    });
+  }
+
   void _setReadingMode(ReadingMode mode) {
     setState(() {
       _readingMode = mode;
@@ -112,7 +136,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   void _onPositionChanged(ReadingPosition position) {
-    _currentFraction = position.fraction;
     _positionSaveTimer?.cancel();
     _positionSaveTimer = Timer(
       const Duration(seconds: 1),
@@ -120,13 +143,19 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
-  Future<String> _readFile() async {
+  Future<({String text, List<DocxFormatSpan> spans, String? docTitle})> _readFile() async {
     try {
       final bytes = await File(widget.filePath).readAsBytes();
       final text = docxToText(bytes);
-      return text.isNotEmpty ? text : 'No text found in DOCX file.';
+      final spans = DocxStore.extractFormatSpans(bytes);
+      final docTitle = DocxStore.extractTitle(bytes);
+      return (
+        text: text.isNotEmpty ? text : 'No text found in DOCX file.',
+        spans: spans,
+        docTitle: docTitle,
+      );
     } catch (e) {
-      return 'Error reading file: $e';
+      return (text: 'Error reading file: $e', spans: const <DocxFormatSpan>[], docTitle: null);
     }
   }
 
@@ -134,10 +163,32 @@ class _ReaderScreenState extends State<ReaderScreen> {
     required String selectedText,
     required String prefix,
     required String suffix,
+    required double fraction,
     AnnotationTool initialTool = AnnotationTool.highlight,
     Annotation? existing,
   }) {
     if (selectedText.trim().isEmpty) return;
+    if (isEink) {
+      Navigator.of(context).push(
+        PageRouteBuilder(
+          transitionDuration: Duration.zero,
+          reverseTransitionDuration: Duration.zero,
+          pageBuilder: (_, _, _) => Scaffold(
+            body: AnnotationPanel(
+              selectedText: selectedText,
+              prefix: prefix,
+              suffix: suffix,
+              store: _store,
+              initialTool: existing?.tool ?? initialTool,
+              existing: existing,
+              fraction: fraction,
+              onSaved: _reloadAnnotations,
+            ),
+          ),
+        ),
+      );
+      return;
+    }
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -150,6 +201,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         store: _store,
         initialTool: existing?.tool ?? initialTool,
         existing: existing,
+        fraction: fraction,
         onSaved: _reloadAnnotations,
       ),
     );
@@ -160,6 +212,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     String selectedText,
     String prefix,
     String suffix,
+    double fraction,
   ) {
     if (tool == AnnotationTool.bookmark) {
       _saveImmediate(
@@ -167,12 +220,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
         selectedText: selectedText,
         prefix: prefix,
         suffix: suffix,
+        fraction: fraction,
       );
     } else if (tool == AnnotationTool.comment) {
       _openAnnotationPanel(
         selectedText: selectedText,
         prefix: prefix,
         suffix: suffix,
+        fraction: fraction,
         initialTool: AnnotationTool.highlight,
       );
     } else {
@@ -181,6 +236,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         selectedText: selectedText,
         prefix: prefix,
         suffix: suffix,
+        fraction: fraction,
       );
     }
   }
@@ -190,6 +246,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     required String selectedText,
     required String prefix,
     required String suffix,
+    required double fraction,
   }) async {
     if (selectedText.trim().isEmpty) return;
     await _store.saveAnnotation(Annotation(
@@ -199,13 +256,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
       suffix: suffix,
       tool: tool,
       timestamp: DateTime.now(),
-      position: _currentFraction,
+      position: fraction,
     ));
     await _reloadAnnotations();
   }
 
   void _dismissToolbar() {
-    debugPrint('[TOOLBAR] _dismissToolbar called, suppress set for 600ms');
     _toolbarDebounce?.cancel();
     _toolbarOverlay?.remove();
     _toolbarOverlay = null;
@@ -213,13 +269,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _cancelSelectionNotifier.value++;
   }
 
-  void _onSelection(String selectedText, String prefix, String suffix, Offset anchor) {
+  void _onSelection(String selectedText, String prefix, String suffix, Offset anchor, double fraction) {
     final suppressed = DateTime.now().isBefore(_suppressToolbarUntil);
-    debugPrint('[TOOLBAR] _onSelection called: "${selectedText.substring(0, selectedText.length.clamp(0, 20))}" suppressed=$suppressed');
     if (suppressed) return;
 
     if (selectedText.trim().isEmpty) {
-      debugPrint('[TOOLBAR] empty selection → dismissing');
       _toolbarDebounce?.cancel();
       _toolbarDebounce = null;
       _dismissToolbar();
@@ -227,16 +281,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
 
     if (_lockedTool != null) {
-      _onToolSelected(_lockedTool!, selectedText, prefix, suffix);
+      _onToolSelected(_lockedTool!, selectedText, prefix, suffix, fraction);
       return;
     }
 
     _toolbarDebounce?.cancel();
     _toolbarDebounce = Timer(const Duration(milliseconds: 300), () {
       final suppressed2 = DateTime.now().isBefore(_suppressToolbarUntil);
-      debugPrint('[TOOLBAR] debounce fired: suppressed=$suppressed2');
       if (suppressed2) return;
-      _showToolbarOverlay(anchor: anchor, selectedText: selectedText, prefix: prefix, suffix: suffix);
+      _showToolbarOverlay(anchor: anchor, selectedText: selectedText, prefix: prefix, suffix: suffix, fraction: fraction);
     });
   }
 
@@ -245,8 +298,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     required String selectedText,
     required String prefix,
     required String suffix,
+    required double fraction,
   }) {
-    debugPrint('[TOOLBAR] _showToolbarOverlay called');
     _dismissToolbar();
     if (_toolbarOverlay != null) return;
     final anchors = TextSelectionToolbarAnchors(primaryAnchor: anchor);
@@ -257,7 +310,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         dismissOnTapOutside: _dismissToolbarOnTapOutside,
         onToolSelected: (tool) {
           _dismissToolbar();
-          _onToolSelected(tool, selectedText, prefix, suffix);
+          _onToolSelected(tool, selectedText, prefix, suffix, fraction);
         },
         onLockTool: (tool) {
           _dismissToolbar();
@@ -277,8 +330,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         Navigator.push(
           context,
-          MaterialPageRoute(
-            builder: (_) => Scaffold(
+          PageRouteBuilder(
+            transitionDuration: Duration.zero,
+            reverseTransitionDuration: Duration.zero,
+            pageBuilder: (_, _, _) => Scaffold(
               body: AnnotationsPanel(
                 store: _store,
                 onJumpTo: (pos) {},
@@ -286,6 +341,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   Navigator.pop(context);
                   setState(() => _showAnnotationsPanel = false);
                 },
+                onChanged: _reloadAnnotations,
               ),
             ),
           ),
@@ -366,6 +422,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     }
                   },
                   onClose: _toggleAnnotationsPanel,
+                  onChanged: _reloadAnnotations,
                 ),
               ),
             ),
@@ -374,8 +431,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
       ),
     );
   }
-
-
 
   Future<void> _confirmClose() async {
     final shouldPop = await showDialog<bool>(
@@ -403,6 +458,59 @@ class _ReaderScreenState extends State<ReaderScreen> {
     if (shouldPop == true && mounted) Navigator.of(context).pop();
   }
 
+  // Shared trailing content: truncated title + AppBarPill, used in all modes.
+  Widget _buildTrailingContent(String title) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 160),
+          child: Text(
+            title,
+            style: const TextStyle(
+              fontFamily: 'SourceSans3',
+              fontSize: 13,
+              color: Colors.black45,
+            ),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+          ),
+        ),
+        const SizedBox(width: 8),
+        AppBarPill(
+          readingMode: _readingMode,
+          lockedTool: _lockedTool,
+          onClose: _confirmClose,
+          onModeSelected: _setReadingMode,
+          onUnlock: () => setState(() => _lockedTool = null),
+          onAnnotations: _toggleAnnotationsPanel,
+          twoColumnEnabled: _twoColumnEnabled,
+          onToggleTwoColumn: _toggleTwoColumn,
+          onEinkSettings: isEink ? _openEinkSettings : null,
+        ),
+        const SizedBox(width: 8),
+      ],
+    );
+  }
+
+  // Bottom bar for scroll / screen-flip modes (pageFlip uses PageFlipReader's
+  // own counter zone via bottomTrailing).
+  Widget _buildBottomBar(String title) {
+    return SizedBox(
+      height: 52,
+      child: Stack(
+        children: [
+          Positioned(
+            right: 0,
+            top: 0,
+            bottom: 0,
+            child: Center(child: _buildTrailingContent(title)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -413,27 +521,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       },
       child: Scaffold(
         backgroundColor: const Color(0xFFF5F0E8),
-        appBar: AppBar(
-          backgroundColor: const Color(0xFFF5F0E8),
-          elevation: 0,
-          automaticallyImplyLeading: false,
-          actions: [
-            Padding(
-              padding: const EdgeInsets.only(right: 16, top: 8, bottom: 8),
-              child: AppBarPill(
-                readingMode: _readingMode,
-                lockedTool: _lockedTool,
-                onClose: _confirmClose,
-                onModeSelected: _setReadingMode,
-                onUnlock: () => setState(() => _lockedTool = null),
-                onAnnotations: _toggleAnnotationsPanel,
-                twoColumnEnabled: _twoColumnEnabled,
-                onToggleTwoColumn: _toggleTwoColumn,
-              ),
-            ),
-          ],
-        ),
-        body: FutureBuilder<String>(
+        body: FutureBuilder<({String text, List<DocxFormatSpan> spans, String? docTitle})>(
           future: _fileContentFuture,
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
@@ -442,47 +530,74 @@ class _ReaderScreenState extends State<ReaderScreen> {
             if (snapshot.hasError) {
               return Center(child: Text('Error: ${snapshot.error}'));
             }
-            final content = snapshot.data ?? '';
+            final content = snapshot.data?.text ?? '';
+            final formatSpans = snapshot.data?.spans ?? const <DocxFormatSpan>[];
+            final rawName = widget.filePath.split(Platform.pathSeparator).last;
+            final nameNoExt = rawName.endsWith('.docx')
+                ? rawName.substring(0, rawName.length - 5)
+                : rawName;
+            final displayTitle = (snapshot.data?.docTitle?.isNotEmpty == true)
+                ? snapshot.data!.docTitle!
+                : nameNoExt;
             Widget reader;
             switch (_readingMode) {
               case ReadingMode.scroll:
-                reader = ScrollReader(
-                  content: content,
-                  annotations: _annotations,
-                  savedPosition: _savedPosition,
-                  onSelection: _onSelection,
-                  onDismiss: _dismissToolbar,
-                  onAnnotationTap: (a) => _openAnnotationPanel(
-                    selectedText: a.selectedText,
-                    prefix: a.prefix,
-                    suffix: a.suffix,
-                    existing: a,
-                  ),
-                  onPositionChanged: _onPositionChanged,
-                  jumpNotifier: _jumpNotifier,
-                  emphasizedAnnotationId: _emphasizedAnnotationId,
-                  cancelSelectionNotifier: _cancelSelectionNotifier,
+                reader = Column(
+                  children: [
+                    Expanded(
+                      child: ScrollReader(
+                        content: content,
+                        formatSpans: formatSpans,
+                        annotations: _annotations,
+                        savedPosition: _savedPosition,
+                        onSelection: _onSelection,
+                        onDismiss: _dismissToolbar,
+                        onAnnotationTap: (a) => _openAnnotationPanel(
+                          selectedText: a.selectedText,
+                          prefix: a.prefix,
+                          suffix: a.suffix,
+                          fraction: a.position,
+                          existing: a,
+                        ),
+                        onPositionChanged: _onPositionChanged,
+                        jumpNotifier: _jumpNotifier,
+                        emphasizedAnnotationId: _emphasizedAnnotationId,
+                        cancelSelectionNotifier: _cancelSelectionNotifier,
+                      ),
+                    ),
+                    _buildBottomBar(displayTitle),
+                  ],
                 );
               case ReadingMode.screenFlip:
-                reader = ScreenFlipReader(
-                  content: content,
-                  annotations: _annotations,
-                  savedPosition: _savedPosition,
-                  onSelection: _onSelection,
-                  onAnnotationTap: (a) => _openAnnotationPanel(
-                    selectedText: a.selectedText,
-                    prefix: a.prefix,
-                    suffix: a.suffix,
-                    existing: a,
-                  ),
-                  onPositionChanged: _onPositionChanged,
-                  jumpNotifier: _jumpNotifier,
-                  emphasizedAnnotationId: _emphasizedAnnotationId,
-                  cancelSelectionNotifier: _cancelSelectionNotifier,
+                reader = Column(
+                  children: [
+                    Expanded(
+                      child: ScreenFlipReader(
+                        content: content,
+                        formatSpans: formatSpans,
+                        annotations: _annotations,
+                        savedPosition: _savedPosition,
+                        onSelection: _onSelection,
+                        onAnnotationTap: (a) => _openAnnotationPanel(
+                          selectedText: a.selectedText,
+                          prefix: a.prefix,
+                          suffix: a.suffix,
+                          fraction: a.position,
+                          existing: a,
+                        ),
+                        onPositionChanged: _onPositionChanged,
+                        jumpNotifier: _jumpNotifier,
+                        emphasizedAnnotationId: _emphasizedAnnotationId,
+                        cancelSelectionNotifier: _cancelSelectionNotifier,
+                      ),
+                    ),
+                    _buildBottomBar(displayTitle),
+                  ],
                 );
               case ReadingMode.pageFlip:
                 reader = PageFlipReader(
                   content: content,
+                  formatSpans: formatSpans,
                   annotations: _annotations,
                   savedPosition: _savedPosition,
                   onSelection: _onSelection,
@@ -490,6 +605,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     selectedText: a.selectedText,
                     prefix: a.prefix,
                     suffix: a.suffix,
+                    fraction: a.position,
                     existing: a,
                   ),
                   onPositionChanged: _onPositionChanged,
@@ -497,6 +613,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   emphasizedAnnotationId: _emphasizedAnnotationId,
                   twoColumn: _twoColumnEnabled,
                   cancelSelectionNotifier: _cancelSelectionNotifier,
+                  einkNavSide: _einkNavSide,
+                  bottomTrailing: _buildTrailingContent(displayTitle),
                 );
             }
             return Stack(

@@ -7,6 +7,7 @@ plugins {
 android {
     namespace = "com.afluffywaffle.layuv"
     compileSdk = flutter.compileSdkVersion
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -37,6 +38,14 @@ kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
     }
+}
+
+repositories {
+    maven { url = uri("https://repo.boox.com/repository/maven-public/") }
+}
+
+dependencies {
+    implementation("com.onyx.android.sdk:onyxsdk-device:1.2.28")
 }
 
 flutter {

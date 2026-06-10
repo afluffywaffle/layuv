@@ -74,10 +74,10 @@ Launch:
 
 | Code | Method | Payload after token+appName | Use |
 |---|---|---|---|
-| 1 | `setWritableAndNonWritableArea(app, FlagRect[])` | `int count`, then per rect `{left, top, width, height, flag}` | **disable areas** (toolbar protection). `flag` = writable vs non-writable. We sent `0` → strip stayed *writable* (`disable size 0`); **non-writable is likely `1` — CONFIRM with Disable f0/f1 buttons**. (PDF's "sendDisableAreaInfo / SET_DRAWBUFFER_GRAY_RECTS" with trailing `0` is this; the trailing int is the flag.) |
+| 1 | `setWritableAndNonWritableArea(app, FlagRect[])` | `int count`, then per rect `{left, top, width, height, flag}` | **disable areas** (toolbar protection). **flag CONFIRMED on Nomad 2026-06-09:** `flag 0` = **disable/non-writable** (ink suppressed in the rect, rest of screen stays writable — blacklist) → **use this for chrome**. `flag 1` = **writable whitelist** (that rect becomes the *only* drawable area, everything else blocked) → do NOT use for chrome. Old `disablse size 0` was an ordering artifact — with `reset → pen → disable` the rect installs (`disablse size`/`intersectDisable` go to `1` for strokes crossing it; canvas strokes stay `0`). Coordinate note: drawPath maps the rect into an internal image space (`flagRect 960×2160 → image 1024×10496`), but empirically the header rect still catches header strokes and not canvas strokes, so the mapping is good enough. |
 | 2 | `setPenInfo(app, type, width, color)` | `int type, int width, int color` | pen. type 10 = technical pen (no pressure); width = px×100 (2px→200); color black 0 / white 254 / lightgray −102 / darkgray −101. ✅ confirmed |
 | 4 | `sayHello()` / `askTrailData(app, …)` | — | retrieve strokes from drawPath (not needed — we capture via MotionEvent) |
-| 6 | `clearScreen(app)` | `int 255` (constant) | **programmatic full-screen clear** (== the swipe gesture) |
+| 6 | `clearScreen(app)` | `int 255` (constant) | **programmatic full-screen clear** (== the swipe gesture). ✅ CONFIRMED on Nomad 2026-06-09: actually flushes drawPath's retained buffer — strokes vanish from the EPD. Replaces the no-op `invalidate()` clear. |
 | 9 | `setWalcomEmrInfo(app, int)` | `int` | Wacom EMR digitizer config |
 | 16 | `askDeletedlData(…)` | — | eraser / deleted strokes |
 | 99999 | `setDebugMode(app, int)` | `int` | debug |
@@ -87,15 +87,15 @@ Launch:
 
 ### Implementation architecture (the plan when we resume)
 1. **Capture** stroke geometry in our canvas `View.onTouchEvent` (proven; pressure available if we ever want variable width).
-2. **Live preview** = drawPath. On resume: reset → `setPenInfo` → `setWritableAndNonWritableArea` (disable the toolbar/nav strips).
+2. **Live preview** = drawPath. On resume: reset → `setPenInfo` → `setWritableAndNonWritableArea` with **flag 0** rects over the toolbar/nav strips (flag 0 = disable/blacklist; flag 1 would whitelist-block the reading area).
 3. **Commit** on pen-up → persist as ink. The DOCX engine already has `android_native/docx/.../InkDrawing.kt` and the Flutter side has the storage layer (`saveInkPng`, `word/media/ink_[id].png`, `<w:drawing><wp:inline>`), so ink round-trips with Word/Pages/GDocs.
 4. **Own redraw** — app renders its committed strokes itself; on reopening a doc the app draws the persisted ink (drawPath not involved). Keep raster-only/transparent-PNG model per the Up-Next ink section.
 5. **Clear/erase** = `clearScreen` (code 6) full refresh for now; regional later via hteink if needed.
 6. Gate everything behind `isEink` / `supportsInk`.
 
 ### Open items / exact next steps
-- [ ] Confirm the disable **FlagRect flag** value (f0 vs f1) — harness buttons ready; draw on the grey header after each and read drawPath's `disablse size` / `intersectDisable` in `adb logcat -s drawAPP`.
-- [ ] Verify **`clearScreen` (code 6)** actually flushes drawPath's buffer (replaces the no-op `invalidate()` clear).
+- [x] **CONFIRMED 2026-06-09** — disable **FlagRect flag**: `flag 0` = disable/non-writable (blacklist, rest writable) → use for chrome; `flag 1` = writable whitelist (blocks everything else). Harness `fullInit` updated to `flag 0`.
+- [x] **CONFIRMED 2026-06-09** — `clearScreen` (code 6, `app + int 255`) flushes drawPath's buffer; strokes vanish from the EPD. Replaces the no-op `invalidate()` clear.
 - [ ] **Hidden-API:** find a non-reflection route to the binder, OR accept the policy workaround. The real app **cannot** rely on `adb shell settings put global hidden_api_policy 0` (test-only). (It was set to `0` on the device for testing — restore with `settings put global hidden_api_policy null`.)
 - [ ] **Reader-wide refresh concern:** the native port's `app/.../reader/Epd.kt` uses the **Onyx** `EpdController` (Boox) — likely a no-op on Ratta, so page-turn / selection partial refreshes in the READER may also be broken on Supernote. The real refresh path here is `hteink`/`eink`. Investigate — this affects more than ink.
 - [ ] Build the real ink layer (capture → preview → commit → persist via `InkDrawing.kt` → redraw); promote `DrawPathClient`, delete the spike harness.

@@ -14,5 +14,6 @@ import UIKit
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     let messenger = engineBridge.pluginRegistry.registrar(forPlugin: "BookmarkChannel").messenger()
     BookmarkChannel.register(with: messenger)
+    InkChannel.register(with: messenger)
   }
 }

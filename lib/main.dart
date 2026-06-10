@@ -4,9 +4,12 @@ import 'package:archive/archive_io.dart';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'ink_spike_screen.dart';
 import 'reader_screen.dart';
 import 'services/bookmark_service.dart';
+import 'utils/platform_utils.dart';
 
 void main() {
   runApp(const LeamhApp());
@@ -51,8 +54,29 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _tryReopenLast() async {
-    String? lastPath;
     try {
+      if (Platform.isAndroid) {
+        final prefs = await SharedPreferences.getInstance();
+        final path = prefs.getString('bookmark_last_path');
+        if (path == null || !mounted) return;
+        if (!File(path).existsSync()) {
+          await prefs.remove('bookmark_last_path');
+          return;
+        }
+        if (!mounted) return;
+        Navigator.of(context).push(
+          isEink
+              ? PageRouteBuilder(
+                  transitionDuration: Duration.zero,
+                  reverseTransitionDuration: Duration.zero,
+                  pageBuilder: (_, _, _) => ReaderScreen(filePath: path),
+                )
+              : MaterialPageRoute(builder: (_) => ReaderScreen(filePath: path)),
+        );
+        return;
+      }
+
+      String? lastPath;
       final prefs = await SharedPreferences.getInstance();
       lastPath = prefs.getString('bookmark_last_path');
       final path = await _bookmarks.resolveLastFile();
@@ -62,11 +86,24 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
       Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => ReaderScreen(filePath: path)),
+        isEink
+            ? PageRouteBuilder(
+                transitionDuration: Duration.zero,
+                reverseTransitionDuration: Duration.zero,
+                pageBuilder: (_, _, _) => ReaderScreen(filePath: path),
+              )
+            : MaterialPageRoute(builder: (_) => ReaderScreen(filePath: path)),
       );
     } catch (e) {
       debugPrint('_tryReopenLast: bookmark stale or unresolvable, clearing ($e)');
-      if (lastPath != null) await _bookmarks.clearBookmark(lastPath);
+      if (Platform.isAndroid) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('bookmark_last_path');
+      } else {
+        final prefs = await SharedPreferences.getInstance();
+        final lastPath = prefs.getString('bookmark_last_path');
+        if (lastPath != null) await _bookmarks.clearBookmark(lastPath);
+      }
     }
   }
 
@@ -220,13 +257,33 @@ $paragraphs
         }
       }
 
+      if (Platform.isAndroid) {
+        final docsDir = await getApplicationDocumentsDirectory();
+        final leamhDir = Directory(p.join(docsDir.path, 'leamh_docs'));
+        await leamhDir.create(recursive: true);
+        final destPath = p.join(leamhDir.path, p.basename(filePath));
+        // Only copy if we don't already have an annotated copy at this path.
+        if (!File(destPath).existsSync()) {
+          await File(filePath).copy(destPath);
+        }
+        filePath = destPath;
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('bookmark_last_path', filePath);
+      }
+
       await _bookmarks.saveBookmark(filePath);
 
       if (!mounted) return;
       Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (context) => ReaderScreen(filePath: filePath),
-        ),
+        isEink
+            ? PageRouteBuilder(
+                transitionDuration: Duration.zero,
+                reverseTransitionDuration: Duration.zero,
+                pageBuilder: (_, _, _) => ReaderScreen(filePath: filePath),
+              )
+            : MaterialPageRoute(
+                builder: (_) => ReaderScreen(filePath: filePath),
+              ),
       );
     } catch (e) {
       debugPrint('_pickFile error: $e');
@@ -291,6 +348,27 @@ $paragraphs
                     style: const TextStyle(fontFamily: 'Literata'),
                   ),
                 ),
+                if (Platform.isAndroid) ...[
+                  const SizedBox(height: 16),
+                  TextButton(
+                    onPressed: () => Navigator.of(context).push(
+                      isEink
+                          ? PageRouteBuilder(
+                              transitionDuration: Duration.zero,
+                              reverseTransitionDuration: Duration.zero,
+                              pageBuilder: (_, _, _) =>
+                                  const InkSpikeScreen(),
+                            )
+                          : MaterialPageRoute(
+                              builder: (_) => const InkSpikeScreen()),
+                    ),
+                    child: const Text(
+                      'Ink spike',
+                      style: TextStyle(
+                          fontFamily: 'Literata', color: Colors.black38),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

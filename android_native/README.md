@@ -68,13 +68,14 @@ android_native/
     InkDrawing.kt        ✅ <w:drawing> EMU markup + rel-id
     ContentTypes / JsonWriter  ✅
   app/    — Android reader module (depends on :docx + onyxsdk-device)
-    reader/ReaderActivity.kt   ✅ SAF open, position save/restore, column toggle
-    reader/ReaderView.kt       ✅ software-layer View, per-column draw, tap nav
+    reader/ReaderActivity.kt   ✅ SAF open, position save/restore, column toggle, settings
+    reader/ReaderView.kt       ✅ software-layer View, per-column draw, edge-strip nav
     reader/Paginator.kt        ✅ whole-book StaticLayout sliced into column pages
-    reader/HighlightPainter.kt ✅ dotted-underline spans (DashPathEffect + drawPath)
-    reader/Epd.kt              ✅ Onyx EpdController waveforms (GU/GC/DU policy)
+    reader/HighlightPainter.kt ✅ saved spans (solid underline/double/strike, dotted highlight) + selection band
+    reader/SettingsPopup.kt    ✅ reader settings popup (columns + page-turn side, cycle + live-apply)
+    reader/Epd.kt              ✅ auto-EPD (plain invalidate); manual setEinkUpdateMode behind a flag*
     reader/BookLoader.kt       ✅ bytes → DocxStore.load (off-main, spike logging)
-    reader/SelectionController ⬜ long-press + handles → snap → DocxStore.write
+    reader/(selection in ReaderView) ✅ long-press/stylus + drag handles → snap → DocxStore.write
   ink/    — reuse InkCanvasView/InkActivity (transparent-bg fix)          ⬜
   saf/    — txt/md/rtf→DOCX convert (open existing DOCX already works)    ⬜
   tools/golden_gen/gen_goldens.dart — generates the golden fixtures
@@ -125,12 +126,41 @@ comparison). Status of the priority order:
    ↔ char offset ↔ page and `DocxStore.writePosition` (on `onPause`).
 4. ✅ **Two-column** — newspaper flow at half `colWidth`, default-on by
    `smallestScreenWidthDp >= 600` (tunable) with a persisted toggle.
-5. 🟡 **Highlights render** (display half done) — resolved spans drawn as dotted
-   underlines. ⬜ **Selection → create** (long-press + handles →
-   `Anchoring.snapToWordBoundaries` → `selectedText`/`prefix(20)`/`suffix(20)`/
-   `position` → `DocxStore.write`) is the next thing to build — best done with
-   live device feedback for the drag-handle UX and partial-refresh tuning.
-6. ⬜ **Ink (LAST — needs a stylus)** — reuse `InkCanvasView`/`InkActivity` with the
+5. ✅ **Highlights + selection** — resolved spans drawn as dotted underlines;
+   **Selection → create** done. Finger = long-press to start, then drag to extend;
+   stylus = drag to select directly (no long-press) — both word-level + bidirectional
+   via `Anchoring.snapToWordBoundaries`, drawn as a filled selection band with
+   draggable start/end handles → tool popup → `selectedText`/`prefix(20)`/
+   `suffix(20)`/`position` → `DocxStore.write`. Selection state + handles live in
+   `ReaderView`; the popup (`AnnotationPopup`) is non-focusable so handle drags
+   reach the view. During a drag the band repaints via partial `invalidate(Rect)`
+   (old ∪ new rows only) so the e-ink does a fast regional refresh, not a full
+   update. Verified end-to-end on the Nomad (select → adjust → save → round-trip).
+   Remaining device-feel tuning: handle grab radius.
+
+   \* **EPD note:** manual Supernote `View.setEinkUpdateMode` waveforms (Manta
+   dispMode map) do NOT visibly refresh the Nomad panel for partial modes, so
+   `Epd` defaults to auto-EPD (plain `invalidate`); the manual path is kept
+   behind `MANUAL_WAVEFORM` for Manta re-validation.
+6. ✅ **Edge navigation + settings + margin icons (Flutter parity)** — one-handed
+   nav: an 80dp strip on the left and/or right edge, split top (= next) / bottom
+   (= prev), with a **visible** midline divider + chevrons; central reading area no
+   longer turns pages. Settings is a **popup** (`SettingsPopup`) combining columns
+   (1⇄2) and page-turn side (`eink_nav_side` both→left→right) — each row cycles +
+   applies live; the strips inset the text so it reflows. Saved underline/double/
+   strike render SOLID (highlight stays dotted). **Margin indicators** — a per-tool
+   icon (`ToolIconRenderer`, shared with the popup) in the margin left of each
+   annotation's column, level with its start line, for every annotation on the page.
+   All verified on the Nomad. **Body formatting (bold/italic)** ✅ — `PlainTextMapper`
+   emits `FormatSpan`s for direct `<w:b>`/`<w:i>` runs (additive overlay — `plain`
+   + `xmlOffsets` byte-identical, so anchoring/write-back/Word-Pages-Docs compat are
+   untouched; `:docx` goldens still green). `ReaderView` applies them as a `Spannable`
+   (real Literata-Italic + synthesized bold, matching Flutter). Verified on the Nomad
+   with a plain/bold/italic/bold-italic test doc (all distinct, formatting resets with
+   no leakage). Style-based bold/italic (rStyle / heading styles) is NOT resolved yet —
+   direct run formatting only. ⬜ Still pending: locked-tool mode; annotation-note
+   editing; style-based formatting.
+7. ⬜ **Ink (LAST — needs a stylus)** — reuse `InkCanvasView`/`InkActivity` with the
    transparent-background fix; PNG → `word/media/ink_<id>.png` + `hasInk`.
 
 **Build environment:** AGP 8.13.2 on the Gradle 9.1 wrapper. The machine's

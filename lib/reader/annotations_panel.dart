@@ -8,19 +8,23 @@ class AnnotationsPanel extends StatefulWidget {
   final AnnotationStoreInterface store;
   final void Function(double position) onJumpTo;
   final VoidCallback onClose;
+  final VoidCallback? onChanged;
 
   const AnnotationsPanel({
     super.key,
     required this.store,
     required this.onJumpTo,
     required this.onClose,
+    this.onChanged,
   });
 
   @override
   State<AnnotationsPanel> createState() => _AnnotationsPanelState();
 }
 
-class _AnnotationsPanelState extends State<AnnotationsPanel> {
+class _AnnotationsPanelState extends State<AnnotationsPanel>
+    with TickerProviderStateMixin {
+  late TabController _tabController;
   static const _warmPaper = Color(0xFFF5F0E8);
 
   List<Annotation> _annotations = [];
@@ -40,7 +44,15 @@ class _AnnotationsPanelState extends State<AnnotationsPanel> {
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(() => setState(() {}));
     _loadAnnotations();
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadAnnotations() async {
@@ -104,6 +116,7 @@ class _AnnotationsPanelState extends State<AnnotationsPanel> {
         _editMode = false;
       });
       await _loadAnnotations();
+      widget.onChanged?.call();
     }
   }
 
@@ -139,6 +152,43 @@ class _AnnotationsPanelState extends State<AnnotationsPanel> {
         _editMode = false;
       });
       await _loadAnnotations();
+      widget.onChanged?.call();
+    }
+  }
+
+  Future<void> _deleteAllBookmarks() async {
+    final all = _annotations
+        .where((a) => a.tool == AnnotationTool.bookmark)
+        .map((a) => a.id)
+        .toList();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFFF5F0E8),
+        title: const Text('Delete all bookmarks?',
+            style: TextStyle(fontFamily: 'Literata')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel',
+                style: TextStyle(fontFamily: 'Literata', color: Colors.black54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete',
+                style: TextStyle(fontFamily: 'Literata', color: Colors.black87)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await widget.store.deleteAll(all);
+      setState(() {
+        _selected.clear();
+        _editMode = false;
+      });
+      await _loadAnnotations();
+      widget.onChanged?.call();
     }
   }
 
@@ -167,11 +217,9 @@ class _AnnotationsPanelState extends State<AnnotationsPanel> {
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 2,
-      child: Container(
-        color: _warmPaper,
-        child: Column(
+    return Container(
+      color: _warmPaper,
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _Header(
@@ -182,7 +230,8 @@ class _AnnotationsPanelState extends State<AnnotationsPanel> {
                 _selected.clear();
               }),
             ),
-            const TabBar(
+            TabBar(
+              controller: _tabController,
               labelStyle: TextStyle(
                 fontFamily: 'Literata',
                 fontWeight: FontWeight.w600,
@@ -204,6 +253,7 @@ class _AnnotationsPanelState extends State<AnnotationsPanel> {
             ),
             Expanded(
               child: TabBarView(
+                controller: _tabController,
                 children: [
                   _AnnotationsTab(
                     annotations: _filtered,
@@ -243,11 +293,13 @@ class _AnnotationsPanelState extends State<AnnotationsPanel> {
                       if (confirmed == true) {
                         await widget.store.deleteAnnotation(a.id);
                         await _loadAnnotations();
+                        widget.onChanged?.call();
                       }
                     },
                     onDelete: (a) async {
                       await widget.store.deleteAnnotation(a.id);
                       await _loadAnnotations();
+                      widget.onChanged?.call();
                     },
                     confirmDelete: _confirmSingleDelete,
                     editMode: _editMode,
@@ -282,13 +334,26 @@ class _AnnotationsPanelState extends State<AnnotationsPanel> {
                       if (confirmed == true) {
                         await widget.store.deleteAnnotation(a.id);
                         await _loadAnnotations();
+                        widget.onChanged?.call();
                       }
                     },
                     onDelete: (a) async {
                       await widget.store.deleteAnnotation(a.id);
                       await _loadAnnotations();
+                      widget.onChanged?.call();
                     },
                     confirmDelete: _confirmSingleDelete,
+                    editMode: _editMode,
+                    selected: _selected,
+                    onToggleSelect: (id) => setState(() {
+                      if (_selected.contains(id)) {
+                        _selected.remove(id);
+                      } else {
+                        _selected.add(id);
+                      }
+                    }),
+                    filterCommentsOnly: false,
+                    onToggleCommentsOnly: () {},
                   ),
                 ],
               ),
@@ -319,7 +384,7 @@ class _AnnotationsPanelState extends State<AnnotationsPanel> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: FilledButton(
-                          onPressed: _deleteAllAnnotations,
+                          onPressed: _tabController.index == 0 ? _deleteAllAnnotations : _deleteAllBookmarks,
                           style: FilledButton.styleFrom(
                             backgroundColor: Colors.red.shade700,
                             foregroundColor: Colors.white,
@@ -336,7 +401,6 @@ class _AnnotationsPanelState extends State<AnnotationsPanel> {
               ),
           ],
         ),
-      ),
     );
   }
 }

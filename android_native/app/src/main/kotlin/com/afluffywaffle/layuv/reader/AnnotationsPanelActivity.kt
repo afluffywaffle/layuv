@@ -92,6 +92,28 @@ class AnnotationsPanelActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
         }
 
+        // Header with an always-available exit. E-ink devices give the user no
+        // reliable system Back affordance, so the panel MUST own its own close
+        // button or the user is trapped (there are no rows to tap on an empty list).
+        val headerRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            val p = dp(8f)
+            setPadding(p, p, p, 0)
+        }
+        headerRow.addView(
+            navButton("‹ Done") { finish() },
+            LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT),
+        )
+        headerRow.addView(TextView(this).apply {
+            text = "Annotations"
+            typeface = ReaderTheme.chrome(this@AnnotationsPanelActivity)
+            setTextColor(ReaderTheme.INK)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            gravity = Gravity.CENTER_VERTICAL or Gravity.END
+        }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(8f) })
+        root.addView(headerRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+
         // Section toggle row
         val toggleRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -214,6 +236,9 @@ class AnnotationsPanelActivity : Activity() {
         pageLabel.text = if (filtered.isEmpty()) "" else "${currentPage + 1} / $pages"
         prevButton.isEnabled = currentPage > 0
         nextButton.isEnabled = currentPage < pages - 1
+        // Greyscale e-ink: the default disabled tint is too subtle, so dim explicitly.
+        prevButton.alpha = if (prevButton.isEnabled) 1f else 0.3f
+        nextButton.alpha = if (nextButton.isEnabled) 1f else 0.3f
 
         if (filtered.isEmpty()) {
             listContainer.addView(emptyLabel())

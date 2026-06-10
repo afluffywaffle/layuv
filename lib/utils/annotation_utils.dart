@@ -3,6 +3,10 @@ import 'package:flutter/gestures.dart';
 import '../models/annotation.dart';
 import 'platform_utils.dart';
 
+/// A DOCX-sourced formatting range: [start, end) in full-document plain-text
+/// coordinates, paired with the style to apply (bold, italic, heading size…).
+typedef DocxFormatSpan = ({int start, int end, TextStyle style});
+
 const _kMarginIndicatorStyle = TextStyle(
   fontFamily: 'SourceSans3',
   fontSize: 11,
@@ -13,11 +17,11 @@ const _kMarginIndicatorStyle = TextStyle(
 /// Page text paired with its start offset within the full document.
 typedef ReaderPage = ({String text, int offset});
 
-const kReaderTextStyle = TextStyle(
+TextStyle get kReaderTextStyle => TextStyle(
   fontFamily: 'Literata',
   fontSize: 16,
   color: Colors.black87,
-  height: 1.6,
+  height: isEink ? 1.85 : 1.6,
 );
 
 TextStyle styleForTool(TextStyle base, AnnotationTool tool) {
@@ -25,11 +29,12 @@ TextStyle styleForTool(TextStyle base, AnnotationTool tool) {
     case AnnotationTool.highlight:
     case AnnotationTool.inkAnnotation:
     case AnnotationTool.comment:
-      return base.copyWith(
-        backgroundColor: isEink
-            ? const Color(0x26000000)
-            : const Color(0xFFF5D76E),
-      );
+      return isEink
+          ? base.copyWith(
+              decoration: TextDecoration.underline,
+              decorationStyle: TextDecorationStyle.dotted,
+            )
+          : base.copyWith(backgroundColor: const Color(0xFFF5D76E));
     case AnnotationTool.underline:
       return base.copyWith(decoration: TextDecoration.underline);
     case AnnotationTool.doubleUnderline:
@@ -53,6 +58,7 @@ TextStyle _combineStyles(TextStyle base, List<Annotation> annotations) {
   var style = base;
   final decorations = <TextDecoration>[];
   bool hasBackground = false;
+  bool hasEinkHighlight = false;
 
   for (final ann in annotations) {
     switch (ann.tool) {
@@ -60,11 +66,12 @@ TextStyle _combineStyles(TextStyle base, List<Annotation> annotations) {
       case AnnotationTool.comment:
       case AnnotationTool.inkAnnotation:
         if (!hasBackground) {
-          style = style.copyWith(
-            backgroundColor: isEink
-                ? const Color(0x26000000)
-                : const Color(0xFFF5D76E),
-          );
+          if (isEink) {
+            decorations.add(TextDecoration.underline);
+            hasEinkHighlight = true;
+          } else {
+            style = style.copyWith(backgroundColor: const Color(0xFFF5D76E));
+          }
           hasBackground = true;
         }
       case AnnotationTool.underline:
@@ -94,6 +101,10 @@ TextStyle _combineStyles(TextStyle base, List<Annotation> annotations) {
     style = style.copyWith(decorationStyle: TextDecorationStyle.wavy);
   }
 
+  if (hasEinkHighlight && !hasDouble && !hasWavy) {
+    style = style.copyWith(decorationStyle: TextDecorationStyle.dotted);
+  }
+
   return style;
 }
 
@@ -108,6 +119,7 @@ TextSpan buildAnnotatedText({
   required int sliceOffset,
   required TextStyle baseStyle,
   required void Function(Annotation) onAnnotationTap,
+  List<DocxFormatSpan> formatSpans = const [],
 }) {
   final ranges = <({int start, int end, Annotation annotation})>[];
 
@@ -124,13 +136,31 @@ TextSpan buildAnnotatedText({
     ));
   }
 
-  if (ranges.isEmpty) return TextSpan(text: sliceContent, style: baseStyle);
+  // Clip format spans to this slice.
+  final localFormatSpans = <({int start, int end, TextStyle style})>[];
+  for (final fs in formatSpans) {
+    final localStart = fs.start - sliceOffset;
+    final localEnd = fs.end - sliceOffset;
+    if (localEnd <= 0 || localStart >= sliceContent.length) continue;
+    localFormatSpans.add((
+      start: localStart.clamp(0, sliceContent.length),
+      end: localEnd.clamp(0, sliceContent.length),
+      style: fs.style,
+    ));
+  }
 
-  // Build segment boundaries from all range endpoints.
+  final hasAnyContent = ranges.isNotEmpty || localFormatSpans.isNotEmpty;
+  if (!hasAnyContent) return TextSpan(text: sliceContent, style: baseStyle);
+
+  // Build segment boundaries from annotation and format span endpoints.
   final boundaries = <int>{0, sliceContent.length};
   for (final r in ranges) {
     boundaries.add(r.start);
     boundaries.add(r.end);
+  }
+  for (final fs in localFormatSpans) {
+    boundaries.add(fs.start);
+    boundaries.add(fs.end);
   }
   final sortedBoundaries = boundaries.toList()..sort();
 
@@ -141,6 +171,15 @@ TextSpan buildAnnotatedText({
     final segEnd = sortedBoundaries[i + 1];
     if (segStart >= segEnd) continue;
 
+    // Base style: merge DOCX formatting (bold/italic/size) under reader baseStyle.
+    TextStyle segBaseStyle = baseStyle;
+    for (final fs in localFormatSpans) {
+      if (fs.start <= segStart && fs.end >= segEnd) {
+        segBaseStyle = baseStyle.merge(fs.style);
+        break;
+      }
+    }
+
     final covering = ranges
         .where((r) => r.start <= segStart && r.end >= segEnd)
         .toList();
@@ -148,7 +187,7 @@ TextSpan buildAnnotatedText({
     final segText = sliceContent.substring(segStart, segEnd);
 
     if (covering.isEmpty) {
-      children.add(TextSpan(text: segText, style: baseStyle));
+      children.add(TextSpan(text: segText, style: segBaseStyle));
       continue;
     }
 
@@ -172,8 +211,8 @@ TextSpan buildAnnotatedText({
     }
 
     final segStyle = nonBookmarks.isEmpty
-        ? baseStyle
-        : _combineStyles(baseStyle, nonBookmarks.map((r) => r.annotation).toList());
+        ? segBaseStyle
+        : _combineStyles(segBaseStyle, nonBookmarks.map((r) => r.annotation).toList());
 
     // Span-start • dot: prepend before the first segment of each annotation that has a note.
     for (final r in covering) {

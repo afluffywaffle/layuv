@@ -126,9 +126,12 @@ class DocxStore implements AnnotationStoreInterface {
       final jsonRaw = _entryString(archive, 'leamh/annotations.json');
       if (jsonRaw != null) {
         final list = jsonDecode(jsonRaw) as List<dynamic>;
-        return list
-            .map((e) => Annotation.fromJson(e as Map<String, dynamic>))
-            .toList();
+        // Detect hasInk from archive presence — PNG is the source of truth.
+        return list.map((e) {
+          final a = Annotation.fromJson(e as Map<String, dynamic>);
+          final hasInk = archive.findFile('word/media/ink_${a.id}.png') != null;
+          return hasInk == a.hasInk ? a : a.copyWith(hasInk: hasInk);
+        }).toList();
       }
 
       // No Léamh JSON yet — import native DOCX formatting + legacy comments.
@@ -295,6 +298,20 @@ class DocxStore implements AnnotationStoreInterface {
     } catch (e) {
       debugPrint('DocxStore.extractFormatSpans error: $e');
       return const [];
+    }
+  }
+
+  static String? extractTitle(List<int> docxBytes) {
+    try {
+      final archive = ZipDecoder().decodeBytes(docxBytes);
+      final entry = archive.findFile('docProps/core.xml');
+      if (entry == null) return null;
+      final xml = utf8.decode(entry.content as List<int>);
+      final match = RegExp(r'<dc:title[^>]*>(.*?)</dc:title>', dotAll: true).firstMatch(xml);
+      final title = match?.group(1)?.trim();
+      return (title == null || title.isEmpty) ? null : title;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -578,6 +595,27 @@ class DocxStore implements AnnotationStoreInterface {
         await _writeAllAnnotations(list);
       });
 
+  // Embeds a PNG for an ink annotation and sets hasInk = true.
+  // Called by the platform ink canvas layer after the user finishes drawing.
+  @override
+  Future<void> saveInkPng(String annotationId, List<int> pngBytes) =>
+      _serialized(() async {
+        await _resolveAccess();
+        // Pre-write the PNG so _writeAllAnnotations sees it in the archive.
+        final bytes = await File(filePath).readAsBytes();
+        var archive = _decodeZip(bytes);
+        archive = _replaceOrAddEntry(
+            archive, 'word/media/ink_$annotationId.png', pngBytes);
+        await _writeArchive(archive);
+        // Update hasInk flag and rebuild comments/document XML.
+        final list = await loadAnnotations();
+        final idx = list.indexWhere((a) => a.id == annotationId);
+        if (idx >= 0) {
+          list[idx] = list[idx].copyWith(hasInk: true);
+          await _writeAllAnnotations(list);
+        }
+      });
+
   // ---------------------------------------------------------------------------
   // _writeAllAnnotations
   //
@@ -617,23 +655,31 @@ class DocxStore implements AnnotationStoreInterface {
       utf8.encode(jsonEncode(annotations.map((a) => a.toJson()).toList())),
     );
 
-    // Write word/comments.xml — ONLY for annotations with a note or tag.
-    // These appear as human-readable comment bubbles in Word/Pages/Docs.
-    final noteAnnotations = annotations
-        .where((a) => a.note != null || a.tag != null)
+    // Write word/comments.xml — for annotations with a note, tag, or ink.
+    // These appear as comment bubbles in Word/Pages/Docs; ink is embedded
+    // as a <w:drawing><wp:inline> image referencing word/media/ink_[id].png.
+    final commentAnnotations = annotations
+        .where((a) => a.note != null || a.tag != null || a.hasInk)
         .toList();
 
-    if (noteAnnotations.isNotEmpty) {
-      final commentBlocks = noteAnnotations
+    if (commentAnnotations.isNotEmpty) {
+      final commentBlocks = commentAnnotations
           .asMap()
           .entries
-          .map((e) => _buildNoteComment(xmlId: e.key, a: e.value))
+          .map((e) => _buildNoteComment(
+                xmlId: e.key,
+                a: e.value,
+                inkRelId: e.value.hasInk ? _inkRelId(e.value.id) : null,
+              ))
           .join('\n');
       final commentsXml =
           '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
           '<w:comments'
           ' xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
           ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+          ' xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"'
+          ' xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+          ' xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"'
           ' xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"'
           '>\n'
           '$commentBlocks\n'
@@ -641,8 +687,13 @@ class DocxStore implements AnnotationStoreInterface {
       archive = _replaceOrAddEntry(
           archive, 'word/comments.xml', utf8.encode(commentsXml));
       archive = _ensureRelsEntry(archive);
+      final inkAnnotations =
+          commentAnnotations.where((a) => a.hasInk).toList();
+      if (inkAnnotations.isNotEmpty) {
+        archive = _ensureCommentsRels(archive, inkAnnotations);
+      }
     } else {
-      // No note annotations — write empty comments.xml if one already existed.
+      // No comment annotations — write empty comments.xml if one already existed.
       final existing = _entryString(archive, 'word/comments.xml');
       if (existing != null) {
         const empty =
@@ -655,22 +706,27 @@ class DocxStore implements AnnotationStoreInterface {
     }
 
     archive = _ensureContentType(archive);
-    archive = _injectNativeFormatting(archive, annotations, noteAnnotations);
+    archive = _injectNativeFormatting(archive, annotations, commentAnnotations);
     await _writeArchive(archive);
   }
 
-  // Builds a <w:comment> for an annotation that has a note or tag.
-  // Author = annotation UUID. Body = note text and/or tag name.
+  // Builds a <w:comment> for an annotation that has a note, tag, or ink.
+  // Author = annotation UUID. Body = note text, tag name, and/or ink drawing.
   // No [tool:X] metadata — tools are in leamh/annotations.json.
-  static String _buildNoteComment({required int xmlId, required Annotation a}) {
+  static String _buildNoteComment({
+    required int xmlId,
+    required Annotation a,
+    String? inkRelId,
+  }) {
     final noteXml = (a.note != null && a.note!.isNotEmpty)
         ? '<w:p><w:r><w:t xml:space="preserve">${_esc(a.note!)}</w:t></w:r></w:p>'
         : '';
     final tagXml = a.tag != null
         ? '<w:p><w:r><w:t xml:space="preserve">[${a.tag!.name}]</w:t></w:r></w:p>'
         : '';
-    final bodyXml =
-        (noteXml.isEmpty && tagXml.isEmpty) ? '<w:p/>' : '$noteXml$tagXml';
+    final drawingXml = inkRelId != null ? _buildInkDrawing(inkRelId) : '';
+    final bodyParts = [noteXml, tagXml, drawingXml].where((s) => s.isNotEmpty);
+    final bodyXml = bodyParts.isEmpty ? '<w:p/>' : bodyParts.join('');
 
     return '<w:comment w:id="$xmlId" w:author="${_esc(a.id)}"'
         ' w:date="${a.timestamp.toUtc().toIso8601String()}">\n'
@@ -680,6 +736,44 @@ class DocxStore implements AnnotationStoreInterface {
         '<w:annotationRef/></w:r>\n'
         '  </w:p>\n'
         '  $bodyXml</w:comment>';
+  }
+
+  // 4 inches × 2 inches in EMU (914400 EMU per inch).
+  static const _inkCx = 3657600;
+  static const _inkCy = 1828800;
+
+  static String _buildInkDrawing(String relId) =>
+      '<w:p><w:r><w:drawing>'
+      '<wp:inline distT="0" distB="0" distL="0" distR="0">'
+      '<wp:extent cx="$_inkCx" cy="$_inkCy"/>'
+      '<wp:docPr id="1" name="Ink"/>'
+      '<wp:cNvGraphicFramePr>'
+      '<a:graphicFrameLocks noChangeAspect="1"/>'
+      '</wp:cNvGraphicFramePr>'
+      '<a:graphic>'
+      '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+      '<pic:pic>'
+      '<pic:nvPicPr>'
+      '<pic:cNvPr id="1" name="ink.png"/>'
+      '<pic:cNvPicPr/>'
+      '</pic:nvPicPr>'
+      '<pic:blipFill>'
+      '<a:blip r:embed="$relId"/>'
+      '<a:stretch><a:fillRect/></a:stretch>'
+      '</pic:blipFill>'
+      '<pic:spPr>'
+      '<a:xfrm><a:off x="0" y="0"/><a:ext cx="$_inkCx" cy="$_inkCy"/></a:xfrm>'
+      '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>'
+      '</pic:spPr>'
+      '</pic:pic>'
+      '</a:graphicData>'
+      '</a:graphic>'
+      '</wp:inline>'
+      '</w:drawing></w:r></w:p>';
+
+  static String _inkRelId(String annotationId) {
+    final safe = annotationId.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_');
+    return 'rId_ink_$safe';
   }
 
   // ---------------------------------------------------------------------------
@@ -1177,6 +1271,13 @@ class DocxStore implements AnnotationStoreInterface {
       changed = true;
     }
 
+    const pngDefault = 'Extension="png"';
+    if (!raw.contains(pngDefault)) {
+      raw = raw.replaceFirst('</Types>',
+          '<Default Extension="png" ContentType="image/png"/>\n</Types>');
+      changed = true;
+    }
+
     const jsonDefault = 'Extension="json"';
     if (!raw.contains(jsonDefault)) {
       raw = raw.replaceFirst('</Types>',
@@ -1195,6 +1296,22 @@ class DocxStore implements AnnotationStoreInterface {
 
     if (!changed) return archive;
     return _replaceOrAddEntry(archive, entryName, utf8.encode(raw));
+  }
+
+  Archive _ensureCommentsRels(Archive archive, List<Annotation> inkAnnotations) {
+    const relsPath = 'word/_rels/comments.xml.rels';
+    final relEntries = inkAnnotations.map((a) {
+      final relId = _inkRelId(a.id);
+      return '<Relationship Id="$relId"'
+          ' Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"'
+          ' Target="media/ink_${a.id}.png"/>';
+    }).join('\n');
+    final xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        '<Relationships'
+        ' xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'
+        '$relEntries\n'
+        '</Relationships>';
+    return _replaceOrAddEntry(archive, relsPath, utf8.encode(xml));
   }
 
   Archive _ensureRelsEntry(Archive archive) {

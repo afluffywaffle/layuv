@@ -21,6 +21,7 @@ import android.widget.TextView
 import android.widget.Toast
 import com.afluffywaffle.layuv.R
 import com.afluffywaffle.layuv.docx.DocxStore
+import com.afluffywaffle.layuv.docx.ResolvedAnnotation
 import com.afluffywaffle.layuv.docx.model.Annotation
 import com.afluffywaffle.layuv.docx.model.AnnotationTool
 import com.afluffywaffle.layuv.docx.model.ReadingMode
@@ -43,7 +44,7 @@ class ReaderActivity : Activity() {
 
     private lateinit var readerView: ReaderView
     private lateinit var pageIndicator: TextView
-    private lateinit var columnsButton: Button
+    private lateinit var settingsButton: Button
     private lateinit var prefs: SharedPreferences
 
     private val ioExecutor = Executors.newSingleThreadExecutor()
@@ -53,13 +54,17 @@ class ReaderActivity : Activity() {
     @Volatile private var savingPosition = false
 
     private val annotationPopup by lazy { AnnotationPopup(this) }
+    private val settingsPopup by lazy { SettingsPopup(this) }
     private var pendingSelStart = -1
     private var pendingSelEnd = -1
+    // Set when the user taps an existing annotation and then picks "comment" to edit its note.
+    private var pendingAnnotation: ResolvedAnnotation? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
         setContentView(buildUi())
+        readerView.setNavSide(prefs.getString(KEY_NAV_SIDE, "both") ?: "both")
         Log.i(TAG, "smallestScreenWidthDp=${resources.configuration.smallestScreenWidthDp} (auto 2-col >= $AUTO_TWO_COL_MIN_DP)")
         reopenLastOrPrompt()
     }
@@ -82,8 +87,8 @@ class ReaderActivity : Activity() {
         }
 
         val openButton = chromeButton(getString(R.string.open_document)) { launchOpen() }
-        columnsButton = chromeButton(columnsLabel(resolveColumns())) { toggleColumns() }
         val annotationsButton = chromeButton(getString(R.string.annotations)) { launchAnnotationsPanel() }
+        settingsButton = chromeButton("Settings") { launchSettings() }
 
         pageIndicator = TextView(this).apply {
             typeface = ReaderTheme.body(this@ReaderActivity)
@@ -94,8 +99,8 @@ class ReaderActivity : Activity() {
         }
 
         toolbar.addView(openButton)
-        toolbar.addView(columnsButton)
         toolbar.addView(annotationsButton)
+        toolbar.addView(settingsButton)
         toolbar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f)) // spacer
         toolbar.addView(pageIndicator, LinearLayout.LayoutParams(WRAP_CONTENT, MATCH_PARENT).apply {
             marginEnd = dp(8f)
@@ -107,18 +112,31 @@ class ReaderActivity : Activity() {
                 pendingSelStart = start
                 pendingSelEnd = end
                 annotationPopup.show(
-                    this, anchorX, anchorY,
-                    onDismiss = { readerView.cancelSelection() },
-                ) { tool ->
-                    if (tool == AnnotationTool.comment) {
-                        startActivityForResult(
-                            Intent(this@ReaderActivity, NoteActivity::class.java),
-                            REQ_NOTE,
-                        )
-                    } else {
-                        commitAnnotation(tool, null)
-                    }
-                }
+                    anchor = this,
+                    anchorX = anchorX,
+                    anchorY = anchorY,
+                    onTool = { tool ->
+                        if (tool == AnnotationTool.comment) {
+                            startActivityForResult(
+                                Intent(this@ReaderActivity, NoteActivity::class.java),
+                                REQ_NOTE,
+                            )
+                        } else {
+                            commitAnnotation(tool, null)
+                        }
+                    },
+                )
+            }
+            onHidePopup = { annotationPopup.dismiss() }
+            onAnnotationTapped = { resolved, anchorX, anchorY ->
+                annotationPopup.show(
+                    anchor = this,
+                    anchorX = anchorX,
+                    anchorY = anchorY,
+                    onTool = { tool -> retoolAnnotation(resolved, tool) },
+                    onDelete = { deleteAnnotation(resolved) },
+                    note = resolved.annotation.note,
+                )
             }
         }
 
@@ -140,7 +158,22 @@ class ReaderActivity : Activity() {
         setOnClickListener { onClick() }
     }
 
-    private fun columnsLabel(columns: Int): String = if (columns >= 2) "2 col" else "1 col"
+    /** Reader settings popup: columns + page-turn side, applied live. */
+    private fun launchSettings() {
+        settingsPopup.show(
+            anchor = settingsButton,
+            columns = readerView.columns(),
+            navSide = prefs.getString(KEY_NAV_SIDE, "both") ?: "both",
+            onColumns = { cols ->
+                prefs.edit().putInt(KEY_COLUMNS, cols).apply()
+                readerView.setColumns(cols)
+            },
+            onNavSide = { side ->
+                prefs.edit().putString(KEY_NAV_SIDE, side).apply()
+                readerView.setNavSide(side)
+            },
+        )
+    }
 
     // --- Permission ----------------------------------------------------------
 
@@ -216,6 +249,19 @@ class ReaderActivity : Activity() {
                     readerView.cancelSelection()
                 }
             }
+            REQ_RETOOL_NOTE -> {
+                val ann = pendingAnnotation ?: return
+                pendingAnnotation = null
+                if (resultCode == RESULT_OK) {
+                    val note = data?.getStringExtra(NoteActivity.EXTRA_NOTE)?.takeIf { it.isNotEmpty() }
+                    val opened = book ?: return
+                    val file = opened.file ?: return
+                    val updated = ann.annotation.copy(tool = AnnotationTool.comment, note = note)
+                    val newList = opened.doc.annotations.map { it.annotation }
+                        .map { if (it.id == updated.id) updated else it }
+                    saveAnnotations(opened, file, newList)
+                }
+            }
             REQ_ANNOTATIONS -> {
                 when (resultCode) {
                     RESULT_OK -> {
@@ -268,13 +314,12 @@ class ReaderActivity : Activity() {
         title = opened.displayName
 
         val columns = resolveColumns()
-        columnsButton.text = columnsLabel(columns)
 
         val length = opened.doc.plainText.length
         val fraction = opened.doc.position?.fraction ?: 0.0
         val startChar = (fraction * length).roundToInt().coerceIn(0, length)
 
-        readerView.showContent(opened.doc.plainText, opened.doc.annotations, columns, startChar)
+        readerView.showContent(opened.doc.plainText, opened.doc.annotations, columns, startChar, opened.doc.formatSpans)
     }
 
     // --- Columns -------------------------------------------------------------
@@ -284,13 +329,6 @@ class ReaderActivity : Activity() {
         val stored = prefs.getInt(KEY_COLUMNS, 0)
         if (stored == 1 || stored == 2) return stored
         return if (resources.configuration.smallestScreenWidthDp >= AUTO_TWO_COL_MIN_DP) 2 else 1
-    }
-
-    private fun toggleColumns() {
-        val next = if (readerView.columns() >= 2) 1 else 2
-        prefs.edit().putInt(KEY_COLUMNS, next).apply()
-        columnsButton.text = columnsLabel(next)
-        readerView.setColumns(next)
     }
 
     // --- Annotation write-back -----------------------------------------------
@@ -329,24 +367,57 @@ class ReaderActivity : Activity() {
         readerView.cancelSelection()
 
         val existing = opened.doc.annotations.map { it.annotation }
-        val updated = existing + annotation
+        saveAnnotations(opened, file, existing + annotation)
+    }
 
+    private fun retoolAnnotation(resolved: ResolvedAnnotation, newTool: AnnotationTool) {
+        val opened = book ?: return
+        val file = opened.file ?: run {
+            Toast.makeText(this, "File is read-only — can't edit annotation.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (newTool == AnnotationTool.comment) {
+            pendingAnnotation = resolved
+            startActivityForResult(
+                Intent(this, NoteActivity::class.java)
+                    .putExtra(NoteActivity.EXTRA_NOTE, resolved.annotation.note ?: ""),
+                REQ_RETOOL_NOTE,
+            )
+            return
+        }
+        val updated = resolved.annotation.copy(tool = newTool, note = null)
+        val newList = opened.doc.annotations.map { it.annotation }
+            .map { if (it.id == updated.id) updated else it }
+        saveAnnotations(opened, file, newList)
+    }
+
+    private fun deleteAnnotation(resolved: ResolvedAnnotation) {
+        val opened = book ?: return
+        val file = opened.file ?: run {
+            Toast.makeText(this, "File is read-only — can't delete annotation.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val newList = opened.doc.annotations.map { it.annotation }
+            .filter { it.id != resolved.annotation.id }
+        saveAnnotations(opened, file, newList)
+    }
+
+    private fun saveAnnotations(opened: OpenBook, file: File, newList: List<Annotation>) {
         ioExecutor.execute {
             try {
-                val newBytes = DocxStore.write(opened.bytes, updated)
+                val newBytes = DocxStore.write(opened.bytes, newList)
                 file.writeBytes(newBytes)
                 val freshDoc = DocxStore.load(newBytes)
                 val freshBook = OpenBook(opened.displayName, newBytes, freshDoc, file)
-                Log.i(TAG, "annotation saved: ${annotation.tool} '${annotation.selectedText.take(30)}'")
                 main.post {
                     book = freshBook
                     readerView.updateAnnotations(freshDoc.annotations)
                     readerView.fullClear()
                 }
             } catch (ex: Exception) {
-                Log.e(TAG, "commitAnnotation failed", ex)
+                Log.e(TAG, "saveAnnotations failed", ex)
                 main.post {
-                    Toast.makeText(this, "Could not save annotation.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Could not save changes.", Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -396,9 +467,11 @@ class ReaderActivity : Activity() {
         private const val REQ_BROWSE = 1002
         private const val REQ_NOTE = 1003
         private const val REQ_ANNOTATIONS = 1004
+        private const val REQ_RETOOL_NOTE = 1005
         private const val PREFS = "leamh"
         private const val KEY_LAST_PATH = "last_path"
         private const val KEY_COLUMNS = "columns"
+        private const val KEY_NAV_SIDE = "eink_nav_side"
         // The Nomad reports smallestScreenWidthDp=1024 and reads best at 1 col,
         // so the auto-2-col threshold sits above it; the larger Manta should land
         // above this and default to 2 col. Confirm the Manta's logged value and

@@ -21,10 +21,15 @@ class NoteActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(buildUi())
+        val existing = intent.getStringExtra(EXTRA_NOTE)
+        setContentView(buildUi(existing))
+        if (!existing.isNullOrEmpty()) {
+            editText.setText(existing)
+            editText.setSelection(existing.length)
+        }
     }
 
-    private fun buildUi(): View {
+    private fun buildUi(existing: String?): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(ReaderTheme.PAPER)
@@ -32,7 +37,7 @@ class NoteActivity : Activity() {
         }
 
         root.addView(TextView(this).apply {
-            text = "Add note"
+            text = if (existing.isNullOrEmpty()) "Add note" else "Edit note"
             typeface = Typeface.create(ReaderTheme.body(context), Typeface.BOLD)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
             setTextColor(ReaderTheme.INK)

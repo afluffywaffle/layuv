@@ -8,4 +8,5 @@ abstract interface class AnnotationStoreInterface {
   Future<void> deleteAnnotation(String id);
   Future<void> deleteAll(List<String> ids);
   Future<void> savePosition(ReadingPosition position);
+  Future<void> saveInkPng(String annotationId, List<int> pngBytes);
 }

@@ -25,8 +25,11 @@ import android.util.Log
  * transact()==true with no RemoteException.
  *
  * FlagRect parcel layout (code 1): token, String app, int count, then per rect
- * { int left, int top, int width, int height, int flag }. `flag` selects
- * writable vs non-writable; exact value is being confirmed empirically.
+ * { int left, int top, int width, int height, int flag }. CONFIRMED on Nomad
+ * 2026-06-09: flag 0 = non-writable/disable (blacklist — ink suppressed in the
+ * rect, rest of screen stays writable; use for toolbar protection); flag 1 =
+ * writable whitelist (that rect becomes the ONLY drawable area). The 18888
+ * full-screen sentinel rect is special-cased as a reset (clears the area list).
  */
 object DrawPathClient {
     const val TAG = "DrawPathSpike"
@@ -65,7 +68,11 @@ object DrawPathClient {
             it.writeInt(type); it.writeInt(width); it.writeInt(color)
         } + " type=$type w=$width c=$color"
 
-    /** code 6 — programmatic full-screen clear (what the swipe gesture does). */
+    /**
+     * code 6 — programmatic full-screen clear (what the swipe gesture does).
+     * CONFIRMED on Nomad 2026-06-09: flushes drawPath's retained buffer; ink
+     * vanishes from the EPD.
+     */
     fun clearScreen(appName: String): String =
         transactInts("clearScreen", CODE_CLEAR, appName) {
             it.writeInt(255) // constant the Bp proxy always writes
@@ -73,7 +80,8 @@ object DrawPathClient {
 
     /**
      * code 1 — setWritableAndNonWritableArea. Each rect = [left, top, width,
-     * height, flag]. flag chooses writable vs non-writable (disable).
+     * height, flag]. CONFIRMED: flag 0 = disable (blacklist that rect, rest
+     * writable); flag 1 = writable whitelist (only that rect writable).
      */
     fun setWritableAreas(appName: String, rects: List<IntArray>, label: String = "areas"): String =
         transactInts(label, CODE_WRITABLE_AREA, appName) {

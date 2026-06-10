@@ -50,6 +50,15 @@
             android:exported="true"
             android:theme="@style/Theme.Leamh"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|keyboardHidden" />
+
+        <!-- SPIKE: Supernote native EPD refresh test (android.os.EinkManager).
+             Not in the launcher; start with
+             `am start -n .../com.afluffywaffle.layuv.spike.EinkRefreshSpikeActivity`. -->
+        <activity
+            android:name=".spike.EinkRefreshSpikeActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Leamh"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|keyboardHidden" />
     </application>
 
 </manifest>

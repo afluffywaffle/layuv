@@ -2,11 +2,15 @@ package com.afluffywaffle.layuv.reader
 
 import android.app.Activity
 import android.graphics.drawable.ColorDrawable
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.PopupWindow
+import android.widget.TextView
 import com.afluffywaffle.layuv.R
 import com.afluffywaffle.layuv.docx.model.AnnotationTool
 
@@ -31,61 +35,98 @@ class AnnotationPopup(private val activity: Activity) {
 
     /**
      * Show the popup above [anchorX, anchorY] (view-relative coordinates).
-     * [onDismiss] is called if the popup is dismissed without a tool being chosen
-     * (e.g. outside tap). [onTool] is called with the chosen tool.
+     * [onTool] is called with the chosen tool. When [onDelete] is non-null a
+     * "Delete annotation" row is added below the tool strip (edit mode).
+     * When [note] is non-null the note text is shown above the tool strip (read-only).
+     * The popup is non-focusable and not outside-touchable so touches pass
+     * through to the [ReaderView] underneath.
      */
     fun show(
         anchor: View,
         anchorX: Int,
         anchorY: Int,
-        onDismiss: () -> Unit,
         onTool: (AnnotationTool) -> Unit,
+        onDelete: (() -> Unit)? = null,
+        note: String? = null,
     ) {
         dismiss()
 
-        val row = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setBackgroundResource(R.drawable.popup_bg)
-        }
-
         val btnSize = dp(64f)
-        var toolChosen = false
+        val toolStripW = 6 * btnSize + 5 * dp(1f)
 
+        val toolRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
         tools.forEachIndexed { i, tool ->
             if (i > 0) {
-                row.addView(View(activity).apply {
+                toolRow.addView(View(activity).apply {
                     layoutParams = LinearLayout.LayoutParams(dp(1f), btnSize).apply {
                         setMargins(0, dp(12f), 0, dp(12f))
                     }
                     setBackgroundColor(0x26000000)
                 })
             }
-            row.addView(ToolIconView(activity, tool).apply {
+            toolRow.addView(ToolIconView(activity, tool).apply {
                 layoutParams = LinearLayout.LayoutParams(btnSize, btnSize)
                 isClickable = true
                 isFocusable = true
-                setOnClickListener {
-                    toolChosen = true
-                    dismiss()
-                    onTool(tool)
-                }
+                setOnClickListener { dismiss(); onTool(tool) }
             })
         }
 
-        row.measure(
+        val popupContent: View = if (note == null && onDelete == null) {
+            toolRow.apply { setBackgroundResource(R.drawable.popup_bg) }
+        } else {
+            LinearLayout(activity).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundResource(R.drawable.popup_bg)
+                if (note != null) {
+                    addView(TextView(activity).apply {
+                        text = note
+                        typeface = ReaderTheme.body(activity)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                        setTextColor(ReaderTheme.INK)
+                        setPadding(dp(16f), dp(12f), dp(16f), dp(12f))
+                        layoutParams = LinearLayout.LayoutParams(toolStripW, WRAP_CONTENT)
+                    })
+                    addView(View(activity).apply {
+                        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(1f))
+                        setBackgroundColor(0x26000000)
+                    })
+                }
+                addView(toolRow)
+                if (onDelete != null) {
+                    addView(View(activity).apply {
+                        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(1f))
+                        setBackgroundColor(0x26000000)
+                    })
+                    addView(Button(activity).apply {
+                        text = "Delete annotation"
+                        isAllCaps = false
+                        typeface = ReaderTheme.body(activity)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                        setTextColor(ReaderTheme.INK)
+                        setBackgroundColor(0)
+                        minHeight = dp(56f)
+                        minimumHeight = dp(56f)
+                        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+                        setOnClickListener { dismiss(); onDelete() }
+                    })
+                }
+            }
+        }
+
+        popupContent.measure(
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
         )
-        val popupW = row.measuredWidth
-        val popupH = row.measuredHeight
+        val popupW = popupContent.measuredWidth
+        val popupH = popupContent.measuredHeight
 
-        val pw = PopupWindow(row, WRAP_CONTENT, WRAP_CONTENT, true).apply {
+        val pw = PopupWindow(popupContent, WRAP_CONTENT, WRAP_CONTENT, false).apply {
             setBackgroundDrawable(ColorDrawable(0x00000000))
-            isOutsideTouchable = true
-            setOnDismissListener {
-                popup = null
-                if (!toolChosen) onDismiss()
-            }
+            isOutsideTouchable = false
+            setOnDismissListener { popup = null }
         }
         popup = pw
 

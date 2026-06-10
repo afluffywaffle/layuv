@@ -115,7 +115,10 @@ class DrawPathSpikeActivity : Activity() {
             append("pkg=").append(pkg).append('\n')
             append(DrawPathClient.sendReset(pkg)).append('\n')   // 1. mandatory reset
             append(DrawPathClient.sendPen(pkg, 10, 200, 0)).append('\n') // 2. pen
-            append(disableHeader(1)).append('\n')                // 3. disable header (flag 1 = best guess)
+            // 3. disable header. flag 0 = non-writable/disable (CONFIRMED Nomad
+            // 2026-06-09: ink suppressed in the rect, rest of screen stays
+            // writable). flag 1 is a writable WHITELIST that would block the canvas.
+            append(disableHeader(0)).append('\n')
             append("screen=").append(resources.displayMetrics.widthPixels)
             append("x").append(resources.displayMetrics.heightPixels).append('\n')
             append("→ draw below; try writing on the grey header too")

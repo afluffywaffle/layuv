@@ -11,6 +11,7 @@ class AppBarPill extends StatelessWidget {
   final VoidCallback onAnnotations;
   final bool twoColumnEnabled;
   final VoidCallback onToggleTwoColumn;
+  final VoidCallback? onEinkSettings;
 
   const AppBarPill({
     super.key,
@@ -22,13 +23,14 @@ class AppBarPill extends StatelessWidget {
     required this.onAnnotations,
     this.twoColumnEnabled = false,
     required this.onToggleTwoColumn,
+    this.onEinkSettings,
   });
 
-  static const _divider = SizedBox(
-    width: 1,
-    height: 32,
-    child: ColoredBox(color: Colors.black12),
-  );
+  Widget get _divider => SizedBox(
+        width: 1,
+        height: isEink ? 40.0 : 32.0,
+        child: const ColoredBox(color: Colors.black12),
+      );
 
   Widget _pillButton({
     required Widget child,
@@ -38,7 +40,9 @@ class AppBarPill extends StatelessWidget {
       borderRadius: BorderRadius.circular(16),
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: isEink
+            ? const EdgeInsets.symmetric(horizontal: 16, vertical: 12)
+            : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: child,
       ),
     );
@@ -50,19 +54,20 @@ class AppBarPill extends StatelessWidget {
       ReadingMode.screenFlip => Icons.arrow_upward,
       ReadingMode.pageFlip => Icons.arrow_forward,
     };
-    return Icon(icon, size: 20, color: Colors.black87);
+    return Icon(icon, size: isEink ? 28.0 : 20.0, color: Colors.black87);
   }
 
   Widget _lockSlot(AnnotationTool tool) {
+    final sz = isEink ? 28.0 : 20.0;
     return Stack(
       clipBehavior: Clip.none,
       children: [
         SizedBox(
-          width: 20,
-          height: 20,
+          width: sz,
+          height: sz,
           child: Align(
             alignment: Alignment.center,
-            child: ToolIcon(tool: tool, size: 20),
+            child: ToolIcon(tool: tool, size: sz),
           ),
         ),
         Positioned(
@@ -97,36 +102,39 @@ class AppBarPill extends StatelessWidget {
         children: [
           _pillButton(
             onTap: onAnnotations,
-            child: const Icon(Icons.list_alt, size: 20, color: Colors.black87),
+            child: Icon(Icons.list_alt, size: isEink ? 28.0 : 20.0, color: Colors.black87),
           ),
 
           _divider,
 
           _pillButton(
             onTap: onClose,
-            child: const Icon(Icons.close, size: 20, color: Colors.black87),
+            child: Icon(Icons.close, size: isEink ? 28.0 : 20.0, color: Colors.black87),
           ),
 
           _divider,
 
-          PopupMenuButton<ReadingMode>(
-            initialValue: readingMode,
-            onSelected: onModeSelected,
-            offset: const Offset(0, 40),
-            color: const Color(0xFFF5F0E8),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            itemBuilder: (_) => [
-              _modeMenuItem(ReadingMode.scroll, Icons.unfold_more, 'Scroll'),
-              _modeMenuItem(ReadingMode.screenFlip, Icons.arrow_upward, 'Screen Flip'),
-              _modeMenuItem(ReadingMode.pageFlip, Icons.arrow_forward, 'Page Flip'),
-            ],
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: _modeIcon(readingMode),
+          if (!isEink)
+            PopupMenuButton<ReadingMode>(
+              initialValue: readingMode,
+              onSelected: onModeSelected,
+              offset: const Offset(0, 40),
+              color: const Color(0xFFF5F0E8),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              itemBuilder: (_) => [
+                _modeMenuItem(ReadingMode.scroll, Icons.unfold_more, 'Scroll'),
+                _modeMenuItem(ReadingMode.screenFlip, Icons.arrow_upward, 'Screen Flip'),
+                _modeMenuItem(ReadingMode.pageFlip, Icons.arrow_forward, 'Page Flip'),
+              ],
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: _modeIcon(readingMode),
+              ),
             ),
-          ),
 
-          // Lock slot — only visible when a tool is locked
+          if (isEink) _divider,
+
+          // Lock slot — visible whenever a tool is locked
           if (locked != null) ...[
             _divider,
             _pillButton(
@@ -143,9 +151,22 @@ class AppBarPill extends StatelessWidget {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             onSelected: (value) {
               if (value == 'two_column') onToggleTwoColumn();
+              if (value == 'eink_settings') onEinkSettings?.call();
             },
             itemBuilder: (_) => [
-              if (readingMode == ReadingMode.pageFlip && !isEink)
+              if (isEink)
+                PopupMenuItem<String>(
+                  value: 'eink_settings',
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      Icon(Icons.settings_outlined, size: 20, color: Colors.black87),
+                      SizedBox(width: 12),
+                      Text('E-ink settings', style: TextStyle(fontFamily: 'Literata')),
+                    ],
+                  ),
+                ),
+              if (readingMode == ReadingMode.pageFlip)
                 PopupMenuItem<String>(
                   value: 'two_column',
                   child: Row(
@@ -174,9 +195,11 @@ class AppBarPill extends StatelessWidget {
                 ),
               ),
             ],
-            child: const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Icon(Icons.more_horiz, size: 20, color: Colors.black87),
+            child: Padding(
+              padding: isEink
+                  ? const EdgeInsets.symmetric(horizontal: 16, vertical: 12)
+                  : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Icon(Icons.more_horiz, size: isEink ? 28.0 : 20.0, color: Colors.black87),
             ),
           ),
         ],

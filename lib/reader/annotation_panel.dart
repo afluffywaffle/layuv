@@ -1,6 +1,8 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../models/annotation.dart';
 import '../models/annotation_store_interface.dart';
+import '../utils/ink_channel.dart';
 import '../utils/platform_utils.dart';
 import 'annotation_toolbar.dart';
 
@@ -11,6 +13,7 @@ class AnnotationPanel extends StatefulWidget {
   final AnnotationStoreInterface store;
   final AnnotationTool initialTool;
   final Annotation? existing;
+  final double fraction;
   final Future<void> Function() onSaved;
 
   const AnnotationPanel({
@@ -21,6 +24,7 @@ class AnnotationPanel extends StatefulWidget {
     required this.store,
     required this.initialTool,
     required this.existing,
+    required this.fraction,
     required this.onSaved,
   });
 
@@ -32,6 +36,7 @@ class _AnnotationPanelState extends State<AnnotationPanel> {
   late AnnotationTool _tool;
   late TextEditingController _noteController;
   AnnotationTag? _tag;
+  bool _inkCaptured = false;
 
   bool get _isEditing => widget.existing != null;
 
@@ -90,6 +95,7 @@ class _AnnotationPanelState extends State<AnnotationPanel> {
 
   Future<void> _save() async {
     final note = _noteController.text.trim();
+    final position = widget.existing?.position ?? widget.fraction;
     final annotation = Annotation(
       id: widget.existing?.id ?? newId(),
       selectedText: widget.selectedText,
@@ -99,6 +105,8 @@ class _AnnotationPanelState extends State<AnnotationPanel> {
       note: note.isEmpty ? null : note,
       tag: _tag,
       timestamp: widget.existing?.timestamp ?? DateTime.now(),
+      position: position,
+      hasInk: _inkCaptured || (widget.existing?.hasInk ?? false),
     );
     await widget.store.saveAnnotation(annotation);
     await widget.onSaved();
@@ -194,11 +202,13 @@ class _AnnotationPanelState extends State<AnnotationPanel> {
                     width: 40,
                     height: 40,
                     decoration: BoxDecoration(
-                      color: selected ? Colors.black87 : Colors.transparent,
+                      color: isEink
+                          ? (selected ? Colors.transparent : Colors.black.withValues(alpha: 0.06))
+                          : (selected ? Colors.black87 : Colors.transparent),
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(
                         color: selected ? Colors.black87 : Colors.black26,
-                        width: 1,
+                        width: selected && isEink ? 2 : 1,
                       ),
                     ),
                     child: Center(
@@ -237,10 +247,62 @@ class _AnnotationPanelState extends State<AnnotationPanel> {
           ),
           const SizedBox(height: 12),
 
+          // Ink capture (iOS PencilKit / Android native canvas)
+          if (Platform.isIOS || Platform.isAndroid) ...[
+            GestureDetector(
+              onTap: () async {
+                final annotationId = widget.existing?.id ?? newId();
+                final saved = await captureInk(
+                  annotationId: annotationId,
+                  store: widget.store,
+                );
+                if (saved && mounted) setState(() => _inkCaptured = true);
+              },
+              child: Container(
+                width: double.infinity,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: _inkCaptured
+                      ? Colors.black87
+                      : Colors.black.withValues(alpha: 0.04),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: _inkCaptured ? Colors.black87 : Colors.black12,
+                    width: 1,
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      _inkCaptured ? Icons.draw : Icons.draw_outlined,
+                      size: 18,
+                      color: _inkCaptured
+                          ? const Color(0xFFF5F0E8)
+                          : Colors.black54,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      _inkCaptured ? 'Ink saved' : 'Add ink',
+                      style: TextStyle(
+                        fontFamily: 'Literata',
+                        fontSize: 14,
+                        color: _inkCaptured
+                            ? const Color(0xFFF5F0E8)
+                            : Colors.black54,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+
           // Note field
           TextField(
             controller: _noteController,
-            autofocus: true,
+            autofocus: !isEink,
             maxLines: null,
             keyboardType: TextInputType.multiline,
             style: const TextStyle(
@@ -270,18 +332,30 @@ class _AnnotationPanelState extends State<AnnotationPanel> {
             runSpacing: 8,
             children: AnnotationTag.values.map((tag) {
               final active = _tag == tag;
-              final decoration = BoxDecoration(
-                color: active
-                    ? Colors.black87
-                    : Colors.black.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(20),
-              );
+              final decoration = isEink
+                  ? BoxDecoration(
+                      color: active
+                          ? Colors.transparent
+                          : Colors.black.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(20),
+                      border: active
+                          ? Border.all(color: Colors.black87, width: 2)
+                          : null,
+                    )
+                  : BoxDecoration(
+                      color: active
+                          ? Colors.black87
+                          : Colors.black.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(20),
+                    );
               final label = Text(
                 _tagLabels[tag]!,
                 style: TextStyle(
                   fontFamily: 'Literata',
                   fontSize: 13,
-                  color: active ? const Color(0xFFF5F0E8) : Colors.black54,
+                  color: active
+                      ? (isEink ? Colors.black87 : const Color(0xFFF5F0E8))
+                      : Colors.black54,
                 ),
               );
               final content = Padding(

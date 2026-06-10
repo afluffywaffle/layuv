@@ -25,6 +25,7 @@ class Annotation {
   final AnnotationTag? tag;
   final DateTime timestamp;
   final double position;
+  final bool hasInk;
 
   Annotation({
     required this.id,
@@ -36,6 +37,7 @@ class Annotation {
     this.tag,
     required this.timestamp,
     this.position = 0.0,
+    this.hasInk = false,
   });
 
   Annotation copyWith({
@@ -43,6 +45,7 @@ class Annotation {
     AnnotationTag? tag,
     AnnotationTool? tool,
     double? position,
+    bool? hasInk,
   }) =>
       Annotation(
         id: id,
@@ -54,6 +57,7 @@ class Annotation {
         tag: tag ?? this.tag,
         timestamp: timestamp,
         position: position ?? this.position,
+        hasInk: hasInk ?? this.hasInk,
       );
 
   Map<String, dynamic> toJson() => {
@@ -66,6 +70,7 @@ class Annotation {
         'tag': tag?.name,
         'timestamp': timestamp.toIso8601String(),
         'position': position,
+        'hasInk': hasInk,
       };
 
   factory Annotation.fromJson(Map<String, dynamic> json) {
@@ -86,6 +91,7 @@ class Annotation {
               .firstOrNull,
       timestamp: DateTime.parse(json['timestamp'] as String),
       position: (json['position'] as num?)?.toDouble() ?? 0.0,
+      hasInk: json['hasInk'] as bool? ?? false,
     );
   }
 }
