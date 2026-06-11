@@ -13,6 +13,7 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private val inkChannel = "com.afluffywaffle.layuv/ink"
+    private val einkSpikeChannel = "com.afluffywaffle.layuv/eink_spike"
     private val inkRequestCode = 1001
     private var pendingInkResult: MethodChannel.Result? = null
 
@@ -40,6 +41,61 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        // SPIKE: drawPath low-latency ink over a Flutter window.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.afluffywaffle.layuv/drawpath")
+            .setMethodCallHandler { call, result ->
+                val app = packageName
+                when (call.method) {
+                    "configure" -> {
+                        // Disable the top toolbar strip. Compute physical px from
+                        // the device's real metrics (Flutter's MediaQuery is
+                        // degenerate here) + a dpr-agnostic fraction from Dart.
+                        val frac = call.argument<Double>("canvasTopFraction") ?: 0.1
+                        val dm = resources.displayMetrics
+                        val w = dm.widthPixels
+                        val hPx = (frac * dm.heightPixels).toInt()
+                        val rects = intArrayOf(0, 0, w, hPx, 0) // l,t,w,h,flag(0=disable)
+                        val sb = StringBuilder()
+                        sb.append(DrawPathClient.sendReset(app)).append(" | ")
+                        sb.append(DrawPathClient.sendPen(
+                            app,
+                            call.argument<Int>("penType") ?: 10,
+                            call.argument<Int>("penWidth") ?: 200,
+                            call.argument<Int>("penColor") ?: 0,
+                        )).append(" | ")
+                        sb.append(DrawPathClient.setWritableAreas(app, rects, "disable(${w}x$hPx)"))
+                        result.success(sb.toString())
+                    }
+                    "clear" -> result.success(DrawPathClient.clearScreen(app))
+                    "available" -> result.success(DrawPathClient.available())
+                    else -> result.notImplemented()
+                }
+            }
+
+        // SPIKE: Ratta-native e-ink refresh (android.os.EinkManager). Decides
+        // whether Flutter page-flips refresh cleanly on Supernote.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, einkSpikeChannel)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "fullRefresh" -> result.success(RattaEinkSpike.fullRefresh(this))
+                    "screenRefresh" -> result.success(
+                        RattaEinkSpike.screenRefresh(
+                            this,
+                            (call.argument<Boolean>("force")) ?: true,
+                            (call.argument<Int>("mode")) ?: 0,
+                        ),
+                    )
+                    "setScreenMode" -> result.success(
+                        RattaEinkSpike.setScreenModeByName(
+                            this,
+                            call.argument<String>("name") ?: "EINK_SCREEN_MODE_CLEAR",
+                        ),
+                    )
+                    else -> result.notImplemented()
+                }
+            }
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, inkChannel)
             .setMethodCallHandler { call, result ->
                 when (call.method) {

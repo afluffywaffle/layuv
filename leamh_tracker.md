@@ -124,6 +124,54 @@ The AssistiveTouch repo itself is just a floating overlay button (Accessibility 
 
 ---
 
+## DECISION UNDER REVIEW (2026-06-09): Flutter consolidation vs native port
+
+**Why revisiting:** the native Kotlin reader renders well, but its UI is harder to build and looks worse than the existing Flutter app, and the founding premise of the native port — *"Flutter's compositor fights e-ink partial refresh"* — is challenged by what we learned reverse-engineering the Supernote.
+
+**What changed the calculus:** on Supernote, the two hard things live **below the app's rendering layer**, so they're reachable from Flutter via a platform channel (the `BookmarkChannel` pattern the app already uses):
+- **Ink** = `drawPath` paints strokes straight to the EPD (bypasses SurfaceFlinger); the app just configures it + captures geometry. Our `DrawPathClient.kt` is plain Binder code → ports to a Flutter plugin unchanged.
+- **Refresh** = `android.os.EinkManager` via `getSystemService("eink")` (see the EinkManager table in the drawPath section) — a one-line platform-channel call. This is also the *correct* refresh API for the reader, replacing the Onyx `EpdController`.
+
+So the original "Flutter can't do e-ink" reasoning was largely the **Onyx** model (auto-refresh hooks the View tree, which Flutter's single surface bypasses). Ratta's architecture (drawPath + EinkManager, both app-agnostic) is more Flutter-friendly.
+
+### Gating spike — MUST pass on the Nomad before committing to Flutter
+1. **Refresh cleanliness:** ✅ **PASSED 2026-06-09 on the Manta.** Flutter (Impeller/Vulkan) + `EinkManager.sendOneFullFrame()` via `getSystemService("eink")` reflection: content appears cleanly, **no ghosting** on page-flips OR the black/checker torture test (user-verified); the device's auto-EPD even handles in-app changes (auto-refresh off ≈ same). `setScreenMode` resolves (`CLEAR=0,SMOOTH=1,SPEED=2,DEFAULT=0`) but is a subtle global setting. **Key gotcha:** app-switch / first frame does NOT auto-refresh — must call `sendOneFullFrame()` once after the first frame (and on resume), or the panel stays stuck on the previous app's screen. Spike: `lib/spike_eink.dart` + `android/app/.../RattaEinkSpike.kt` + channel `com.afluffywaffle.layuv/eink_spike`.
+2. **drawPath ink over a Flutter window:** ✅ **PASSED 2026-06-09 on the Manta.** From the Flutter app: `service_myservice` reachable, `reset`/`pen`/`disable`/`clearScreen` all `ok=true`; stylus ink **"feels native"** (drawPath paints the EPD directly); Flutter independently receives the pointer stream with **stylus tool type + pressure** (geometry capture for persistence); toolbar **disable rect (flag 0) confirmed** (`drawAPP intersectDisable=1` on the strip, ink suppressed; `0` on canvas). Expected rough edges: strokes vanish/artifact on UI refresh (Ratta's documented "app must own + redraw its ink") → solved by the ink-ownership architecture, not a blocker. Spike: `lib/spike_ink.dart` + `android/app/.../DrawPathClient.kt` + channel `com.afluffywaffle.layuv/drawpath`. Gotcha: this device gives **degenerate Flutter metrics** (MediaQuery dpr=1.0/size=0, canvas box height 0 at first layout) — compute physical pixels on the **Android side** from `resources.displayMetrics`, not from Flutter's MediaQuery.
+3. **Large-doc memory:** paginate a 100–120 page DOCX, page-flip through it, confirm memory stays flat (no one-giant-`Paragraph` blowup).
+
+If any fail and can't be controlled → the native port's premise holds, keep native. If they pass → consolidate on Flutter (better UI + dev velocity + **one codebase across macOS/iOS/Supernote**).
+
+### If the spike passes — Flutter custom-`Paragraph` reader core (the real work item)
+The current Flutter reader uses per-column `SelectableText` slices, which **can't** do cross-column selection (native can — confirmed). To reach parity, port the native reader's single-layout design into Dart using `dart:ui` `Paragraph` (the same engine `SelectableText` uses under the hood). Mapping is ~1:1 and the **native files are the reference**:
+
+| Native (reference) | Flutter port |
+|---|---|
+| `StaticLayout` over one canonical string | `dart:ui` `Paragraph` (`ParagraphBuilder` → `layout(width: colWidth)`) |
+| custom `View.onDraw` + `Canvas.drawText` | `CustomPainter`/`RenderBox.paint` + `Canvas.drawParagraph` |
+| 2-col = draw line-ranges `[a,b)`/`[b,c)` of one layout | clip+translate the same `Paragraph` per column |
+| `getLineForOffset`/`getOffsetForHorizontal`/`getLineBaseline` | `getPositionForOffset`/`getLineMetrics`/`getBoxesForRange`/`getLineBoundary` |
+| `HighlightPainter` decorations | draw over `getBoxesForRange` rects |
+| `Paginator` | line-range pagination over `Paragraph` |
+| `Epd.kt` (Onyx) | `EinkManager` platform channel |
+| `DrawPathClient.kt` | drawPath Flutter plugin (same Binder code) |
+
+Reference files: `android_native/app/.../reader/{ReaderView,Paginator,HighlightPainter,ReaderTheme}.kt`, `Epd.kt`, `spike/DrawPathClient.kt`. The docx/anchoring/annotation model is **shared and offset-based**, so it carries over directly.
+
+- **Gain:** native-quality multi-column selection (contiguous offsets in one string), single canonical string for render+anchor, precise e-ink control — while keeping Flutter for all surrounding UI (chrome/panels/toolbars).
+- **Cost / give up:** a real reader-core rewrite (biggest single item); lose `SelectableText`'s built-in selection handles/magnifier/menu/accessibility — but the native reader already forgoes these; reimplement only the subset used (drag-select + `snapToWordBoundaries`, already present).
+- **Large-doc discipline:** build `Paragraph`s per-page/chunk (not one giant), cache the page map keyed by font/column/geometry.
+- **Platform nuance:** custom core is ideal for e-ink Supernote; on **iPad** you may prefer native `SelectableText`/`SelectionArea` (magnifier, lookup, Scribble), so consider platform-gating the reader core (custom on e-ink, widget-based on Apple) or one custom core with platform-specific affordances.
+- **Lighter alternative** (cross-column selection only, no full rewrite): wrap the two columns in `SelectionArea` + stitch the cross-widget selection back to document offsets.
+
+### Battery / RAM summary
+Native is **modestly** leaner (no Dart VM, lower baseline RAM, leaner idle). But for a non-animated reader the dominant energy cost — **EPD refreshes + radio** — is architecture-independent (same # refreshes for same UX). Flutter's real risk on the low-RAM Nomad is **baseline memory pressure** (Dart VM + Skia/Impeller ~tens of MB, a fixed cost that does NOT grow with document size), not active-reading battery.
+
+### Capability deltas found (native vs current Flutter)
+- **Cross-column selection:** native ✅ (one `StaticLayout`); Flutter ❌ (per-column `SelectableText`) — needs the custom core or `SelectionArea`+stitch.
+- **Whole-doc highlight landmine:** `RunPropertyInjector` (shared engine, mirrored in Dart `docx_store`) rebuilds the full XML string per covered run → O(runs×docSize) ≈ minutes-long freeze for a 100+ page highlight. Not reachable via normal per-page selection today; fix = single-pass `StringBuilder` insert + pair run opens/closes. Architecture-neutral.
+
+---
+
 ## Up Next (in order)
 
 ### E-ink nav — RTL direction support
