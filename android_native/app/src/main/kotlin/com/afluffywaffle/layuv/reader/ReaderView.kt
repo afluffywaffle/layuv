@@ -240,16 +240,16 @@ class ReaderView(context: Context) : View(context) {
         if (text != null) repaginate(fullClear = true) else invalidate()
     }
 
-    /** Update the annotation list; rebuilds highlight colour spans and repaginates. */
+    /** Update the annotation list; rebuilds highlight colour spans and redraws. */
     fun updateAnnotations(annotations: List<ResolvedAnnotation>) {
         this.annotations = annotations
         val raw = rawText
         if (raw != null) {
+            // ForegroundColorSpan (highlight text tint) is not metric-affecting —
+            // no repagination needed, just redraw.
             this.text = buildSpanned(raw, rawFormatSpans, annotations)
-            repaginate(fullClear = false)
-        } else {
-            invalidate()
         }
+        invalidate()
     }
 
     /** The plain text string, or null if no document is loaded. */
@@ -460,6 +460,7 @@ class ReaderView(context: Context) : View(context) {
      */
     private fun drawMarginIcons(canvas: Canvas, pl: PageLayout) {
         for (resolved in annotations) {
+            if (resolved.annotation.note.isNullOrEmpty()) continue
             val span = resolved.span ?: continue
             val colInPage = columnOfChar(span.start) ?: continue // not on this page
             val top = charPointInView(span.start, bottom = false) ?: continue
@@ -886,7 +887,7 @@ class ReaderView(context: Context) : View(context) {
     companion object {
         private const val TAG = "LeamhReader"
         private const val NAV_STRIP_DP = 80f // matches the Flutter e-ink edge strip
-        private const val MARGIN_ICON_DP = 34f // small per-annotation margin glyph
+        private const val MARGIN_ICON_DP = 24f // per-annotation margin glyph (icon extent; ToolIconRenderer fills it)
         // Light grey for highlighted text — clearly lighter than INK but still legible.
         // Negative literal = 0xFFAAAAAA (alpha=FF, R/G/B=AA).
         private const val HIGHLIGHT_TEXT_COLOR = -0x666667

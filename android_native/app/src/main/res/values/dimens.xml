@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Chrome sizing tokens. Mirror ReaderTheme's dp constants so XML layouts and
+     Kotlin agree. Faithful to the Flutter app's measurements. -->
+<resources>
+    <dimen name="tool_btn">64dp</dimen>
+    <dimen name="toolbar_h">80dp</dimen>
+    <dimen name="icon">28dp</dimen>
+    <dimen name="icon_sm">16dp</dimen>
+    <dimen name="icon_tiny">12dp</dimen>
+    <dimen name="row_min">48dp</dimen>
+
+    <dimen name="radius_pill">20dp</dimen>
+    <dimen name="radius_menu">12dp</dimen>
+    <dimen name="radius_card">10dp</dimen>
+    <dimen name="radius_btn">8dp</dimen>
+    <dimen name="radius_chip">6dp</dimen>
+    <dimen name="radius_tag">20dp</dimen>
+    <dimen name="radius_sheet">16dp</dimen>
+
+    <dimen name="screen_margin">16dp</dimen>
+    <dimen name="anchor_gap">8dp</dimen>
+    <dimen name="hairline">1dp</dimen>
+</resources>

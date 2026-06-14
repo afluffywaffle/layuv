@@ -163,6 +163,24 @@ comparison). Status of the priority order:
 7. ⬜ **Ink (LAST — needs a stylus)** — reuse `InkCanvasView`/`InkActivity` with the
    transparent-background fix; PNG → `word/media/ink_<id>.png` + `hasInk`.
 
+**TODO — remove Onyx (deferred 2026-06-12):** the Flutter app has dropped ALL
+Onyx/Boox code — the `InkActivity`/`EpdController` path was the wrong SDK for
+Supernote (it crashed and backgrounded the reader), and there's no recent Onyx
+device to test against (Onyx has since changed its writing hardware). This native
+port still depends on it and must be de-Onyxed too:
+- `onyxsdk-device:1.2.28` + the `repo.boox.com` maven repos in `build.gradle.kts`
+  / `settings.gradle.kts`.
+- `reader/Epd.kt` wraps the Onyx `EpdController` (page-turn + partial-refresh
+  waveforms) used by `ReaderView.kt` — steps 3 & 5. Replace it with the Ratta
+  `spike/EinkClient` (`android.os.EinkManager` — `sendOneFullFrame` /
+  `screenRefresh` / `setScreenMode`, the correct Supernote refresh route).
+- Step 7's ink plan referenced the Flutter app's now-deleted `InkCanvasView` /
+  `InkActivity`; redo it via the drawPath low-latency pen instead.
+
+Left in place for now: this port is reference-only while the reader consolidates
+on Flutter. Remove when reviving the native reader, or drop the whole port if
+Flutter wins.
+
 **Build environment:** AGP 8.13.2 on the Gradle 9.1 wrapper. The machine's
 default JDK is 26, which AGP rejects — `gradle.properties` pins
 `org.gradle.java.home` to Android Studio's bundled JDK 21. `:docx` also needed

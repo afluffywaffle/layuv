@@ -3,7 +3,22 @@
     <!-- Warm paper background — must match the Flutter app's const Color(0xFFF5F0E8). -->
     <color name="paper">#FFF5F0E8</color>
     <color name="ink">#FF000000</color>
-    <!-- Greyscale-safe chrome tones (no colour-only affordances on e-ink). -->
+
+    <!-- Greyscale alpha-over-black chrome tones (mirror ReaderTheme INK_*/FILL_*).
+         No colour-only affordances on e-ink: disabled/selected use these alphas only. -->
+    <color name="ink_87">#DD000000</color>
+    <color name="ink_54">#8A000000</color>
+    <color name="ink_45">#73000000</color>
+    <color name="ink_38">#61000000</color>
+    <color name="ink_26">#42000000</color>
+    <color name="ink_12">#1F000000</color>
+    <color name="fill_06">#0F000000</color>
+    <color name="fill_08">#14000000</color>
+    <color name="fill_04">#0A000000</color>
+    <color name="hl_fill">#26000000</color>
+
+    <!-- Legacy. chrome_disabled was an opaque grey; Flutter's disabled is black26 over
+         paper — prefer ink_26. Kept only so existing references still resolve. -->
     <color name="chrome_border">#FF000000</color>
-    <color name="chrome_disabled">#FF9A968E</color>
+    <color name="chrome_disabled">#42000000</color>
 </resources>

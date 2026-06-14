@@ -1,0 +1,139 @@
+package com.afluffywaffle.layuv.reader
+
+import android.app.Dialog
+import android.content.Context
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.View
+import android.view.Window
+import android.view.WindowManager
+import android.widget.LinearLayout
+import android.widget.TextView
+import com.afluffywaffle.layuv.R
+
+/**
+ * Themed confirmation dialogs: paper background (#F5F0E8), Literata body text,
+ * Source Sans 3 Bold buttons. Replaces stock AlertDialog throughout the native
+ * reader so every destructive action looks consistent with the Flutter app's
+ * visual style.
+ *
+ * Use [confirmDelete] for annotation / note deletion — it checks and saves a
+ * per-document "don't ask again" pref so the dialog can be skipped on repeat.
+ */
+object LeamhDialog {
+
+    /**
+     * Delete-confirm dialog with a "Don't ask again for this document" checkbox.
+     * [skipPrefKey] format: `"delete_confirm_skip:<absoluteFilePath>"`.
+     * If the pref is already set, calls [onConfirm] immediately without showing.
+     */
+    /**
+     * [skipPrefKey] null = always show without the "don't ask again" checkbox
+     * (used for bulk multi-select deletes where the count already communicates scope).
+     */
+    fun confirmDelete(
+        context: Context,
+        message: String,
+        skipPrefKey: String?,
+        onConfirm: () -> Unit,
+    ) {
+        val prefs = context.getSharedPreferences("leamh", Context.MODE_PRIVATE)
+        if (skipPrefKey != null && prefs.getBoolean(skipPrefKey, false)) {
+            onConfirm()
+            return
+        }
+
+        var dontAskChecked = false
+
+        val dialog = Dialog(context)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+        val root = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundResource(R.drawable.picker_bg)
+            val p = dp(context, 20f)
+            setPadding(p, p, p, dp(context, 12f))
+        }
+
+        root.addView(TextView(context).apply {
+            text = message
+            typeface = ReaderTheme.body(context)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTextColor(ReaderTheme.INK_87)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).also { it.bottomMargin = dp(context, 16f) }
+        })
+
+        // "Don't ask again" checkbox row
+        val checkRow = TextView(context).apply {
+            text = "Don't ask again for this document"
+            typeface = ReaderTheme.body(context)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(ReaderTheme.INK_54)
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(context, 8f), 0, dp(context, 16f))
+            compoundDrawablePadding = dp(context, 8f)
+            isClickable = true
+            isFocusable = true
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
+        }
+
+        fun refreshCheckbox() {
+            val res = if (dontAskChecked) R.drawable.ic_check_box else R.drawable.ic_check_box_blank
+            val d = context.getDrawable(res)!!.mutate()
+            d.setTint(ReaderTheme.INK_54)
+            val sz = dp(context, 20f)
+            d.setBounds(0, 0, sz, sz)
+            checkRow.setCompoundDrawables(d, null, null, null)
+        }
+        refreshCheckbox()
+        checkRow.setOnTouchListener(PenTapListener(context) {
+            dontAskChecked = !dontAskChecked
+            refreshCheckbox()
+        })
+        if (skipPrefKey != null) root.addView(checkRow)
+
+        val btnRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+        }
+        btnRow.addView(labelButton(context, "Cancel", ReaderTheme.INK_45) {
+            dialog.dismiss()
+        })
+        btnRow.addView(View(context).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(context, 4f), 1)
+        })
+        btnRow.addView(labelButton(context, "Delete", ReaderTheme.INK_87) {
+            if (dontAskChecked && skipPrefKey != null) prefs.edit().putBoolean(skipPrefKey, true).apply()
+            dialog.dismiss()
+            onConfirm()
+        })
+        root.addView(btnRow)
+
+        dialog.setContentView(root)
+        dialog.window?.setLayout(dp(context, 288f), WindowManager.LayoutParams.WRAP_CONTENT)
+        dialog.show()
+    }
+
+    private fun labelButton(context: Context, label: String, color: Int, onClick: () -> Unit): TextView =
+        TextView(context).apply {
+            text = label
+            typeface = ReaderTheme.chromeBold(context)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setTextColor(color)
+            val hPad = dp(context, 12f)
+            val vPad = dp(context, 14f)
+            setPadding(hPad, vPad, hPad, vPad)
+            isClickable = true
+            isFocusable = true
+            setOnTouchListener(PenTapListener(context, onClick))
+        }
+
+    private fun dp(context: Context, v: Float): Int = ReaderTheme.dp(context, v).toInt()
+}

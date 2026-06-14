@@ -1,8 +1,8 @@
 package com.afluffywaffle.layuv.reader
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.content.Intent
+import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -12,11 +12,13 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-import android.widget.Button
+import android.widget.HorizontalScrollView
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import com.afluffywaffle.layuv.R
 import com.afluffywaffle.layuv.docx.DocxStore
 import com.afluffywaffle.layuv.docx.model.Annotation
 import com.afluffywaffle.layuv.docx.model.AnnotationTool
@@ -24,175 +26,187 @@ import java.io.File
 import java.util.concurrent.Executors
 
 /**
- * Paged annotations list. Two sections toggled by a pair of buttons at the top:
- *   Marks    — all non-bookmark annotations (highlight, underline, comment, …)
- *   Bookmarks — bookmark annotations only
+ * Full-screen annotations panel (§2.7 of UI_PORT_PLAN.md).
  *
- * No animated tabs, no scroll (e-ink rules). A fixed-height page of rows is shown
- * at a time; Prev / Next buttons navigate between pages.
- *
- * Each row: [ToolIconView] + selectedText snippet + optional note.
- *   Tap       → return EXTRA_FRACTION to the caller and finish.
- *   Long-press → confirm-delete dialog → write back to DOCX → refresh list.
- *
- * Caller passes the DOCX path and the current annotation list via extras:
- *   EXTRA_DOCX_PATH  — absolute path to the DOCX file (write-back target)
- *   EXTRA_FRACTIONS  — DoubleArray of annotation positions (same order as EXTRA_IDS)
- *   EXTRA_IDS        — StringArray of annotation IDs (same order as EXTRA_FRACTIONS)
- * On row tap the activity returns RESULT_OK with EXTRA_FRACTION set to the tapped
- * annotation's position fraction so [ReaderActivity] can jump there.
+ * Tabs:  Marks (all non-bookmark) / Bookmarks
+ * Marks: horizontal filter chips (per tool type present + "Has note") above a
+ *        ScrollView whose annotations are grouped into sectioned tiles. Each
+ *        section header (tool icon + label + count) is tappable to expand/collapse.
+ * Edit mode: long-press any row → checkboxes appear, bottom bar shows
+ *        "Cancel" and "Delete (N)" (greyscale, never red).
  */
 class AnnotationsPanelActivity : Activity() {
 
     companion object {
-        const val EXTRA_DOCX_PATH  = "docx_path"
-        const val EXTRA_FRACTION   = "fraction"
+        const val EXTRA_DOCX_PATH = "docx_path"
+        const val EXTRA_FRACTION  = "fraction"
         private const val TAG = "LeamhAnnotPanel"
-        private const val PAGE_ROWS = 8
     }
 
     private val ioExecutor = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
 
-    // Loaded from the DOCX on entry; refreshed after delete.
     private var allAnnotations: List<Annotation> = emptyList()
     private var docxFile: File? = null
     private var docxBytes: ByteArray? = null
 
-    // Displayed list (filtered by section) and pagination state.
+    // Section state
     private var showBookmarks = false
-    private var currentPage = 0
 
-    // Views mutated by buildList()
+    // Filter chips — set of active tool-type filters (empty = show all)
+    private val activeFilters = mutableSetOf<AnnotationTool>()
+    private var filterHasNote = false
+
+    // Expand/collapse per section (default: all expanded)
+    private val sectionExpanded = mutableMapOf<AnnotationTool, Boolean>()
+
+    // Edit mode
+    private var editMode = false
+    private val selectedIds = mutableSetOf<String>()
+
+    // Root views rebuilt on data changes
+    private lateinit var tabRow: LinearLayout
+    private lateinit var marksIndicator: View
+    private lateinit var bookmarksIndicator: View
+    private lateinit var marksTabLabel: TextView
+    private lateinit var bookmarksTabLabel: TextView
+    private lateinit var filterRow: HorizontalScrollView
+    private lateinit var filterChips: LinearLayout
+    private lateinit var mainScroll: ScrollView
     private lateinit var listContainer: LinearLayout
-    private lateinit var marksButton: Button
-    private lateinit var bookmarksButton: Button
-    private lateinit var prevButton: Button
-    private lateinit var nextButton: Button
-    private lateinit var pageLabel: TextView
+    private lateinit var bottomBar: LinearLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val path = intent.getStringExtra(EXTRA_DOCX_PATH)
-        if (path == null) {
-            finish()
-            return
-        }
+        val path = intent.getStringExtra(EXTRA_DOCX_PATH) ?: run { finish(); return }
         docxFile = File(path)
         setContentView(buildUi())
         loadAnnotations(File(path))
     }
 
-    // --- UI ------------------------------------------------------------------
+    override fun onDestroy() {
+        super.onDestroy()
+        ioExecutor.shutdownNow()
+    }
+
+    // -------------------------------------------------------------------------
+    // UI skeleton (rebuilt once; inner content is rebuilt via rebuildContent)
+    // -------------------------------------------------------------------------
 
     private fun buildUi(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(ReaderTheme.PAPER)
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
         }
 
-        // Header with an always-available exit. E-ink devices give the user no
-        // reliable system Back affordance, so the panel MUST own its own close
-        // button or the user is trapped (there are no rows to tap on an empty list).
+        // Header
         val headerRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            val p = dp(8f)
-            setPadding(p, p, p, 0)
+            setPadding(dp(4f), dp(8f), dp(16f), dp(4f))
         }
         headerRow.addView(
-            navButton("‹ Done") { finish() },
+            ChromeIconButton(this, R.drawable.ic_arrow_back) { finish() },
             LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT),
         )
         headerRow.addView(TextView(this).apply {
             text = "Annotations"
-            typeface = ReaderTheme.chrome(this@AnnotationsPanelActivity)
-            setTextColor(ReaderTheme.INK)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            gravity = Gravity.CENTER_VERTICAL or Gravity.END
-        }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = dp(8f) })
+            typeface = ReaderTheme.bodyBold(context)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+            setTextColor(ReaderTheme.INK_87)
+        }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         root.addView(headerRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
-        // Section toggle row
-        val toggleRow = LinearLayout(this).apply {
+        root.addView(hDivider(), LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
+
+        // Tabs
+        tabRow = buildTabRow()
+        root.addView(tabRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+
+        root.addView(hDivider(), LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
+
+        // Filter chips (only visible in Marks tab)
+        filterChips = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            val p = dp(8f)
-            setPadding(p, p, p, 0)
+            setPadding(dp(8f), dp(8f), dp(8f), dp(6f))
         }
-        marksButton = sectionButton("Marks") {
-            if (showBookmarks) { showBookmarks = false; currentPage = 0; refreshSection() }
+        filterRow = HorizontalScrollView(this).apply {
+            overScrollMode = View.OVER_SCROLL_NEVER
+            isHorizontalScrollBarEnabled = false
+            addView(filterChips, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
         }
-        bookmarksButton = sectionButton("Bookmarks") {
-            if (!showBookmarks) { showBookmarks = true; currentPage = 0; refreshSection() }
-        }
-        toggleRow.addView(marksButton, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        toggleRow.addView(bookmarksButton, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        root.addView(toggleRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        root.addView(filterRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
-        // Divider
-        root.addView(View(this).apply {
-            setBackgroundColor(0x26000000)
-        }, LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
-
-        // Annotation rows (rebuilt by buildList())
-        listContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        // Scrollable list area
+        listContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        mainScroll = ScrollView(this).apply {
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(listContainer, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         }
-        root.addView(listContainer, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        root.addView(mainScroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
 
-        // Pagination row
-        val pageRow = LinearLayout(this).apply {
+        root.addView(hDivider(), LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
+
+        // Bottom bar (edit controls or "N annotations" info)
+        bottomBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            val p = dp(8f)
-            setPadding(p, p, p, p)
+            setBackgroundColor(ReaderTheme.PAPER)
+            minimumHeight = dp(56f)
+            setPadding(dp(8f), dp(4f), dp(8f), dp(4f))
         }
-        prevButton = navButton("← Prev") {
-            if (currentPage > 0) { currentPage--; buildList() }
-        }
-        nextButton = navButton("Next →") {
-            val filtered = filteredAnnotations()
-            val pages = pageCount(filtered.size)
-            if (currentPage < pages - 1) { currentPage++; buildList() }
-        }
-        pageLabel = TextView(this).apply {
-            typeface = ReaderTheme.chrome(this@AnnotationsPanelActivity)
-            setTextColor(ReaderTheme.INK)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            gravity = Gravity.CENTER
-        }
-        pageRow.addView(prevButton, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
-        pageRow.addView(pageLabel, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        pageRow.addView(nextButton, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
-        root.addView(pageRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        root.addView(bottomBar, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
-        refreshSection()
         return root
     }
 
-    private fun sectionButton(label: String, onClick: () -> Unit): Button = Button(this).apply {
-        text = label
-        isAllCaps = false
-        typeface = ReaderTheme.chrome(this@AnnotationsPanelActivity)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-        setTextColor(ReaderTheme.INK)
-        minHeight = dp(56f)
-        setOnClickListener { onClick() }
+    private fun buildTabRow(): LinearLayout {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+
+        fun makeTab(label: String, isMarks: Boolean): Triple<LinearLayout, TextView, View> {
+            val tv = TextView(this).apply {
+                text = label
+                typeface = ReaderTheme.body(this@AnnotationsPanelActivity)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                gravity = Gravity.CENTER
+                minimumHeight = dp(48f)
+                setOnTouchListener(PenTapListener(this@AnnotationsPanelActivity) {
+                    if (showBookmarks == isMarks) {
+                        showBookmarks = !isMarks
+                        activeFilters.clear()
+                        filterHasNote = false
+                        exitEditMode()
+                        refreshAll()
+                    }
+                })
+            }
+            val indicator = View(this)
+            val col = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(tv, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+                addView(indicator, LinearLayout.LayoutParams(MATCH_PARENT, dp(2f)))
+            }
+            return Triple(col, tv, indicator)
+        }
+
+        val (marksCol, marksTV, marksInd) = makeTab("Marks", true)
+        val (bookCol, bookTV, bookInd) = makeTab("Bookmarks", false)
+        marksTabLabel = marksTV
+        bookmarksTabLabel = bookTV
+        marksIndicator = marksInd
+        bookmarksIndicator = bookInd
+
+        row.addView(marksCol, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        row.addView(bookCol,  LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        return row
     }
 
-    private fun navButton(label: String, onClick: () -> Unit): Button = Button(this).apply {
-        text = label
-        isAllCaps = false
-        typeface = ReaderTheme.chrome(this@AnnotationsPanelActivity)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-        setTextColor(ReaderTheme.INK)
-        minHeight = dp(56f)
-        setOnClickListener { onClick() }
-    }
-
-    // --- Data loading --------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Data loading
+    // -------------------------------------------------------------------------
 
     private fun loadAnnotations(file: File) {
         ioExecutor.execute {
@@ -202,10 +216,11 @@ class AnnotationsPanelActivity : Activity() {
                 main.post {
                     docxBytes = bytes
                     allAnnotations = doc.annotations.map { it.annotation }
-                    buildList()
+                        .sortedBy { it.position }
+                    refreshAll()
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "failed to load annotations", e)
+                Log.e(TAG, "loadAnnotations failed", e)
                 main.post {
                     Toast.makeText(this, "Could not read annotations.", Toast.LENGTH_SHORT).show()
                 }
@@ -213,73 +228,252 @@ class AnnotationsPanelActivity : Activity() {
         }
     }
 
-    // --- List building -------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Derived lists
+    // -------------------------------------------------------------------------
 
-    private fun filteredAnnotations(): List<Annotation> =
-        if (showBookmarks) allAnnotations.filter { it.tool == AnnotationTool.bookmark }
-        else allAnnotations.filter { it.tool != AnnotationTool.bookmark }
-
-    private fun pageCount(size: Int): Int = maxOf(1, (size + PAGE_ROWS - 1) / PAGE_ROWS)
-
-    private fun refreshSection() {
-        // Update button visual weight to reflect active section.
-        marksButton.alpha = if (!showBookmarks) 1f else 0.45f
-        bookmarksButton.alpha = if (showBookmarks) 1f else 0.45f
-        buildList()
+    private fun marksAnnotations(): List<Annotation> {
+        var list = allAnnotations.filter { it.tool != AnnotationTool.bookmark }
+        if (activeFilters.isNotEmpty()) list = list.filter { it.tool in activeFilters }
+        if (filterHasNote) list = list.filter { !it.note.isNullOrEmpty() }
+        return list
     }
 
-    private fun buildList() {
-        listContainer.removeAllViews()
-        val filtered = filteredAnnotations()
-        val pages = pageCount(filtered.size)
-        currentPage = currentPage.coerceIn(0, maxOf(0, pages - 1))
-        pageLabel.text = if (filtered.isEmpty()) "" else "${currentPage + 1} / $pages"
-        prevButton.isEnabled = currentPage > 0
-        nextButton.isEnabled = currentPage < pages - 1
-        // Greyscale e-ink: the default disabled tint is too subtle, so dim explicitly.
-        prevButton.alpha = if (prevButton.isEnabled) 1f else 0.3f
-        nextButton.alpha = if (nextButton.isEnabled) 1f else 0.3f
+    private fun bookmarkAnnotations(): List<Annotation> =
+        allAnnotations.filter { it.tool == AnnotationTool.bookmark }
 
-        if (filtered.isEmpty()) {
+    private fun visibleAnnotations(): List<Annotation> =
+        if (showBookmarks) bookmarkAnnotations() else marksAnnotations()
+
+    /** Tool types present in the current Marks list (for chip generation). */
+    private fun presentMarkTools(): List<AnnotationTool> {
+        val all = allAnnotations.filter { it.tool != AnnotationTool.bookmark }
+        return AnnotationTool.entries
+            .filter { it != AnnotationTool.bookmark && all.any { a -> a.tool == it } }
+    }
+
+    private fun hasAnyNote(): Boolean =
+        allAnnotations.any { it.tool != AnnotationTool.bookmark && !it.note.isNullOrEmpty() }
+
+    // -------------------------------------------------------------------------
+    // Refresh
+    // -------------------------------------------------------------------------
+
+    private fun refreshAll() {
+        updateTabIndicators()
+        updateFilterChips()
+        rebuildList()
+        updateBottomBar()
+    }
+
+    private fun updateTabIndicators() {
+        val marksActive = !showBookmarks
+        marksTabLabel.setTextColor(if (marksActive) ReaderTheme.INK_87 else ReaderTheme.INK_38)
+        marksIndicator.setBackgroundColor(if (marksActive) ReaderTheme.INK_87 else 0x00000000)
+        bookmarksTabLabel.setTextColor(if (!marksActive) ReaderTheme.INK_87 else ReaderTheme.INK_38)
+        bookmarksIndicator.setBackgroundColor(if (!marksActive) ReaderTheme.INK_87 else 0x00000000)
+        filterRow.visibility = if (marksActive) View.VISIBLE else View.GONE
+    }
+
+    private fun updateFilterChips() {
+        filterChips.removeAllViews()
+        if (showBookmarks) return
+
+        val tools = presentMarkTools()
+        if (tools.isEmpty()) return
+
+        // "All" chip — clears all filters
+        val allActive = activeFilters.isEmpty() && !filterHasNote
+        filterChips.addView(
+            buildFilterChip("All", allActive) {
+                activeFilters.clear()
+                filterHasNote = false
+                rebuildList()
+                updateFilterChips()
+                updateBottomBar()
+            },
+            chipLayoutParams(),
+        )
+
+        // Per-tool chips
+        for (tool in tools) {
+            val active = tool in activeFilters
+            filterChips.addView(
+                buildFilterChip(toolSectionLabel(tool), active) {
+                    if (active) activeFilters.remove(tool) else activeFilters.add(tool)
+                    rebuildList()
+                    updateFilterChips()
+                    updateBottomBar()
+                },
+                chipLayoutParams(),
+            )
+        }
+
+        // "Has note" chip
+        if (hasAnyNote()) {
+            filterChips.addView(
+                buildFilterChip("Has note", filterHasNote) {
+                    filterHasNote = !filterHasNote
+                    rebuildList()
+                    updateFilterChips()
+                    updateBottomBar()
+                },
+                chipLayoutParams(),
+            )
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // List building — sectioned tiles
+    // -------------------------------------------------------------------------
+
+    private fun rebuildList() {
+        listContainer.removeAllViews()
+
+        val visible = visibleAnnotations()
+        if (visible.isEmpty()) {
             listContainer.addView(emptyLabel())
             return
         }
 
-        val start = currentPage * PAGE_ROWS
-        val end = minOf(start + PAGE_ROWS, filtered.size)
-        for (i in start until end) {
-            val ann = filtered[i]
+        // If a filter is active (or bookmarks tab): flat list, no sections
+        val filtered = activeFilters.isNotEmpty() || filterHasNote || showBookmarks
+        if (filtered) {
+            buildFlatList(visible)
+        } else {
+            buildSectionedList(visible)
+        }
+    }
+
+    private fun buildFlatList(annotations: List<Annotation>) {
+        for (ann in annotations) {
             listContainer.addView(rowDivider())
             listContainer.addView(buildRow(ann))
         }
-        // Fill remaining space so rows don't float up on short lists.
-        listContainer.addView(View(this), LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
     }
+
+    private fun buildSectionedList(annotations: List<Annotation>) {
+        // Group by tool in display order
+        val order = listOf(
+            AnnotationTool.highlight, AnnotationTool.underline,
+            AnnotationTool.doubleUnderline, AnnotationTool.strikethrough,
+            AnnotationTool.wavyUnderline, AnnotationTool.inkAnnotation,
+            AnnotationTool.comment, AnnotationTool.bookmark,
+        )
+        val grouped = LinkedHashMap<AnnotationTool, MutableList<Annotation>>()
+        for (t in order) grouped[t] = mutableListOf()
+        for (ann in annotations) grouped.getOrPut(ann.tool) { mutableListOf() }.add(ann)
+
+        for ((tool, group) in grouped) {
+            if (group.isEmpty()) continue
+            val expanded = sectionExpanded.getOrDefault(tool, true)
+
+            // Section header
+            listContainer.addView(buildSectionHeader(tool, group.size, expanded))
+
+            // Section rows (collapsible container)
+            val rowsContainer = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                visibility = if (expanded) View.VISIBLE else View.GONE
+            }
+            for (ann in group) {
+                rowsContainer.addView(rowDivider())
+                rowsContainer.addView(buildRow(ann))
+            }
+            listContainer.addView(rowsContainer)
+
+            // Wire header tap to toggle rows
+            val header = listContainer.getChildAt(listContainer.childCount - 2)
+            header.setOnTouchListener(PenTapListener(this) {
+                val nowExpanded = !sectionExpanded.getOrDefault(tool, true)
+                sectionExpanded[tool] = nowExpanded
+                rowsContainer.visibility = if (nowExpanded) View.VISIBLE else View.GONE
+                // Refresh the header's chevron text in-place
+                (header as? LinearLayout)?.let { h ->
+                    val chevron = h.getChildAt(h.childCount - 1) as? TextView
+                    chevron?.text = if (nowExpanded) "−" else "+"
+                }
+            })
+        }
+    }
+
+    private fun buildSectionHeader(tool: AnnotationTool, count: Int, expanded: Boolean): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(0x0A000000) // FILL_04 (4% black tint)
+            setPadding(dp(12f), dp(8f), dp(12f), dp(8f))
+            minimumHeight = dp(44f)
+            isClickable = true
+            isFocusable = true
+        }
+
+        // Tool icon (28dp)
+        row.addView(ToolIconView(this, tool).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(28f), dp(28f)).apply {
+                marginEnd = dp(10f)
+            }
+        })
+
+        // Section label + count
+        row.addView(TextView(this).apply {
+            text = "${toolSectionLabel(tool)} ($count)"
+            typeface = ReaderTheme.bodyBold(context)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(ReaderTheme.INK_87)
+        }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+
+        // Expand/collapse glyph
+        row.addView(TextView(this).apply {
+            text = if (expanded) "−" else "+"
+            typeface = ReaderTheme.body(context)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+            setTextColor(ReaderTheme.INK_54)
+            gravity = Gravity.CENTER
+            setPadding(dp(8f), 0, 0, 0)
+        })
+
+        return row
+    }
+
+    // -------------------------------------------------------------------------
+    // Row building
+    // -------------------------------------------------------------------------
 
     private fun buildRow(ann: Annotation): View {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            val h = dp(8f)
-            val v = dp(10f)
-            setPadding(h, v, h, v)
+            setPadding(dp(12f), dp(10f), dp(12f), dp(10f))
             minimumHeight = dp(64f)
             isClickable = true
             isFocusable = true
             setBackgroundColor(ReaderTheme.PAPER)
         }
 
-        // Tool icon
-        row.addView(ToolIconView(this, ann.tool).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(48f), dp(48f)).apply {
-                marginEnd = dp(12f)
+        if (editMode) {
+            // Checkbox
+            val checked = ann.id in selectedIds
+            val cbIcon = if (checked) R.drawable.ic_check_box else R.drawable.ic_check_box_blank
+            val cbView = ImageView(this).apply {
+                setImageResource(cbIcon)
+                setColorFilter(if (checked) ReaderTheme.INK_87 else ReaderTheme.INK_38)
+                layoutParams = LinearLayout.LayoutParams(dp(32f), dp(32f)).apply {
+                    marginEnd = dp(12f)
+                }
             }
-        })
-
-        // Text column: selected text + optional note
-        val textCol = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+            row.addView(cbView)
+        } else {
+            // Tool icon
+            row.addView(ToolIconView(this, ann.tool).apply {
+                layoutParams = LinearLayout.LayoutParams(dp(40f), dp(40f)).apply {
+                    marginEnd = dp(12f)
+                }
+            })
         }
+
+        // Text column
+        val textCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         textCol.addView(TextView(this).apply {
             text = ann.selectedText.take(80)
             typeface = ReaderTheme.body(this@AnnotationsPanelActivity)
@@ -288,92 +482,215 @@ class AnnotationsPanelActivity : Activity() {
             maxLines = 2
             ellipsize = android.text.TextUtils.TruncateAt.END
         })
-        val noteText = ann.note
-        if (!noteText.isNullOrEmpty()) {
+        val note = ann.note
+        if (!note.isNullOrEmpty()) {
             textCol.addView(TextView(this).apply {
-                text = noteText.take(60)
+                text = note.take(60)
                 typeface = ReaderTheme.bodyItalic(this@AnnotationsPanelActivity)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTextColor(0x99000000.toInt())
+                setTextColor(ReaderTheme.INK_54)
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.END
             })
         }
         row.addView(textCol, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
 
-        // Tap → jump
-        row.setOnClickListener {
-            val result = Intent().putExtra(EXTRA_FRACTION, ann.position)
-            setResult(RESULT_OK, result)
-            finish()
-        }
-
-        // Long-press → delete
-        row.setOnLongClickListener {
-            confirmDelete(ann)
-            true
+        if (editMode) {
+            row.setOnTouchListener(PenTapListener(this) {
+                if (ann.id in selectedIds) selectedIds.remove(ann.id)
+                else selectedIds.add(ann.id)
+                rebuildList()
+                updateBottomBar()
+            })
+        } else {
+            row.setOnTouchListener(PenTapListener(this) {
+                setResult(RESULT_OK, Intent().putExtra(EXTRA_FRACTION, ann.position))
+                finish()
+            })
+            row.setOnLongClickListener {
+                enterEditMode(ann.id)
+                true
+            }
         }
 
         return row
     }
 
-    private fun rowDivider(): View = View(this).apply {
-        setBackgroundColor(0x14000000)
-        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(1f))
+    // -------------------------------------------------------------------------
+    // Edit mode
+    // -------------------------------------------------------------------------
+
+    private fun enterEditMode(firstSelected: String) {
+        editMode = true
+        selectedIds.clear()
+        selectedIds.add(firstSelected)
+        rebuildList()
+        updateBottomBar()
     }
+
+    private fun exitEditMode() {
+        editMode = false
+        selectedIds.clear()
+        rebuildList()
+        updateBottomBar()
+    }
+
+    private fun deleteSelected() {
+        val ids = selectedIds.toSet()
+        if (ids.isEmpty()) return
+        val file = docxFile ?: return
+        val bytes = docxBytes ?: return
+        LeamhDialog.confirmDelete(
+            context = this,
+            message = "Delete ${ids.size} annotation${if (ids.size == 1) "" else "s"}?",
+            skipPrefKey = null,
+            onConfirm = {
+                ioExecutor.execute {
+                    try {
+                        val updated = allAnnotations.filter { it.id !in ids }
+                        val newBytes = DocxStore.write(bytes, updated)
+                        file.writeBytes(newBytes)
+                        val freshDoc = DocxStore.load(newBytes)
+                        main.post {
+                            docxBytes = newBytes
+                            allAnnotations = freshDoc.annotations.map { it.annotation }
+                                .sortedBy { it.position }
+                            exitEditMode()
+                            setResult(RESULT_FIRST_USER)
+                            refreshAll()
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "deleteSelected failed", e)
+                        main.post {
+                            Toast.makeText(this, "Could not delete annotations.", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            },
+        )
+    }
+
+    // -------------------------------------------------------------------------
+    // Bottom bar
+    // -------------------------------------------------------------------------
+
+    private fun updateBottomBar() {
+        bottomBar.removeAllViews()
+        if (editMode) {
+            buildEditBar()
+        } else {
+            buildInfoBar()
+        }
+    }
+
+    private fun buildEditBar() {
+        val cancelBtn = textButton("Cancel") { exitEditMode() }
+        bottomBar.addView(cancelBtn, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
+
+        bottomBar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+
+        val n = selectedIds.size
+        val deleteLabel = if (n == 0) "Delete" else "Delete ($n)"
+        val deleteBtn = textButton(deleteLabel) { if (selectedIds.isNotEmpty()) deleteSelected() }
+        deleteBtn.alpha = if (n > 0) 1f else 0.35f
+        bottomBar.addView(deleteBtn, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
+    }
+
+    private fun buildInfoBar() {
+        val visible = visibleAnnotations()
+        val label = when {
+            visible.isEmpty() -> ""
+            visible.size == 1 -> "1 annotation"
+            else -> "${visible.size} annotations"
+        }
+        if (label.isNotEmpty()) {
+            bottomBar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+            bottomBar.addView(TextView(this).apply {
+                text = label
+                typeface = ReaderTheme.body(this@AnnotationsPanelActivity)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setTextColor(ReaderTheme.INK_38)
+                gravity = Gravity.CENTER
+            }, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
+            bottomBar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Widget helpers
+    // -------------------------------------------------------------------------
+
+    private fun buildFilterChip(label: String, active: Boolean, onClick: () -> Unit): View {
+        return TextView(this).apply {
+            text = label
+            typeface = Typeface.create(ReaderTheme.body(context),
+                if (active) Typeface.BOLD else Typeface.NORMAL)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextColor(if (active) ReaderTheme.INK_87 else ReaderTheme.INK_54)
+            gravity = Gravity.CENTER
+            setPadding(dp(12f), dp(6f), dp(12f), dp(6f))
+            minimumHeight = dp(32f)
+            // Rounded border (2dp solid INK_87 when active, 1dp INK_38 when inactive)
+            val borderColor = if (active) ReaderTheme.INK_87 else ReaderTheme.INK_38
+            background = buildChipDrawable(borderColor, if (active) 2 else 1)
+            setOnTouchListener(PenTapListener(this@AnnotationsPanelActivity, onClick))
+        }
+    }
+
+    private fun buildChipDrawable(
+        borderColor: Int,
+        borderWidthDp: Int,
+    ): android.graphics.drawable.GradientDrawable {
+        return android.graphics.drawable.GradientDrawable().apply {
+            setColor(ReaderTheme.PAPER)
+            setStroke(dp(borderWidthDp.toFloat()), borderColor)
+            cornerRadius = dp(6f).toFloat()
+        }
+    }
+
+    private fun chipLayoutParams(): LinearLayout.LayoutParams =
+        LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply {
+            marginEnd = dp(8f)
+        }
+
+    private fun textButton(label: String, onClick: () -> Unit): TextView =
+        TextView(this).apply {
+            text = label
+            typeface = ReaderTheme.body(this@AnnotationsPanelActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTextColor(ReaderTheme.INK_87)
+            gravity = Gravity.CENTER
+            setPadding(dp(16f), dp(8f), dp(16f), dp(8f))
+            minimumHeight = dp(48f)
+            setOnTouchListener(PenTapListener(this@AnnotationsPanelActivity, onClick))
+        }
 
     private fun emptyLabel(): View = TextView(this).apply {
         text = if (showBookmarks) "No bookmarks yet." else "No marks yet."
         typeface = ReaderTheme.body(this@AnnotationsPanelActivity)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-        setTextColor(0x66000000)
+        setTextColor(ReaderTheme.INK_38)
         gravity = Gravity.CENTER
         layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply {
-            topMargin = dp(32f)
+            topMargin = dp(40f)
         }
     }
 
-    // --- Delete --------------------------------------------------------------
-
-    private fun confirmDelete(ann: Annotation) {
-        AlertDialog.Builder(this)
-            .setMessage("Delete \"${ann.selectedText.take(40)}\"?")
-            .setPositiveButton("Delete") { _, _ -> deleteAnnotation(ann) }
-            .setNegativeButton("Cancel", null)
-            .show()
+    private fun hDivider(): View = View(this).apply { setBackgroundColor(ReaderTheme.INK_12) }
+    private fun rowDivider(): View = View(this).apply {
+        setBackgroundColor(0x14000000)
+        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(1f))
     }
-
-    private fun deleteAnnotation(ann: Annotation) {
-        val file = docxFile ?: return
-        val bytes = docxBytes ?: return
-        ioExecutor.execute {
-            try {
-                val updated = allAnnotations.filter { it.id != ann.id }
-                val newBytes = DocxStore.write(bytes, updated)
-                file.writeBytes(newBytes)
-                val freshDoc = DocxStore.load(newBytes)
-                main.post {
-                    docxBytes = newBytes
-                    allAnnotations = freshDoc.annotations.map { it.annotation }
-                    buildList()
-                    // Signal the caller to reload annotations too.
-                    setResult(RESULT_FIRST_USER)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "deleteAnnotation failed", e)
-                main.post {
-                    Toast.makeText(this, "Could not delete annotation.", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-    }
-
-    // --- Helpers -------------------------------------------------------------
-
     private fun dp(v: Float): Int = ReaderTheme.dp(this, v).toInt()
 
-    override fun onDestroy() {
-        super.onDestroy()
-        ioExecutor.shutdownNow()
+    private fun toolSectionLabel(tool: AnnotationTool): String = when (tool) {
+        AnnotationTool.highlight       -> "Highlights"
+        AnnotationTool.underline       -> "Underlines"
+        AnnotationTool.doubleUnderline -> "Double underlines"
+        AnnotationTool.strikethrough   -> "Strikethrough"
+        AnnotationTool.wavyUnderline   -> "Wavy underlines"
+        AnnotationTool.bookmark        -> "Bookmarks"
+        AnnotationTool.inkAnnotation   -> "Ink notes"
+        AnnotationTool.comment         -> "Comments"
     }
 }

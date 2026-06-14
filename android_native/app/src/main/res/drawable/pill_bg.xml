@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AppBarPill background: 6%-black fill over paper, radius 20 (Flutter
+     Colors.black.withValues(alpha:0.06) + BorderRadius.circular(20)). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/fill_06" />
+    <corners android:radius="@dimen/radius_pill" />
+</shape>

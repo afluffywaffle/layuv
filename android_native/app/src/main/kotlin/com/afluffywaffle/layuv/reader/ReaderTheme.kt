@@ -16,6 +16,47 @@ object ReaderTheme {
     const val PAPER = 0xFFF5F0E8.toInt()
     const val INK = Color.BLACK
 
+    // --- Chrome palette (greyscale alpha-over-black; mirrors Flutter's black87..black04) ---
+    // Use these for every chrome surface so opacity tones match the Flutter app exactly.
+    // Never introduce a colour-only affordance: disabled/selected states use these alphas only.
+    const val INK_87 = 0xDD000000.toInt() // primary text + icons (Flutter black87)
+    const val INK_54 = 0x8A000000.toInt() // secondary text, corner-hint triangle (black54)
+    const val INK_45 = 0x73000000.toInt() // unselected tab label, section count (black45)
+    const val INK_38 = 0x61000000.toInt() // percentage, empty-state, highlight-icon border (black38)
+    const val INK_26 = 0x42000000.toInt() // disabled/dimmed icons + standard outline (black26)
+    const val INK_12 = 0x1F000000.toInt() // dividers, active filter chip, container borders (black12)
+    // Named translucent fills (over paper).
+    const val FILL_06 = 0x0F000000.toInt() // pill bg, quote box, expanded-note box, unselected tool chip
+    const val FILL_08 = 0x14000000.toInt() // tag chip inactive, row divider
+    const val FILL_04 = 0x0A000000.toInt() // ink-button unselected, note text field
+    const val HL_FILL = 0x26000000.toInt() // highlight swatch (15% black) — NEVER yellow
+
+    // --- Chrome geometry (dp) ---
+    const val RADIUS_PILL = 20f
+    const val RADIUS_MENU = 12f
+    const val RADIUS_CARD = 10f
+    const val RADIUS_BTN = 8f
+    const val RADIUS_CHIP = 6f
+    const val RADIUS_TAG = 20f
+    const val RADIUS_SHEET = 16f
+    const val TOOL_BTN_DP = 64f   // annotation tool button square
+    const val TOOLBAR_H_DP = 80f  // selection / action toolbar height
+    const val ICON_DP = 28f       // standard chrome icon
+    const val ICON_SM_DP = 16f    // list leading / filter chip icon
+    const val ICON_TINY_DP = 12f  // lock badge glyph scale
+    const val ROW_MIN_DP = 48f    // minimum tap-target row (prefer 64)
+    const val SCREEN_MARGIN_DP = 16f
+    const val ANCHOR_GAP_DP = 8f  // gap between an overlay and its anchor
+
+    // --- E-ink tap primitive tuning ---
+    // The OS holds stylus pen-up over UI, so plain OnClickListener can miss. Chrome
+    // buttons use a dwell-tap (release within slop after a short press); CircleTap
+    // mirrors Flutter's CircleTappable for pen-circle-over-icon gestures.
+    const val PEN_DWELL_MS = 90L
+    const val PEN_SLOP_DP = 14f
+    const val CIRCLE_RADIUS_DP = 90f
+    const val CIRCLE_MAX_MS = 500L
+
     // Body typography.
     const val BODY_TEXT_SP = 19f
     const val LINE_SPACING_MULT = 1.32f
@@ -39,7 +80,12 @@ object ReaderTheme {
 
     fun body(context: Context): Typeface = font(context, LITERATA)
     fun bodyItalic(context: Context): Typeface = font(context, LITERATA_ITALIC)
+    fun bodyBold(context: Context): Typeface = Typeface.create(body(context), Typeface.BOLD)
     fun chrome(context: Context): Typeface = font(context, SOURCE_SANS)
+
+    /** Source Sans 3 with a synthetic-bold weight — panel/section headers. */
+    fun chromeBold(context: Context): Typeface =
+        Typeface.create(chrome(context), Typeface.BOLD)
 
     @Synchronized
     private fun font(context: Context, path: String): Typeface =

@@ -43,6 +43,16 @@
             android:exported="false"
             android:theme="@style/Theme.Leamh" />
 
+        <activity
+            android:name=".reader.SettingsActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Leamh" />
+
+        <activity
+            android:name=".reader.InkNoteActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Leamh" />
+
         <!-- SPIKE: drawPath low-latency handwriting test. Not in the launcher;
              start with `am start -n .../com.afluffywaffle.layuv.spike.DrawPathSpikeActivity`. -->
         <activity
