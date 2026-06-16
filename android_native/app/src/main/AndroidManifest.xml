@@ -44,9 +44,10 @@
             android:theme="@style/Theme.Leamh" />
 
         <activity
-            android:name=".reader.SettingsActivity"
+            android:name=".reader.SearchActivity"
             android:exported="false"
-            android:theme="@style/Theme.Leamh" />
+            android:theme="@style/Theme.Leamh"
+            android:windowSoftInputMode="stateVisible|adjustResize" />
 
         <activity
             android:name=".reader.InkNoteActivity"

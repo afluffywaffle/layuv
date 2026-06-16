@@ -30,6 +30,11 @@ object ReaderTheme {
     const val FILL_08 = 0x14000000.toInt() // tag chip inactive, row divider
     const val FILL_04 = 0x0A000000.toInt() // ink-button unselected, note text field
     const val HL_FILL = 0x26000000.toInt() // highlight swatch (15% black) — NEVER yellow
+    // Highlighted/commented text: medium grey on warm paper. Dark enough to read
+    // clearly under the GC16 full refresh (light greys like 0xAAAAAA wash out on
+    // e-ink) yet plainly lighter than the black body text so the mark is obvious.
+    // Renders only via a full refresh — see ReaderView.updateAnnotations.
+    const val HIGHLIGHT_TEXT = 0xFF808080.toInt()
 
     // --- Chrome geometry (dp) ---
     const val RADIUS_PILL = 20f
@@ -80,16 +85,50 @@ object ReaderTheme {
 
     fun body(context: Context): Typeface = font(context, LITERATA)
     fun bodyItalic(context: Context): Typeface = font(context, LITERATA_ITALIC)
-    fun bodyBold(context: Context): Typeface = Typeface.create(body(context), Typeface.BOLD)
-    fun chrome(context: Context): Typeface = font(context, SOURCE_SANS)
 
-    /** Source Sans 3 with a synthetic-bold weight — panel/section headers. */
+    /** Literata wght=700 via variable-font axis. Literata defaults to 400 so base is fine;
+     *  bold needs the Builder since synthetic bold over a variable font is unreliable. */
+    fun bodyBold(context: Context): Typeface =
+        cache.getOrPut("$LITERATA:wght700") {
+            Typeface.Builder(context.assets, LITERATA)
+                .setFontVariationSettings("'wght' 700")
+                .build()
+        }
+
+    /** Source Sans 3 at wght=400. The file defaults to wght=200 (ExtraLight), so we
+     *  must request 400 explicitly or all chrome text renders too thin on e-ink. */
+    fun chrome(context: Context): Typeface =
+        cache.getOrPut("$SOURCE_SANS:wght400") {
+            Typeface.Builder(context.assets, SOURCE_SANS)
+                .setFontVariationSettings("'wght' 400")
+                .build()
+        }
+
+    /** Source Sans 3 at wght=700 via variable-font axis — true bold, not synthetic. */
     fun chromeBold(context: Context): Typeface =
-        Typeface.create(chrome(context), Typeface.BOLD)
+        cache.getOrPut("$SOURCE_SANS:wght700") {
+            Typeface.Builder(context.assets, SOURCE_SANS)
+                .setFontVariationSettings("'wght' 700")
+                .build()
+        }
 
     @Synchronized
     private fun font(context: Context, path: String): Typeface =
         cache.getOrPut(path) { Typeface.createFromAsset(context.assets, path) }
+
+    /** Maps the "body_font_size" pref value to sp. Default (unknown key) = medium. */
+    fun bodySizeSp(prefValue: String): Float = when (prefValue) {
+        "small" -> 16f
+        "large" -> 22f
+        else    -> BODY_TEXT_SP
+    }
+
+    /** Maps the "line_spacing" pref value to a StaticLayout multiplier. Default = comfortable. */
+    fun lineSpacingMult(prefValue: String): Float = when (prefValue) {
+        "normal"   -> 1.15f
+        "spacious" -> LINE_SPACING_MULT
+        else       -> 1.25f
+    }
 
     fun dp(context: Context, value: Float): Float =
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value, context.resources.displayMetrics)

@@ -20,10 +20,13 @@ import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.graphics.Canvas
 import android.graphics.drawable.ColorDrawable
+import android.text.TextUtils
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.PopupWindow
 import android.widget.TextView
+import android.widget.ScrollView
 import android.widget.Toast
 import com.afluffywaffle.layuv.R
 import com.afluffywaffle.layuv.docx.DocxStore
@@ -54,6 +57,9 @@ class ReaderActivity : Activity() {
     private lateinit var readerView: ReaderView
     private lateinit var pageIndicator: TextView
     private lateinit var prefs: SharedPreferences
+    private var lastPageIndex = 0
+    private var lastPageCount = 1
+    private var pageJumpOverlay: PageJumpOverlay? = null
 
     // AppBarPill — icon pill replacing the old text-button toolbar.
     private lateinit var pillRow: LinearLayout
@@ -61,6 +67,13 @@ class ReaderActivity : Activity() {
     private lateinit var undoButton: ChromeIconButton
     private lateinit var moreButton: ChromeIconButton
     private var lockSlot: LockSlotView? = null
+
+    // Bookmark button — inside the pill; dimmed when current page has no bookmark.
+    private lateinit var bookmarkButton: ChromeIconButton
+    private lateinit var searchButton: ChromeIconButton
+
+    // Title/filename label — bottom right of toolbar.
+    private lateinit var titleLabel: TextView
 
     private val ioExecutor = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
@@ -105,9 +118,8 @@ class ReaderActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
         }
 
-        val toolbar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        // FrameLayout toolbar: pillRow pinned start, page pill truly centred.
+        val toolbar = FrameLayout(this).apply {
             setBackgroundColor(ReaderTheme.PAPER)
             setPadding(dp(12f), dp(6f), dp(12f), dp(10f))
         }
@@ -115,19 +127,79 @@ class ReaderActivity : Activity() {
         pillRow = buildPill()
 
         pageIndicator = TextView(this).apply {
-            typeface = ReaderTheme.chrome(this@ReaderActivity)
-            setTextColor(ReaderTheme.INK_54)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            gravity = Gravity.CENTER_VERTICAL or Gravity.END
+            typeface = ReaderTheme.body(this@ReaderActivity)
+            setTextColor(ReaderTheme.INK_87)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            gravity = Gravity.CENTER
+            setPadding(dp(12f), dp(6f), dp(12f), dp(6f))
+            minWidth = dp(80f)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                cornerRadius = ReaderTheme.dp(this@ReaderActivity, ReaderTheme.RADIUS_PILL)
+                setColor(ReaderTheme.PAPER)
+                setStroke(dp(1f), ReaderTheme.INK_26)
+            }
+            setOnTouchListener(PenTapListener(this@ReaderActivity) {
+                if (lastPageCount > 1) {
+                    val overlay = pageJumpOverlay ?: PageJumpOverlay(
+                        this@ReaderActivity,
+                        previewProvider = { page -> readerView.previewTextForPage(page) },
+                        onConfirm = { page -> readerView.jumpToPage(page) },
+                        bodySizeSp = ReaderTheme.bodySizeSp(prefs.getString(KEY_FONT_SIZE, "medium") ?: "medium"),
+                        onDismiss = { initDrawPathLasso() },
+                    ).also { pageJumpOverlay = it }
+                    if (DrawPathClient.available()) {
+                        // Clear any drawn ink and blacklist the full screen so DrawPath
+                        // doesn't render over the overlay. initDrawPathLasso() on dismiss restores.
+                        val sw = resources.displayMetrics.widthPixels
+                        val sh = resources.displayMetrics.heightPixels
+                        DrawPathClient.clearScreen(packageName)
+                        DrawPathClient.setWritableAreas(
+                            packageName,
+                            listOf(intArrayOf(0, 0, sw, sh, 0)),
+                            "overlay-suppress",
+                        )
+                    }
+                    overlay.show(
+                        pageIndicator, lastPageIndex, lastPageCount,
+                        readerView.bookmarkScrubberFractions(),
+                        readerView.bookmarkPageIndices(),
+                    )
+                }
+            })
             text = ""
         }
 
-        toolbar.addView(pillRow)
-        toolbar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f)) // spacer
-        toolbar.addView(pageIndicator, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
+        titleLabel = TextView(this).apply {
+            typeface = ReaderTheme.body(this@ReaderActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextColor(ReaderTheme.INK_87)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+        }
+
+        toolbar.addView(
+            pillRow,
+            FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.START or Gravity.CENTER_VERTICAL),
+        )
+        toolbar.addView(
+            pageIndicator,
+            FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.CENTER),
+        )
+        // Fixed-width slot so the title never overlaps the centred page indicator.
+        toolbar.addView(
+            titleLabel,
+            FrameLayout.LayoutParams(dp(110f), WRAP_CONTENT, Gravity.END or Gravity.CENTER_VERTICAL),
+        )
 
         readerView = ReaderView(this).apply {
-            onPageChanged = { page, count -> pageIndicator.text = "${page + 1} / $count" }
+            onPageChanged = { page, count ->
+                lastPageIndex = page
+                lastPageCount = count
+                pageIndicator.text = "${page + 1} / $count"
+                updateBookmarkButton()
+            }
             onSelectionReady = { start, end, anchorX, anchorY ->
                 pendingSelStart = start
                 pendingSelEnd = end
@@ -206,7 +278,7 @@ class ReaderActivity : Activity() {
         return root
     }
 
-    /** The AppBarPill: annotations | undo | (lock) | more on a 6%-black rounded pill. */
+    /** The AppBarPill: annotations | undo | bookmark | (lock) | more on a 6%-black rounded pill. */
     private fun buildPill(): LinearLayout {
         val pill = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -216,10 +288,18 @@ class ReaderActivity : Activity() {
         }
         annotationsButton = ChromeIconButton(this, R.drawable.ic_list_alt) { launchAnnotationsPanel() }
         undoButton = ChromeIconButton(this, R.drawable.ic_undo) { undoLast() }
+        bookmarkButton = ChromeIconButton(this, R.drawable.ic_bookmark_outline) { togglePageBookmark() }.also {
+            it.dimmed = true
+        }
         moreButton = ChromeIconButton(this, R.drawable.ic_more_horiz) { showOverflowMenu() }
+        searchButton = ChromeIconButton(this, R.drawable.ic_search) { launchSearch() }
         pill.addView(annotationsButton)
         pill.addView(divider())
         pill.addView(undoButton)
+        pill.addView(divider())
+        pill.addView(bookmarkButton)
+        pill.addView(divider())
+        pill.addView(searchButton)
         pill.addView(divider())
         pill.addView(moreButton)
         return pill
@@ -256,6 +336,71 @@ class ReaderActivity : Activity() {
         val canUndo = lastAnnotationId != null &&
             anns?.any { it.annotation.id == lastAnnotationId } == true
         undoButton.dimmed = !canUndo
+        updateBookmarkButton()
+    }
+
+    /** Filled icon = page is bookmarked; outline + dimmed = not bookmarked. */
+    private fun updateBookmarkButton() {
+        val (page, _) = readerView.pageInfo()
+        val textLen = readerView.textLength()
+        val hasBookmark = book?.doc?.annotations?.any { resolved ->
+            if (resolved.annotation.tool != AnnotationTool.bookmark) return@any false
+            val charOffset = resolved.span?.start
+                ?: (resolved.annotation.position * textLen).toInt()
+            readerView.pageForCharOffset(charOffset) == page
+        } ?: false
+        bookmarkButton.setIconRes(
+            if (hasBookmark) R.drawable.ic_bookmark_filled else R.drawable.ic_bookmark_outline
+        )
+        bookmarkButton.dimmed = !hasBookmark
+    }
+
+    /**
+     * Toggle a page bookmark: if the current page already has one, remove it;
+     * otherwise create one anchored to the first character of the current page.
+     */
+    private fun togglePageBookmark() {
+        val opened = book ?: return
+        val file = opened.file ?: run {
+            Toast.makeText(this, "File is read-only — can't save bookmark.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val (page, _) = readerView.pageInfo()
+        val textLen = readerView.textLength()
+        val existing = opened.doc.annotations.firstOrNull { resolved ->
+            if (resolved.annotation.tool != AnnotationTool.bookmark) return@firstOrNull false
+            val charOffset = resolved.span?.start
+                ?: (resolved.annotation.position * textLen).toInt()
+            readerView.pageForCharOffset(charOffset) == page
+        }
+        if (existing != null) {
+            val newList = opened.doc.annotations.map { it.annotation }.filter { it.id != existing.annotation.id }
+            val optimistic = opened.doc.annotations.filter { it.annotation.id != existing.annotation.id }
+            val optimisticDoc = LoadedDocument(opened.doc.plainMap, optimistic, opened.doc.position)
+            book = OpenBook(opened.displayName, opened.bytes, optimisticDoc, file)
+            readerView.updateAnnotations(optimistic)
+            updateBookmarkButton()
+            saveAnnotations(opened, file, newList)
+        } else {
+            val charOffset = readerView.currentCharOffset()
+            val position = charOffset.toDouble() / textLen.coerceAtLeast(1)
+            val annotation = Annotation(
+                id = newId(),
+                selectedText = "",
+                prefix = "",
+                suffix = "",
+                tool = AnnotationTool.bookmark,
+                position = position,
+                timestamp = java.time.Instant.now(),
+            )
+            val optimistic = ResolvedAnnotation(annotation, null)
+            val optimisticAnnotations = opened.doc.annotations + optimistic
+            val optimisticDoc = LoadedDocument(opened.doc.plainMap, optimisticAnnotations, opened.doc.position)
+            book = OpenBook(opened.displayName, opened.bytes, optimisticDoc, file)
+            readerView.updateAnnotations(optimisticAnnotations)
+            updateBookmarkButton()
+            saveAnnotations(opened, file, optimisticAnnotations.map { it.annotation })
+        }
     }
 
     /** Overflow menu: open another document, reader settings, export (soon). */
@@ -267,7 +412,7 @@ class ReaderActivity : Activity() {
             setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     1 -> { launchOpen(); true }
-                    2 -> { launchSettings(); true }
+                    2 -> { showSettingsPopup(); true }
                     else -> false
                 }
             }
@@ -285,9 +430,165 @@ class ReaderActivity : Activity() {
         saveAnnotations(opened, file, newList)
     }
 
-    /** Full-screen settings activity: eink_nav_side, eink_nav_reversed, ink_rule_lines. */
-    private fun launchSettings() {
-        startActivityForResult(Intent(this, SettingsActivity::class.java), REQ_SETTINGS)
+    /** Inline settings popup — replaces the old full-screen SettingsActivity. */
+    private fun showSettingsPopup() {
+        // Migrate ink_rule_lines from legacy Boolean to String on first open.
+        try {
+            prefs.getString(KEY_RULE_LINES, null)
+        } catch (_: ClassCastException) {
+            val wasOn = try { prefs.getBoolean(KEY_RULE_LINES, false) } catch (_: Exception) { false }
+            prefs.edit().remove(KEY_RULE_LINES).putString(KEY_RULE_LINES, if (wasOn) "wide" else "none").commit()
+        }
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(ReaderTheme.PAPER)
+        }
+
+        var popup: PopupWindow? = null
+
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4f), dp(8f), dp(16f), dp(4f))
+        }
+        header.addView(
+            ChromeIconButton(this, R.drawable.ic_arrow_back) { popup?.dismiss() },
+            LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT),
+        )
+        header.addView(
+            TextView(this).apply {
+                text = "Settings"
+                typeface = ReaderTheme.bodyBold(this@ReaderActivity)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+                setTextColor(ReaderTheme.INK_87)
+            },
+            LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f),
+        )
+        root.addView(header, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        root.addView(View(this).apply { setBackgroundColor(ReaderTheme.INK_12) }, LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
+
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        body.addView(settingsSectionHeader("PAGE TURN"))
+        body.addView(settingsRadioGroup(
+            prefs.getString(KEY_NAV_SIDE, "both") ?: "both",
+            listOf("both" to "Both sides", "left" to "Left side only", "right" to "Right side only", "none" to "None"),
+        ) { value ->
+            prefs.edit().putString(KEY_NAV_SIDE, value).apply()
+            readerView.setNavSide(value)
+        })
+        body.addView(settingsSectionSpacer())
+
+        body.addView(settingsSectionHeader("NAVIGATION DIRECTION"))
+        body.addView(settingsRadioGroup(
+            if (prefs.getBoolean(KEY_NAV_REVERSED, false)) "true" else "false",
+            listOf("false" to "Normal", "true" to "Reversed"),
+        ) { value -> prefs.edit().putBoolean(KEY_NAV_REVERSED, value == "true").apply() })
+        body.addView(settingsSectionSpacer())
+
+        body.addView(settingsSectionHeader("FONT SIZE"))
+        body.addView(settingsRadioGroup(
+            prefs.getString(KEY_FONT_SIZE, "medium") ?: "medium",
+            listOf("small" to "Small", "medium" to "Medium", "large" to "Large"),
+        ) { value ->
+            prefs.edit().putString(KEY_FONT_SIZE, value).apply()
+            applyTypographyPrefs()
+        })
+        body.addView(settingsSectionSpacer())
+
+        body.addView(settingsSectionHeader("LINE SPACING"))
+        body.addView(settingsRadioGroup(
+            prefs.getString(KEY_LINE_SPACING, "comfortable") ?: "comfortable",
+            listOf("normal" to "Normal", "comfortable" to "Comfortable", "spacious" to "Spacious"),
+        ) { value ->
+            prefs.edit().putString(KEY_LINE_SPACING, value).apply()
+            applyTypographyPrefs()
+        })
+        body.addView(settingsSectionSpacer())
+
+        body.addView(settingsSectionHeader("INK CANVAS"))
+        body.addView(settingsRadioGroup(
+            prefs.getString(KEY_RULE_LINES, "none") ?: "none",
+            listOf("none" to "Plain", "wide" to "Wide ruled", "college" to "College ruled"),
+        ) { value -> prefs.edit().putString(KEY_RULE_LINES, value).apply() })
+
+        val scroll = ScrollView(this)
+        scroll.addView(body, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        root.addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+
+        val pw = PopupWindow(root, MATCH_PARENT, MATCH_PARENT, true).apply {
+            setBackgroundDrawable(ColorDrawable(ReaderTheme.PAPER))
+            isOutsideTouchable = false
+        }
+        popup = pw
+        pw.showAtLocation(readerView, Gravity.TOP or Gravity.START, 0, 0)
+    }
+
+    private fun settingsSectionHeader(title: String): View = TextView(this).apply {
+        text = title
+        typeface = ReaderTheme.body(this@ReaderActivity)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        setTextColor(ReaderTheme.INK_54)
+        letterSpacing = 0.08f
+        setPadding(dp(20f), dp(20f), dp(20f), dp(6f))
+    }
+
+    private fun settingsRadioGroup(
+        selected: String,
+        options: List<Pair<String, String>>,
+        onPick: (String) -> Unit,
+    ): View {
+        var current = selected
+        val checks = mutableListOf<Pair<String, View>>()
+        val group = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        options.forEachIndexed { index, (value, label) ->
+            if (index > 0) group.addView(
+                View(this).apply { setBackgroundColor(ReaderTheme.FILL_08) },
+                LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)),
+            )
+            val checkView = object : View(this) {
+                override fun onDraw(canvas: Canvas) {
+                    if (tag == true) undoRenderer.drawVecIcon(canvas, R.drawable.ic_check, width / 2f, height / 2f, ReaderTheme.dp(this@ReaderActivity, 20f))
+                }
+            }.apply { tag = value == current }
+            checks.add(value to checkView)
+            group.addView(
+                LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    minimumHeight = dp(56f)
+                    isClickable = true
+                    isFocusable = true
+                    stateListAnimator = null
+                    setPadding(dp(20f), dp(8f), dp(20f), dp(8f))
+                    addView(
+                        TextView(context).apply {
+                            text = label
+                            typeface = ReaderTheme.body(context)
+                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                            setTextColor(ReaderTheme.INK)
+                        },
+                        LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f),
+                    )
+                    addView(checkView, LinearLayout.LayoutParams(dp(24f), dp(24f)))
+                    setOnTouchListener(PenTapListener(context) {
+                        if (value != current) {
+                            current = value
+                            checks.forEach { (v, cv) -> cv.tag = v == current; cv.invalidate() }
+                            onPick(value)
+                        }
+                    })
+                },
+                LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT),
+            )
+        }
+        return group
+    }
+
+    private fun settingsSectionSpacer(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        addView(View(this@ReaderActivity).apply { setBackgroundColor(ReaderTheme.INK_12) }, LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
     }
 
     // --- Permission ----------------------------------------------------------
@@ -343,6 +644,31 @@ class ReaderActivity : Activity() {
         )
     }
 
+    private fun launchSearch() {
+        val file = book?.file ?: run {
+            Toast.makeText(this, "Open a document first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        startActivityForResult(
+            Intent(this, SearchActivity::class.java)
+                .putExtra(SearchActivity.EXTRA_DOCX_PATH, file.absolutePath)
+                .apply {
+                    val starts = readerView.pageStartOffsets()
+                    if (starts != null) putExtra(SearchActivity.EXTRA_PAGE_STARTS, starts)
+                },
+            REQ_SEARCH,
+        )
+    }
+
+    private fun applyTypographyPrefs() {
+        val fontSizeSp = ReaderTheme.bodySizeSp(prefs.getString(KEY_FONT_SIZE, "medium") ?: "medium")
+        val spacingMult = ReaderTheme.lineSpacingMult(prefs.getString(KEY_LINE_SPACING, "comfortable") ?: "comfortable")
+        readerView.setTypography(fontSizeSp, spacingMult)
+        // Overlay captures bodySizeSp at construction — discard it so it rebuilds with the new size.
+        pageJumpOverlay?.dismiss()
+        pageJumpOverlay = null
+    }
+
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         when (requestCode) {
@@ -357,6 +683,7 @@ class ReaderActivity : Activity() {
                 }
             }
             REQ_NOTE -> {
+                Log.d(TAG, "REQ_NOTE: resultCode=$resultCode note=${data?.getStringExtra(NoteActivity.EXTRA_NOTE)}")
                 if (resultCode == RESULT_OK) {
                     val tool = AnnotationTool.fromName(data?.getStringExtra(NoteActivity.EXTRA_RESULT_TOOL))
                     val note = data?.getStringExtra(NoteActivity.EXTRA_NOTE)
@@ -381,7 +708,11 @@ class ReaderActivity : Activity() {
                 readerView.post { initDrawPathLasso() }
             }
             REQ_RETOOL_NOTE -> {
-                val ann = pendingAnnotation ?: return
+                Log.d(TAG, "REQ_RETOOL_NOTE: resultCode=$resultCode pendingAnnotation=${pendingAnnotation?.annotation?.id} note=${data?.getStringExtra(NoteActivity.EXTRA_NOTE)}")
+                val ann = pendingAnnotation ?: run {
+                    Log.e(TAG, "REQ_RETOOL_NOTE: pendingAnnotation is null — note will not be saved")
+                    return
+                }
                 pendingAnnotation = null
                 if (resultCode == RESULT_OK) {
                     val tool  = AnnotationTool.fromName(data?.getStringExtra(NoteActivity.EXTRA_RESULT_TOOL))
@@ -389,8 +720,14 @@ class ReaderActivity : Activity() {
                     val tag   = AnnotationTag.fromName(data?.getStringExtra(NoteActivity.EXTRA_RESULT_TAG))
                     val ink   = data?.getByteArrayExtra(NoteActivity.EXTRA_INK_PNG)
                     val inkId = data?.getStringExtra(NoteActivity.EXTRA_INK_ID)
-                    val opened = book ?: return
-                    val file = opened.file ?: return
+                    val opened = book ?: run {
+                        Log.e(TAG, "REQ_RETOOL_NOTE: book is null — cannot save")
+                        return
+                    }
+                    val file = opened.file ?: run {
+                        Log.e(TAG, "REQ_RETOOL_NOTE: book.file is null (read-only) — cannot save")
+                        return
+                    }
                     val updated = ann.annotation.copy(
                         tool    = tool,
                         note    = note,
@@ -400,13 +737,28 @@ class ReaderActivity : Activity() {
                     val newList = opened.doc.annotations.map { it.annotation }
                         .map { if (it.id == updated.id) updated else it }
                     val inkPng = if (ink != null && inkId != null) Pair(inkId, ink) else null
+                    // Optimistic update: show the new note immediately on the main thread
+                    // instead of waiting for the background DOCX write to complete.
+                    val updatedResolved = ResolvedAnnotation(updated, ann.span)
+                    val optimisticAnnotations = opened.doc.annotations
+                        .map { if (it.annotation.id == updated.id) updatedResolved else it }
+                    val optimisticDoc = LoadedDocument(opened.doc.plainMap, optimisticAnnotations, opened.doc.position)
+                    book = OpenBook(opened.displayName, opened.bytes, optimisticDoc, opened.file)
+                    readerView.updateAnnotations(optimisticAnnotations)
                     saveAnnotations(opened, file, newList, inkPng)
                 }
                 readerView.post { initDrawPathLasso() }
             }
-            REQ_SETTINGS -> {
-                // Re-apply nav side in case it changed in SettingsActivity.
-                readerView.setNavSide(prefs.getString(KEY_NAV_SIDE, "both") ?: "both")
+            REQ_SEARCH -> {
+                if (resultCode == RESULT_OK) {
+                    val charOffset = data?.getIntExtra(SearchActivity.EXTRA_CHAR_OFFSET, -1) ?: -1
+                    val charEnd = data?.getIntExtra(SearchActivity.EXTRA_CHAR_END, -1) ?: -1
+                    if (charOffset >= 0) {
+                        readerView.jumpToChar(charOffset)
+                        if (charEnd > charOffset) readerView.setJumpHighlight(charOffset, charEnd)
+                    }
+                }
+                readerView.post { initDrawPathLasso() }
             }
             REQ_ANNOTATIONS -> {
                 when (resultCode) {
@@ -458,6 +810,7 @@ class ReaderActivity : Activity() {
     private fun onBookLoaded(opened: OpenBook) {
         book = opened
         title = opened.displayName
+        updateTitle()
 
         val columns = resolveColumns()
 
@@ -468,6 +821,10 @@ class ReaderActivity : Activity() {
         readerView.showContent(opened.doc.plainText, opened.doc.annotations, columns, startChar, opened.doc.formatSpans)
         updatePillState()
         dismissUndoPill()
+    }
+
+    private fun updateTitle() {
+        titleLabel.text = book?.displayName ?: ""
     }
 
     // --- Columns -------------------------------------------------------------
@@ -587,13 +944,24 @@ class ReaderActivity : Activity() {
             return
         }
         pendingAnnotation = resolved
-        startActivityForResult(
-            Intent(this, NoteActivity::class.java)
-                .putExtra(NoteActivity.EXTRA_NOTE, resolved.annotation.note ?: "")
-                .putExtra(NoteActivity.EXTRA_SELECTED_TEXT, resolved.annotation.selectedText)
-                .putExtra(NoteActivity.EXTRA_INITIAL_TOOL, resolved.annotation.tool.name),
-            REQ_RETOOL_NOTE,
-        )
+        Log.d(TAG, "editAnnotationNote: set pendingAnnotation=${resolved.annotation.id} note=${resolved.annotation.note}")
+        val intent = Intent(this, NoteActivity::class.java)
+            .putExtra(NoteActivity.EXTRA_NOTE, resolved.annotation.note ?: "")
+            .putExtra(NoteActivity.EXTRA_SELECTED_TEXT, resolved.annotation.selectedText)
+            .putExtra(NoteActivity.EXTRA_INITIAL_TOOL, resolved.annotation.tool.name)
+        // If the annotation has ink, read the PNG from the archive and pre-populate
+        // NoteActivity so the user can open InkNoteActivity and see the existing ink.
+        if (resolved.annotation.hasInk) {
+            val bytes = book?.bytes
+            if (bytes != null) {
+                val inkBytes = DocxStore.readInkPng(bytes, resolved.annotation.id)
+                if (inkBytes != null) {
+                    intent.putExtra(NoteActivity.EXTRA_INITIAL_INK_PNG, inkBytes)
+                    intent.putExtra(NoteActivity.EXTRA_INITIAL_INK_ID, resolved.annotation.id)
+                }
+            }
+        }
+        startActivityForResult(intent, REQ_RETOOL_NOTE)
     }
 
     /**
@@ -678,6 +1046,12 @@ class ReaderActivity : Activity() {
                 dismissUndoPill()
                 val newList = opened.doc.annotations.map { it.annotation }
                     .filter { it.id != resolved.annotation.id }
+                // Optimistic update — remove from view immediately before I/O completes
+                val optimisticAnnotations = opened.doc.annotations
+                    .filter { it.annotation.id != resolved.annotation.id }
+                val optimisticDoc = LoadedDocument(opened.doc.plainMap, optimisticAnnotations, opened.doc.position)
+                book = OpenBook(opened.displayName, opened.bytes, optimisticDoc, opened.file)
+                readerView.updateAnnotations(optimisticAnnotations)
                 saveAnnotations(opened, file, newList)
             },
         )
@@ -689,15 +1063,25 @@ class ReaderActivity : Activity() {
         newList: List<Annotation>,
         inkPng: Pair<String, ByteArray>? = null,
     ) {
-        ioExecutor.execute {
-            try {
+        DocxWriteQueue.submit(
+            file,
+            transform = { base ->
+                // Read-modify-write from the CURRENT on-disk bytes (not
+                // opened.bytes, which may be a stale optimistic snapshot) so a
+                // concurrently-saved reading position or annotation is never
+                // dropped. The shared queue serializes this against every other
+                // docx write in the app.
                 val baseBytes = if (inkPng != null)
-                    DocxStore.saveInkPng(opened.bytes, inkPng.first, inkPng.second)
+                    DocxStore.saveInkPng(base, inkPng.first, inkPng.second)
                 else
-                    opened.bytes
-                val newBytes = DocxStore.write(baseBytes, newList)
-                file.writeBytes(newBytes)
+                    base
+                DocxStore.write(baseBytes, newList)
+            },
+            onSuccess = { newBytes ->
                 val freshDoc = DocxStore.load(newBytes)
+                Log.d(TAG, "saveAnnotations: wrote ${newList.size} annotations, " +
+                    "reloaded ${freshDoc.annotations.size}; " +
+                    "notes=${freshDoc.annotations.map { it.annotation.note }}")
                 val freshBook = OpenBook(opened.displayName, newBytes, freshDoc, file)
                 main.post {
                     // Smart merge: if newer optimistic annotations were added while this
@@ -707,7 +1091,21 @@ class ReaderActivity : Activity() {
                     if (currentBook != null) {
                         val savedIds = freshDoc.annotations.map { it.annotation.id }.toSet()
                         val currentIds = currentBook.doc.annotations.map { it.annotation.id }.toSet()
-                        if (currentIds.all { it in savedIds }) {
+                        // Guard: DocxStore.load silently returns [] on any parse failure.
+                        // If we wrote N annotations but reloaded 0, the load failed — fall
+                        // back to repairing in-memory state from newList + existing spans
+                        // so the note/tool change is visible immediately (disk is correct).
+                        val loadFailed = newList.isNotEmpty() && freshDoc.annotations.isEmpty()
+                        if (loadFailed) {
+                            Log.w(TAG, "saveAnnotations: DocxStore.load returned 0 annotations after writing ${newList.size} — repairing from newList")
+                            val spanById = currentBook.doc.annotations.associate { it.annotation.id to it.span }
+                            val repairedAnnotations = newList.map { a ->
+                                ResolvedAnnotation(a, spanById[a.id])
+                            }
+                            val repairedDoc = LoadedDocument(currentBook.doc.plainMap, repairedAnnotations, currentBook.doc.position)
+                            book = OpenBook(freshBook.displayName, freshBook.bytes, repairedDoc, freshBook.file)
+                            readerView.updateAnnotations(repairedAnnotations)
+                        } else if (currentIds.all { it in savedIds }) {
                             book = freshBook
                             readerView.updateAnnotations(freshDoc.annotations)
                         } else {
@@ -716,19 +1114,24 @@ class ReaderActivity : Activity() {
                     }
                     updatePillState()
                 }
-            } catch (ex: Exception) {
+            },
+            onError = { ex ->
                 Log.e(TAG, "saveAnnotations failed", ex)
                 main.post {
                     Toast.makeText(this, "Could not save changes.", Toast.LENGTH_SHORT).show()
                 }
-            }
-        }
+            },
+        )
     }
 
     // --- Position persistence ------------------------------------------------
 
     override fun onResume() {
         super.onResume()
+        // Discard the cached overlay so it's recreated with the current font size pref
+        // if the user changed it in Settings while this activity was paused.
+        pageJumpOverlay?.dismiss()
+        pageJumpOverlay = null
         readerView.post { initDrawPathLasso() }
     }
 
@@ -754,17 +1157,26 @@ class ReaderActivity : Activity() {
         )
 
         savingPosition = true
-        ioExecutor.execute {
-            try {
-                val newBytes = DocxStore.writePosition(opened.bytes, position)
-                file.writeBytes(newBytes)
+        DocxWriteQueue.submit(
+            file,
+            // Read the current on-disk bytes so the position layers onto the
+            // latest committed annotations rather than a stale in-memory base.
+            transform = { base -> DocxStore.writePosition(base, position) },
+            onSuccess = { newBytes ->
                 Log.i(TAG, "saved position fraction=$fraction to ${file.name}")
-            } catch (e: Exception) {
-                Log.w(TAG, "could not save position", e)
-            } finally {
+                main.post {
+                    // Republish the in-memory base so a later annotation save
+                    // layers onto this position instead of reverting it. Guard on
+                    // file identity so a freshly-opened document isn't clobbered.
+                    book?.let { if (it.file == file) book = OpenBook(it.displayName, newBytes, it.doc, it.file) }
+                }
                 savingPosition = false
-            }
-        }
+            },
+            onError = { e ->
+                Log.w(TAG, "could not save position", e)
+                savingPosition = false
+            },
+        )
     }
 
     /**
@@ -852,12 +1264,16 @@ class ReaderActivity : Activity() {
         private const val REQ_NOTE = 1003
         private const val REQ_ANNOTATIONS = 1004
         private const val REQ_RETOOL_NOTE = 1005
-        private const val REQ_SETTINGS = 1006
         private const val REQ_INK = 1007
+        private const val REQ_SEARCH = 1008
         private const val PREFS = "leamh"
         private const val KEY_LAST_PATH = "last_path"
         private const val KEY_COLUMNS = "columns"
         private const val KEY_NAV_SIDE = "eink_nav_side"
+        private const val KEY_NAV_REVERSED = "eink_nav_reversed"
+        private const val KEY_FONT_SIZE = "body_font_size"
+        private const val KEY_LINE_SPACING = "line_spacing"
+        private const val KEY_RULE_LINES = "ink_rule_lines"
         // The Nomad reports smallestScreenWidthDp=1024 and reads best at 1 col,
         // so the auto-2-col threshold sits above it; the larger Manta should land
         // above this and default to 2 col. Confirm the Manta's logged value and

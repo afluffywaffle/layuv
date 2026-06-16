@@ -4,12 +4,14 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.os.Bundle
 import android.text.TextUtils
@@ -52,9 +54,19 @@ class InkNoteActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val selectedText = intent.getStringExtra(EXTRA_SELECTED_TEXT) ?: ""
-        val prefs = getSharedPreferences("LeamhPrefs", Context.MODE_PRIVATE)
-        ruleStyle = prefs.getString("ink_rule_lines", "none") ?: "none"
+        val prefs = getSharedPreferences("leamh", Context.MODE_PRIVATE)
+        ruleStyle = try {
+            prefs.getString("ink_rule_lines", "none") ?: "none"
+        } catch (_: ClassCastException) {
+            val wasOn = try { prefs.getBoolean("ink_rule_lines", false) } catch (_: Exception) { false }
+            prefs.edit().remove("ink_rule_lines").putString("ink_rule_lines", if (wasOn) "wide" else "none").commit()
+            if (wasOn) "wide" else "none"
+        }
         setContentView(buildUi(selectedText))
+        // Pre-load existing ink as a background bitmap so the user can draw on top.
+        intent.getByteArrayExtra(EXTRA_EXISTING_INK)?.let { bytes ->
+            canvas.setExistingInk(bytes)
+        }
     }
 
     override fun onResume() {
@@ -274,6 +286,8 @@ class InkNoteActivity : Activity() {
     companion object {
         const val EXTRA_SELECTED_TEXT = "selected_text"
         const val EXTRA_INK_PNG       = "ink_png"
+        /** Optional: ByteArray of an existing ink PNG to display as a background layer. */
+        const val EXTRA_EXISTING_INK  = "existing_ink"
     }
 }
 
@@ -297,9 +311,16 @@ class InkCanvasView(context: Context) : View(context) {
     private var current: Path? = null
     private var lastX = 0f
     private var lastY = 0f
+    private var existingBitmap: Bitmap? = null
 
     var activeTool = InkTool.THIN
     var ruleStyle  = "none"
+
+    /** Decode [pngBytes] and store as a background layer drawn beneath new strokes. */
+    fun setExistingInk(pngBytes: ByteArray) {
+        existingBitmap = BitmapFactory.decodeByteArray(pngBytes, 0, pngBytes.size)
+        invalidate()
+    }
 
     private val thinPaint = Paint().apply {
         color = Color.BLACK; style = Paint.Style.STROKE
@@ -327,15 +348,21 @@ class InkCanvasView(context: Context) : View(context) {
     /**
      * Render to a transparent PNG. Eraser strokes punch holes via
      * PorterDuff.CLEAR; ink drawn after an erase survives correctly.
-     * Returns null when no non-eraser strokes exist.
+     * Existing ink (from a prior edit session) is composited as the base layer.
+     * Returns null when there is no ink at all (no existing bitmap and no new strokes).
      */
     fun renderToPng(): ByteArray? {
-        if (!hasMeaningfulInk()) return null
+        val hasNew = hasMeaningfulInk()
+        val base   = existingBitmap
+        if (!hasNew && base == null) return null
         val w = width; val h = height
         if (w <= 0 || h <= 0) return null
 
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
+        if (base != null) {
+            c.drawBitmap(base, null, Rect(0, 0, w, h), null)
+        }
         for (stroke in committed) {
             c.drawPath(stroke.path, exportPaint(stroke.tool))
         }
@@ -411,6 +438,9 @@ class InkCanvasView(context: Context) : View(context) {
             }
         }
 
+        existingBitmap?.let { bmp ->
+            canvas.drawBitmap(bmp, null, Rect(0, 0, width, height), null)
+        }
         for (stroke in committed) canvas.drawPath(stroke.path, displayPaint(stroke.tool))
         current?.let { canvas.drawPath(it, displayPaint(activeTool)) }
     }

@@ -52,7 +52,8 @@ class ReaderView(context: Context) : View(context) {
     private val hPadding = ReaderTheme.dp(context, ReaderTheme.H_PADDING_DP)
     private val vPadding = ReaderTheme.dp(context, ReaderTheme.V_PADDING_DP)
     private val columnGap = ReaderTheme.dp(context, ReaderTheme.COLUMN_GAP_DP)
-    private val bodySize = ReaderTheme.sp(context, ReaderTheme.BODY_TEXT_SP)
+    private var bodySize = ReaderTheme.sp(context, ReaderTheme.BODY_TEXT_SP)
+    private var lineSpacingMult = ReaderTheme.LINE_SPACING_MULT
 
     // --- Edge navigation strips ----------------------------------------------
     // One-handed nav: a tall strip on the left and/or right edge, each split
@@ -77,8 +78,8 @@ class ReaderView(context: Context) : View(context) {
     private val navChevronHalfW = ReaderTheme.dp(context, 8f)
     private val navChevronHalfH = ReaderTheme.dp(context, 12f)
 
-    private fun leftStripActive() = navSide != "right"
-    private fun rightStripActive() = navSide != "left"
+    private fun leftStripActive()  = navSide != "right" && navSide != "none"
+    private fun rightStripActive() = navSide != "left"  && navSide != "none"
     private fun leftPad() = hPadding + if (leftStripActive()) navStripWidth else 0f
     private fun rightPad() = hPadding + if (rightStripActive()) navStripWidth else 0f
 
@@ -112,6 +113,32 @@ class ReaderView(context: Context) : View(context) {
     private var ptrAnchorChar = -1
     private val tapSlopPx = ReaderTheme.dp(context, 8f)
 
+    // Finger swipe (page turn) — raw X/Y delta is more reliable than GestureDetector
+    // velocity on e-ink panels that may emit very few ACTION_MOVE events.
+    private var fingerSwipeDownX = -1f
+    private var fingerSwipeDownY = -1f
+
+    // Jump-to-search highlight — grey box behind matched text, auto-cleared after 3 s.
+    private var jumpHighlightStart = -1
+    private var jumpHighlightEnd = -1
+    private val jumpHighlightPaint = Paint().apply {
+        color = android.graphics.Color.argb(50, 0, 0, 0)
+        style = Paint.Style.FILL
+    }
+    private val clearJumpHighlight = Runnable {
+        jumpHighlightStart = -1
+        jumpHighlightEnd = -1
+        epd.pageTurn(this)
+    }
+
+    fun setJumpHighlight(start: Int, end: Int) {
+        removeCallbacks(clearJumpHighlight)
+        jumpHighlightStart = start
+        jumpHighlightEnd = end
+        invalidate()
+        postDelayed(clearJumpHighlight, 3000L)
+    }
+
     // Scrub-select (stylus only): accumulates the min/max char offsets touched
     // along the entire drawn path so the selection spans everything the pen
     // passed over — not just anchor→lift-point. Grows monotonically; never shrinks.
@@ -129,7 +156,7 @@ class ReaderView(context: Context) : View(context) {
     private val handleGrab = ReaderTheme.dp(context, 32f) // large e-ink/finger grab radius
     // The handle sits BELOW its glyph line; lift the touch sample back up onto the
     // text when adjusting, so dragging along a line stays on that line.
-    private val handleTouchLift = handleStem + handleRadius + bodySize * 0.7f
+    private val handleTouchLift: Float get() = handleStem + handleRadius + bodySize * 0.7f
     private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = ReaderTheme.INK
         style = Paint.Style.FILL
@@ -185,6 +212,19 @@ class ReaderView(context: Context) : View(context) {
             extendSelectionTo(e.x, e.y) // selects the word under the press
             performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
         }
+
+        // Non-stylus fling (finger/unknown): swipe left = next page, swipe right = prev page.
+        // Stylus input is owned by DrawPath and must not trigger page turns.
+        override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
+            if (e1?.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) return false
+            if (selectionStart >= 0) return false // don't navigate while selection is shown
+            val threshold = ReaderTheme.dp(context, 200f) // ~200 dp/s — lenient for e-ink
+            return when {
+                velocityX < -threshold -> { next(); true } // left-fling = next page
+                velocityX >  threshold -> { prev(); true } // right-fling = prev page
+                else -> false
+            }
+        }
     })
 
     init {
@@ -231,9 +271,9 @@ class ReaderView(context: Context) : View(context) {
 
     fun columns(): Int = desiredColumns
 
-    /** Set which edge(s) show the nav strip: "both" | "left" | "right". */
+    /** Set which edge(s) show the nav strip: "both" | "left" | "right" | "none". */
     fun setNavSide(side: String) {
-        val s = if (side == "left" || side == "right") side else "both"
+        val s = if (side in listOf("left", "right", "none")) side else "both"
         if (s == navSide) return
         navSide = s
         // The strips inset the text, so the content width changed → repaginate.
@@ -245,11 +285,13 @@ class ReaderView(context: Context) : View(context) {
         this.annotations = annotations
         val raw = rawText
         if (raw != null) {
-            // ForegroundColorSpan (highlight text tint) is not metric-affecting —
-            // no repagination needed, just redraw.
+            // ForegroundColorSpan (grey text) is baked into the StaticLayout at
+            // paginate time — we must rebuild the layout so new highlights appear.
+            // Colour spans don't affect line metrics, so page breaks are unchanged.
+            // repaginate calls epd.fullClear itself after the new layout is ready.
             this.text = buildSpanned(raw, rawFormatSpans, annotations)
+            repaginate(fullClear = true)
         }
-        invalidate()
     }
 
     /** The plain text string, or null if no document is loaded. */
@@ -269,19 +311,23 @@ class ReaderView(context: Context) : View(context) {
     fun fullClear() = epd.fullClear(this)
 
     fun next() {
-        val pl = pageLayout ?: return
-        if (currentPage >= pl.pageCount - 1) return
+        val pl = pageLayout ?: run { Log.d("LeamhSwipe", "next() — pageLayout null, aborting"); return }
+        if (currentPage >= pl.pageCount - 1) { Log.d("LeamhSwipe", "next() — already last page $currentPage/${pl.pageCount}"); return }
+        val before = currentPage
         currentPage++
         pendingCharOffset = pl.charStartOfPage(currentPage)
+        Log.d("LeamhSwipe", "next() page $before → $currentPage / ${pl.pageCount}")
         notifyPage()
         epd.pageTurn(this)
     }
 
     fun prev() {
-        val pl = pageLayout ?: return
-        if (currentPage <= 0) return
+        val pl = pageLayout ?: run { Log.d("LeamhSwipe", "prev() — pageLayout null, aborting"); return }
+        if (currentPage <= 0) { Log.d("LeamhSwipe", "prev() — already first page"); return }
+        val before = currentPage
         currentPage--
         pendingCharOffset = pl.charStartOfPage(currentPage)
+        Log.d("LeamhSwipe", "prev() page $before → $currentPage / ${pl.pageCount}")
         notifyPage()
         epd.pageTurn(this)
     }
@@ -305,6 +351,85 @@ class ReaderView(context: Context) : View(context) {
 
     fun pageInfo(): Pair<Int, Int> = currentPage to (pageLayout?.pageCount ?: 1)
 
+    /** Page-start char offsets for all pages — passed to SearchActivity so it can show page numbers. */
+    fun pageStartOffsets(): IntArray? {
+        val pl = pageLayout ?: return null
+        return IntArray(pl.pageCount) { pl.charStartOfPage(it) }
+    }
+
+    /** Jump to a specific 0-indexed page; clamped to valid range. */
+    fun jumpToPage(pageIndex: Int) {
+        val pl = pageLayout ?: run { pendingCharOffset = 0; return }
+        val clamped = pageIndex.coerceIn(0, pl.pageCount - 1)
+        jumpToChar(pl.charStartOfPage(clamped))
+    }
+
+    /** First [maxChars] characters of [pageIndex], trimmed — used by the page scrubber preview. */
+    /**
+     * Returns one scrubber fraction (0.0–1.0) per page that has at least one annotation,
+     * computed from the current [PageLayout]. Called at overlay show-time so fractions
+     * always reflect the current pagination, not a stale layout.
+     */
+    fun annotationScrubberFractions(): List<Float> {
+        val pl = pageLayout ?: return emptyList()
+        val t = text ?: return emptyList()
+        if (pl.pageCount <= 1) return emptyList()
+        return annotations
+            .filter { it.annotation.tool != AnnotationTool.bookmark }
+            .mapNotNull { resolved ->
+                val charOffset = resolved.span?.start
+                    ?: (resolved.annotation.position * t.length).toInt()
+                pl.pageForChar(charOffset.coerceIn(0, t.length))
+            }
+            .distinct()
+            .map { page -> page.toFloat() / (pl.pageCount - 1).coerceAtLeast(1) }
+            .sorted()
+    }
+
+    /** Scrubber fractions (0–1) for bookmark annotations only — drawn as bold marks on the track. */
+    fun bookmarkScrubberFractions(): List<Float> {
+        val pl = pageLayout ?: return emptyList()
+        val t = text ?: return emptyList()
+        if (pl.pageCount <= 1) return emptyList()
+        return annotations
+            .filter { it.annotation.tool == AnnotationTool.bookmark }
+            .mapNotNull { resolved ->
+                val charOffset = resolved.span?.start
+                    ?: (resolved.annotation.position * t.length).toInt()
+                pl.pageForChar(charOffset.coerceIn(0, t.length))
+            }
+            .distinct()
+            .map { page -> page.toFloat() / (pl.pageCount - 1).coerceAtLeast(1) }
+            .sorted()
+    }
+
+    /** 0-based page indices of all bookmark annotations, sorted, for the scrubber list. */
+    fun bookmarkPageIndices(): List<Int> {
+        val pl = pageLayout ?: return emptyList()
+        val t = text ?: return emptyList()
+        return annotations
+            .filter { it.annotation.tool == AnnotationTool.bookmark }
+            .mapNotNull { resolved ->
+                val charOffset = resolved.span?.start
+                    ?: (resolved.annotation.position * t.length).toInt()
+                pl.pageForChar(charOffset.coerceIn(0, t.length))
+            }
+            .distinct()
+            .sorted()
+    }
+
+    /** Page index (0-based) containing [offset], or 0 if no layout yet. */
+    fun pageForCharOffset(offset: Int): Int =
+        pageLayout?.pageForChar(offset.coerceIn(0, text?.length ?: 0)) ?: 0
+
+    fun previewTextForPage(pageIndex: Int, maxChars: Int = 140): String {
+        val pl = pageLayout ?: return ""
+        val t = text ?: return ""
+        val start = pl.charStartOfPage(pageIndex.coerceIn(0, pl.pageCount - 1))
+        val end = (start + maxChars).coerceAtMost(t.length)
+        return t.substring(start, end).trim()
+    }
+
     // --- Layout / pagination --------------------------------------------------
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -315,6 +440,15 @@ class ReaderView(context: Context) : View(context) {
     private fun contentWidthPx(): Int = (width - leftPad() - rightPad()).toInt()
     private fun contentHeightPx(): Int = (height - vPadding * 2).toInt()
 
+    /** Update font size and line spacing. Triggers repagination if content is loaded. */
+    fun setTypography(fontSizeSp: Float, newLineSpacingMult: Float) {
+        val newBodySize = ReaderTheme.sp(context, fontSizeSp)
+        val changed = newBodySize != bodySize || newLineSpacingMult != lineSpacingMult
+        bodySize = newBodySize
+        lineSpacingMult = newLineSpacingMult
+        if (changed && text != null) repaginate(fullClear = true)
+    }
+
     private fun makePaint(): TextPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         color = ReaderTheme.INK
         typeface = ReaderTheme.body(context)
@@ -322,20 +456,17 @@ class ReaderView(context: Context) : View(context) {
     }
 
     /**
-     * Overlay bold/italic runs and highlight colour onto the plain text as spans.
+     * Overlay bold/italic runs onto the plain text as spans. Highlight decoration
+     * (dotted underline) is drawn by [HighlightPainter] on the canvas, not as a span.
      * `toString()`/`length` are unchanged, so anchoring + selection still operate
-     * on the plain text. Italic uses the real Literata-Italic; bold is synthesized.
-     * Highlight spans set the text to light grey — no underline decoration needed.
+     * on the plain text.
      */
     private fun buildSpanned(
         plain: CharSequence,
         formats: List<FormatSpan>,
         annotations: List<ResolvedAnnotation> = emptyList(),
     ): CharSequence {
-        val hlSpans = annotations.filter {
-            (it.annotation.tool == AnnotationTool.highlight || it.annotation.tool == AnnotationTool.comment) && it.span != null
-        }
-        if (formats.isEmpty() && hlSpans.isEmpty()) return plain
+        if (formats.isEmpty() && annotations.isEmpty()) return plain
         val sp = SpannableString(plain)
         val len = sp.length
         val regular = ReaderTheme.body(context)
@@ -345,12 +476,14 @@ class ReaderView(context: Context) : View(context) {
             val tf = if (f.italic) italic else regular
             sp.setSpan(RunStyleSpan(tf, f.bold), f.start, f.end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
-        for (resolved in hlSpans) {
+        for (resolved in annotations) {
             val span = resolved.span ?: continue
-            val s = span.start.coerceAtLeast(0)
-            val e = span.end.coerceAtMost(len)
+            if (resolved.annotation.tool != AnnotationTool.highlight &&
+                resolved.annotation.tool != AnnotationTool.comment) continue
+            val s = span.start.coerceIn(0, len)
+            val e = span.end.coerceIn(0, len)
             if (e <= s) continue
-            sp.setSpan(ForegroundColorSpan(HIGHLIGHT_TEXT_COLOR), s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            sp.setSpan(ForegroundColorSpan(ReaderTheme.HIGHLIGHT_TEXT), s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
         return sp
     }
@@ -366,10 +499,11 @@ class ReaderView(context: Context) : View(context) {
         val gap = columnGap.toInt()
         val targetChar = pageLayout?.charStartOfPage(currentPage) ?: pendingCharOffset
         val paint = makePaint()
+        val spacingMult = lineSpacingMult
 
         executor.execute {
             val t0 = System.nanoTime()
-            val pl = PageLayout.paginate(t, paint, w, h, cols, gap)
+            val pl = PageLayout.paginate(t, paint, w, h, cols, gap, spacingMult)
             val ms = (System.nanoTime() - t0) / 1_000_000
             main.post {
                 if (gen != paginateGeneration) return@post
@@ -395,6 +529,7 @@ class ReaderView(context: Context) : View(context) {
     // --- Drawing --------------------------------------------------------------
 
     override fun onDraw(canvas: Canvas) {
+        Log.d("LeamhSwipe", "onDraw page=$currentPage pageLayout=${if (pageLayout == null) "null" else "ok"}")
         canvas.drawColor(ReaderTheme.PAPER)
         val pl = pageLayout
         if (pl == null) {
@@ -423,6 +558,29 @@ class ReaderView(context: Context) : View(context) {
             canvas.save()
             canvas.clipRect(colX, contentTop, colX + colWidth, contentTop + packedHeight)
             canvas.translate(colX, contentTop - lineTop)
+
+            // Draw jump-highlight grey box behind matched text (drawn before text so text shows on top).
+            if (jumpHighlightStart >= 0 && jumpHighlightEnd > jumpHighlightStart) {
+                val textLen = pl.layout.text.length
+                val hlS = jumpHighlightStart.coerceIn(0, textLen)
+                val hlE = jumpHighlightEnd.coerceIn(0, textLen)
+                if (hlS < hlE) {
+                    val hlStartLine = pl.layout.getLineForOffset(hlS)
+                    val hlEndLine   = pl.layout.getLineForOffset(maxOf(hlS, hlE - 1))
+                    val overlapS = maxOf(hlStartLine, startLine)
+                    val overlapE = minOf(hlEndLine, endLine - 1)
+                    for (hl in overlapS..overlapE) {
+                        val rx1 = if (hl == hlStartLine) pl.layout.getPrimaryHorizontal(hlS) else 0f
+                        val rx2 = if (hl == hlEndLine)   pl.layout.getPrimaryHorizontal(hlE) else colWidth.toFloat()
+                        canvas.drawRect(
+                            minOf(rx1, rx2), pl.layout.getLineTop(hl).toFloat(),
+                            maxOf(rx1, rx2), pl.layout.getLineBottom(hl).toFloat(),
+                            jumpHighlightPaint,
+                        )
+                    }
+                }
+            }
+
             pl.layout.draw(canvas)
             if (annotations.isNotEmpty()) {
                 highlights.drawColumn(canvas, pl.layout, startLine, endLine, annotations)
@@ -469,7 +627,10 @@ class ReaderView(context: Context) : View(context) {
             val colLeft = leftPad() + colInPage * (pl.columnWidthPx + pl.columnGapPx).toFloat()
             val gap = if (colInPage == 0) hPadding else columnGap
             val cx = colLeft - gap / 2f
-            toolIcons.draw(canvas, resolved.annotation.tool, cx, cy, marginIconSize)
+            // Any annotation with a note shows the chat-bubble icon — the note is the
+            // primary indicator regardless of the underlying tool (e.g. a highlight
+            // with a comment stays tool=highlight in storage).
+            toolIcons.draw(canvas, AnnotationTool.comment, cx, cy, marginIconSize)
         }
     }
 
@@ -541,6 +702,37 @@ class ReaderView(context: Context) : View(context) {
             }
         }
 
+        // Finger swipe → page turn. Track raw X/Y delta; require predominantly horizontal
+        // motion so vertical scrolling content doesn't accidentally turn pages, and so
+        // a clearly horizontal gesture always wins over any vertical interference.
+        if (event.getToolType(0) != MotionEvent.TOOL_TYPE_STYLUS) {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    fingerSwipeDownX = event.x
+                    fingerSwipeDownY = event.y
+                    Log.d("LeamhSwipe", "DOWN tool=${event.getToolType(0)} x=${event.x} y=${event.y}")
+                }
+                MotionEvent.ACTION_UP -> {
+                    val dx = event.x - fingerSwipeDownX
+                    val dy = event.y - fingerSwipeDownY
+                    val swipeMin = ReaderTheme.dp(context, 60f)
+                    Log.d("LeamhSwipe", "UP dx=$dx dy=$dy swipeMin=$swipeMin selStart=$selectionStart absDx=${Math.abs(dx)} absDy=${Math.abs(dy)}")
+                    fingerSwipeDownX = -1f
+                    fingerSwipeDownY = -1f
+                    if (selectionStart < 0 && Math.abs(dx) > swipeMin && Math.abs(dx) > Math.abs(dy)) {
+                        Log.d("LeamhSwipe", "TURNING PAGE dx=$dx")
+                        if (dx < 0) next() else prev()
+                        return true
+                    }
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    Log.d("LeamhSwipe", "CANCEL — gesture stolen by parent")
+                    fingerSwipeDownX = -1f
+                    fingerSwipeDownY = -1f
+                }
+            }
+        }
+
         // Stylus drags to select directly; finger uses long-press (gestures) then
         // drag-to-extend while isSelecting; a tap falls through to the gesture detector.
         if (event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
@@ -607,7 +799,18 @@ class ReaderView(context: Context) : View(context) {
                 } else if (selectionStart >= 0) {
                     cancelSelection() // tap dismisses a shown selection
                 } else if (pageLayout != null) {
-                    navTap(event.x, event.y) // edge strips turn the page
+                    val char = charAtPoint(event.x, event.y)
+                    val hit = if (char != null) annotationAtChar(char) else null
+                    if (hit != null) {
+                        val pt = charPointInView(char!!, bottom = false)
+                        onAnnotationTapped?.invoke(
+                            hit,
+                            pt?.first?.toInt() ?: event.x.toInt(),
+                            pt?.second?.toInt() ?: event.y.toInt(),
+                        )
+                    } else {
+                        navTap(event.x, event.y) // edge strips turn the page
+                    }
                 }
                 return true
             }
@@ -890,7 +1093,6 @@ class ReaderView(context: Context) : View(context) {
         private const val MARGIN_ICON_DP = 24f // per-annotation margin glyph (icon extent; ToolIconRenderer fills it)
         // Light grey for highlighted text — clearly lighter than INK but still legible.
         // Negative literal = 0xFFAAAAAA (alpha=FF, R/G/B=AA).
-        private const val HIGHLIGHT_TEXT_COLOR = -0x666667
     }
 }
 

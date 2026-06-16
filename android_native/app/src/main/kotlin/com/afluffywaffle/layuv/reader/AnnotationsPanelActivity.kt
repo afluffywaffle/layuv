@@ -50,9 +50,6 @@ class AnnotationsPanelActivity : Activity() {
     private var docxFile: File? = null
     private var docxBytes: ByteArray? = null
 
-    // Section state
-    private var showBookmarks = false
-
     // Filter chips — set of active tool-type filters (empty = show all)
     private val activeFilters = mutableSetOf<AnnotationTool>()
     private var filterHasNote = false
@@ -65,11 +62,6 @@ class AnnotationsPanelActivity : Activity() {
     private val selectedIds = mutableSetOf<String>()
 
     // Root views rebuilt on data changes
-    private lateinit var tabRow: LinearLayout
-    private lateinit var marksIndicator: View
-    private lateinit var bookmarksIndicator: View
-    private lateinit var marksTabLabel: TextView
-    private lateinit var bookmarksTabLabel: TextView
     private lateinit var filterRow: HorizontalScrollView
     private lateinit var filterChips: LinearLayout
     private lateinit var mainScroll: ScrollView
@@ -119,13 +111,7 @@ class AnnotationsPanelActivity : Activity() {
 
         root.addView(hDivider(), LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
 
-        // Tabs
-        tabRow = buildTabRow()
-        root.addView(tabRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-
-        root.addView(hDivider(), LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
-
-        // Filter chips (only visible in Marks tab)
+        // Filter chips
         filterChips = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -159,49 +145,6 @@ class AnnotationsPanelActivity : Activity() {
         root.addView(bottomBar, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
         return root
-    }
-
-    private fun buildTabRow(): LinearLayout {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-
-        fun makeTab(label: String, isMarks: Boolean): Triple<LinearLayout, TextView, View> {
-            val tv = TextView(this).apply {
-                text = label
-                typeface = ReaderTheme.body(this@AnnotationsPanelActivity)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                gravity = Gravity.CENTER
-                minimumHeight = dp(48f)
-                setOnTouchListener(PenTapListener(this@AnnotationsPanelActivity) {
-                    if (showBookmarks == isMarks) {
-                        showBookmarks = !isMarks
-                        activeFilters.clear()
-                        filterHasNote = false
-                        exitEditMode()
-                        refreshAll()
-                    }
-                })
-            }
-            val indicator = View(this)
-            val col = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(tv, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-                addView(indicator, LinearLayout.LayoutParams(MATCH_PARENT, dp(2f)))
-            }
-            return Triple(col, tv, indicator)
-        }
-
-        val (marksCol, marksTV, marksInd) = makeTab("Marks", true)
-        val (bookCol, bookTV, bookInd) = makeTab("Bookmarks", false)
-        marksTabLabel = marksTV
-        bookmarksTabLabel = bookTV
-        marksIndicator = marksInd
-        bookmarksIndicator = bookInd
-
-        row.addView(marksCol, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        row.addView(bookCol,  LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        return row
     }
 
     // -------------------------------------------------------------------------
@@ -239,13 +182,9 @@ class AnnotationsPanelActivity : Activity() {
         return list
     }
 
-    private fun bookmarkAnnotations(): List<Annotation> =
-        allAnnotations.filter { it.tool == AnnotationTool.bookmark }
+    private fun visibleAnnotations(): List<Annotation> = marksAnnotations()
 
-    private fun visibleAnnotations(): List<Annotation> =
-        if (showBookmarks) bookmarkAnnotations() else marksAnnotations()
-
-    /** Tool types present in the current Marks list (for chip generation). */
+    /** Tool types present in the marks list (for chip generation). */
     private fun presentMarkTools(): List<AnnotationTool> {
         val all = allAnnotations.filter { it.tool != AnnotationTool.bookmark }
         return AnnotationTool.entries
@@ -260,24 +199,13 @@ class AnnotationsPanelActivity : Activity() {
     // -------------------------------------------------------------------------
 
     private fun refreshAll() {
-        updateTabIndicators()
         updateFilterChips()
         rebuildList()
         updateBottomBar()
     }
 
-    private fun updateTabIndicators() {
-        val marksActive = !showBookmarks
-        marksTabLabel.setTextColor(if (marksActive) ReaderTheme.INK_87 else ReaderTheme.INK_38)
-        marksIndicator.setBackgroundColor(if (marksActive) ReaderTheme.INK_87 else 0x00000000)
-        bookmarksTabLabel.setTextColor(if (!marksActive) ReaderTheme.INK_87 else ReaderTheme.INK_38)
-        bookmarksIndicator.setBackgroundColor(if (!marksActive) ReaderTheme.INK_87 else 0x00000000)
-        filterRow.visibility = if (marksActive) View.VISIBLE else View.GONE
-    }
-
     private fun updateFilterChips() {
         filterChips.removeAllViews()
-        if (showBookmarks) return
 
         val tools = presentMarkTools()
         if (tools.isEmpty()) return
@@ -336,8 +264,8 @@ class AnnotationsPanelActivity : Activity() {
             return
         }
 
-        // If a filter is active (or bookmarks tab): flat list, no sections
-        val filtered = activeFilters.isNotEmpty() || filterHasNote || showBookmarks
+        // If a filter is active: flat list, no sections
+        val filtered = activeFilters.isNotEmpty() || filterHasNote
         if (filtered) {
             buildFlatList(visible)
         } else {
@@ -358,7 +286,7 @@ class AnnotationsPanelActivity : Activity() {
             AnnotationTool.highlight, AnnotationTool.underline,
             AnnotationTool.doubleUnderline, AnnotationTool.strikethrough,
             AnnotationTool.wavyUnderline, AnnotationTool.inkAnnotation,
-            AnnotationTool.comment, AnnotationTool.bookmark,
+            AnnotationTool.comment,
         )
         val grouped = LinkedHashMap<AnnotationTool, MutableList<Annotation>>()
         for (t in order) grouped[t] = mutableListOf()
@@ -539,17 +467,24 @@ class AnnotationsPanelActivity : Activity() {
         val ids = selectedIds.toSet()
         if (ids.isEmpty()) return
         val file = docxFile ?: return
-        val bytes = docxBytes ?: return
         LeamhDialog.confirmDelete(
             context = this,
             message = "Delete ${ids.size} annotation${if (ids.size == 1) "" else "s"}?",
             skipPrefKey = null,
             onConfirm = {
-                ioExecutor.execute {
-                    try {
-                        val updated = allAnnotations.filter { it.id !in ids }
-                        val newBytes = DocxStore.write(bytes, updated)
-                        file.writeBytes(newBytes)
+                // Route through the shared DocxWriteQueue so this delete is
+                // serialized against every reader write and can never interleave
+                // on the temp file or clobber a concurrent save.
+                DocxWriteQueue.submit(
+                    file,
+                    transform = { base ->
+                        // Re-derive from the CURRENT on-disk annotation set and
+                        // remove only the selected ids — robust to any annotation
+                        // the reader committed after this panel was opened.
+                        val current = DocxStore.load(base).annotations.map { it.annotation }
+                        DocxStore.write(base, current.filter { it.id !in ids })
+                    },
+                    onSuccess = { newBytes ->
                         val freshDoc = DocxStore.load(newBytes)
                         main.post {
                             docxBytes = newBytes
@@ -559,13 +494,14 @@ class AnnotationsPanelActivity : Activity() {
                             setResult(RESULT_FIRST_USER)
                             refreshAll()
                         }
-                    } catch (e: Exception) {
+                    },
+                    onError = { e ->
                         Log.e(TAG, "deleteSelected failed", e)
                         main.post {
                             Toast.makeText(this, "Could not delete annotations.", Toast.LENGTH_SHORT).show()
                         }
-                    }
-                }
+                    },
+                )
             },
         )
     }
@@ -666,7 +602,7 @@ class AnnotationsPanelActivity : Activity() {
         }
 
     private fun emptyLabel(): View = TextView(this).apply {
-        text = if (showBookmarks) "No bookmarks yet." else "No marks yet."
+        text = "No marks yet."
         typeface = ReaderTheme.body(this@AnnotationsPanelActivity)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
         setTextColor(ReaderTheme.INK_38)
@@ -689,7 +625,7 @@ class AnnotationsPanelActivity : Activity() {
         AnnotationTool.doubleUnderline -> "Double underlines"
         AnnotationTool.strikethrough   -> "Strikethrough"
         AnnotationTool.wavyUnderline   -> "Wavy underlines"
-        AnnotationTool.bookmark        -> "Bookmarks"
+        AnnotationTool.bookmark        -> "Bookmarks"  // not shown; kept for exhaustive when
         AnnotationTool.inkAnnotation   -> "Ink notes"
         AnnotationTool.comment         -> "Comments"
     }

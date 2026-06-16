@@ -41,7 +41,6 @@ class AnnotationPopup(private val activity: Activity) {
         AnnotationTool.underline,
         AnnotationTool.doubleUnderline,
         AnnotationTool.strikethrough,
-        AnnotationTool.bookmark,
         AnnotationTool.inkAnnotation,
         AnnotationTool.comment,
     )
@@ -82,9 +81,9 @@ class AnnotationPopup(private val activity: Activity) {
         val hPad = dp(8f)
         val vPad = dp(8f)
         val hasOverflow = onCopy != null || onShare != null
-        val btnCount = tools.size + (if (hasOverflow) 1 else 0)
-        // No inter-tool dividers — the Flutter AnnotationToolbar is a bare Row of buttons.
-        val toolStripW = btnCount * btnSize
+        val toolsBtnW = (tools.size + (if (hasOverflow) 1 else 0)) * btnSize
+        // 1dp divider + 1 dismiss-X button appended after all tool/overflow buttons
+        val toolStripW = toolsBtnW + dp(1f) + btnSize
         val popupW = toolStripW + hPad * 2
 
         val toolRow = LinearLayout(activity).apply {
@@ -144,6 +143,20 @@ class AnnotationPopup(private val activity: Activity) {
                 }
             })
         }
+
+        // Dismiss (X) button — always rightmost, separated by a 1dp divider
+        toolRow.addView(View(activity).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(1f), dp(44f))
+            setBackgroundColor(ReaderTheme.INK_12)
+        })
+        toolRow.addView(object : View(activity) {
+            override fun onDraw(canvas: Canvas) =
+                renderer.drawVecIcon(canvas, R.drawable.ic_close, width / 2f, height / 2f, ReaderTheme.dp(activity, ReaderTheme.ICON_DP))
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(btnSize, btnSize)
+            isClickable = true; isFocusable = true
+            setOnClickListener { dismiss() }
+        })
 
         val popupContent: View = if (note == null && onDelete == null) {
             toolRow.apply {
@@ -215,10 +228,9 @@ class AnnotationPopup(private val activity: Activity) {
     }
 
     /**
-     * The action toolbar shown when an existing annotation is tapped: a two-button
-     * Comment | Delete pill above [anchorX, anchorY]. Mirrors Flutter's
-     * AnnotationActionToolbar (80dp tall, two 120dp icon+label buttons, 1dp black12
-     * divider, paper / radius 8 / black12 border).
+     * The action toolbar shown when an existing annotation is tapped: two 64dp
+     * icon-only buttons (chat + delete) separated by a 1dp divider, matching the
+     * style of the main annotation toolbar.
      */
     fun showActions(
         anchor: View,
@@ -229,22 +241,40 @@ class AnnotationPopup(private val activity: Activity) {
     ) {
         dismiss()
 
+        val btnSize = dp(64f)
         val hPad = dp(8f)
-        val vPad = dp(4f)
-        val btnW = dp(120f)
-        val popupW = btnW * 2 + dp(1f) + hPad * 2
+        val vPad = dp(8f)
+        // [chat] [1dp] [delete] [1dp] [X]
+        val popupW = btnSize * 3 + dp(2f) + hPad * 2
+        val iconExtent = ReaderTheme.dp(activity, ReaderTheme.ICON_DP)
+
+        fun iconButton(iconRes: Int, onClick: () -> Unit): View =
+            object : View(activity) {
+                override fun onDraw(canvas: Canvas) =
+                    renderer.drawVecIcon(canvas, iconRes, width / 2f, height / 2f, iconExtent)
+            }.apply {
+                layoutParams = LinearLayout.LayoutParams(btnSize, btnSize)
+                isClickable = true
+                isFocusable = true
+                setOnTouchListener(PenTapListener(activity, onClick))
+            }
 
         val pill = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setBackgroundResource(R.drawable.toolbar_bg)
             setPadding(hPad, vPad, hPad, vPad)
-            addView(actionButton(R.drawable.ic_chat_outline, "Comment", btnW) { dismiss(); onComment() })
+            addView(iconButton(R.drawable.ic_chat_outline) { dismiss(); onComment() })
             addView(View(activity).apply {
-                layoutParams = LinearLayout.LayoutParams(dp(1f), dp(48f))
+                layoutParams = LinearLayout.LayoutParams(dp(1f), dp(44f))
                 setBackgroundColor(ReaderTheme.INK_12)
             })
-            addView(actionButton(R.drawable.ic_delete_outline, "Delete", btnW) { dismiss(); onDelete() })
+            addView(iconButton(R.drawable.ic_delete_outline) { dismiss(); onDelete() })
+            addView(View(activity).apply {
+                layoutParams = LinearLayout.LayoutParams(dp(1f), dp(44f))
+                setBackgroundColor(ReaderTheme.INK_12)
+            })
+            addView(iconButton(R.drawable.ic_close) { dismiss() })
         }
 
         pill.measure(
@@ -266,29 +296,6 @@ class AnnotationPopup(private val activity: Activity) {
         val y = (loc[1] + anchorY - popupH - dp(12f)).coerceAtLeast(dp(8f))
         pw.showAtLocation(anchor, Gravity.TOP or Gravity.START, x, y)
     }
-
-    /** One action button: centred Material icon (26dp) + Literata label, [width] wide × 72dp. */
-    private fun actionButton(iconRes: Int, label: String, width: Int, onClick: () -> Unit): View =
-        LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(width, dp(72f))
-            isClickable = true
-            isFocusable = true
-            setOnTouchListener(PenTapListener(activity, onClick))
-            val iconExtent = ReaderTheme.dp(activity, 26f)
-            addView(object : View(activity) {
-                override fun onDraw(canvas: Canvas) =
-                    renderer.drawVecIcon(canvas, iconRes, width / 2f, height / 2f, iconExtent)
-            }, LinearLayout.LayoutParams(dp(26f), dp(26f)))
-            addView(TextView(activity).apply {
-                text = label
-                typeface = ReaderTheme.body(activity)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                setTextColor(ReaderTheme.INK_87)
-                setPadding(dp(8f), 0, 0, 0)
-            })
-        }
 
     fun dismiss() {
         lockConfirmPopup?.dismiss()

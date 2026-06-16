@@ -20,7 +20,7 @@ class ChromeIconButton(
     onTap: () -> Unit,
 ) : View(context) {
 
-    private val icon = context.getDrawable(iconRes)!!.mutate()
+    private var icon = context.getDrawable(iconRes)!!.mutate()
     private val iconPx = ReaderTheme.dp(context, ReaderTheme.ICON_DP).toInt()
     private val padH = ReaderTheme.dp(context, 16f).toInt()
     private val padV = ReaderTheme.dp(context, 12f).toInt()
@@ -34,6 +34,13 @@ class ChromeIconButton(
                 invalidate()
             }
         }
+
+    /** Swap the drawable (e.g. outline ↔ filled). Preserves current tint state. */
+    fun setIconRes(resId: Int) {
+        icon = context.getDrawable(resId)!!.mutate()
+        icon.setTint(if (dimmed) ReaderTheme.INK_26 else ReaderTheme.INK_87)
+        invalidate()
+    }
 
     init {
         icon.setTint(ReaderTheme.INK_87)

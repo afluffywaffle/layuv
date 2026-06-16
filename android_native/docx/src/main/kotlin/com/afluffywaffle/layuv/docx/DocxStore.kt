@@ -91,6 +91,7 @@ object DocxStore {
             ResolvedAnnotation(a, Anchoring.locateInPlain(map.plain, a.selectedText, a.prefix, a.suffix, a.position))
         }
     } catch (e: Exception) {
+        e.printStackTrace() // surfaces in logcat as W/System.err — helps diagnose silent failures
         emptyList()
     }
 
@@ -162,6 +163,24 @@ object DocxStore {
 
         return DocxArchive.write(entries)
     }
+
+    /**
+     * Embeds a PNG at `word/media/ink_<annotationId>.png`. Call before [write]
+     * so the PNG is present when [load] auto-detects `hasInk`. Returns new DOCX
+     * bytes; does not touch the filesystem.
+     */
+    fun saveInkPng(docxBytes: ByteArray, annotationId: String, pngBytes: ByteArray): ByteArray {
+        val entries = DocxArchive.read(docxBytes).toMutableEntries()
+        entries["word/media/ink_$annotationId.png"] = pngBytes
+        return DocxArchive.write(entries)
+    }
+
+    /**
+     * Reads the ink PNG for [annotationId] from the archive, or null if absent.
+     * Used to pre-populate InkNoteActivity when editing an existing ink annotation.
+     */
+    fun readInkPng(docxBytes: ByteArray, annotationId: String): ByteArray? =
+        DocxArchive.read(docxBytes).bytes("word/media/ink_$annotationId.png")
 
     /** Writes/updates `leamh/position.json`. Mirror of `_savePositionInner`. */
     fun writePosition(docxBytes: ByteArray, position: ReadingPosition): ByteArray {

@@ -73,6 +73,7 @@ class PageLayout(
             contentHeightPx: Int,
             columns: Int,
             columnGapPx: Int,
+            lineSpacingMult: Float = ReaderTheme.LINE_SPACING_MULT,
         ): PageLayout {
             val cols = columns.coerceIn(1, 2)
             val gap = if (cols == 2) columnGapPx else 0
@@ -81,7 +82,7 @@ class PageLayout(
             val layout = StaticLayout.Builder
                 .obtain(text, 0, text.length, paint, columnWidth)
                 .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                .setLineSpacing(0f, ReaderTheme.LINE_SPACING_MULT)
+                .setLineSpacing(0f, lineSpacingMult)
                 .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
                 .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
                 .setIncludePad(false)

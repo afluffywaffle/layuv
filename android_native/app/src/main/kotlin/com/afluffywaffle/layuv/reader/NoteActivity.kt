@@ -79,7 +79,17 @@ class NoteActivity : Activity() {
         val rawTool       = AnnotationTool.fromName(intent.getStringExtra(EXTRA_INITIAL_TOOL))
         selectedTool      = if (rawTool == AnnotationTool.comment) AnnotationTool.highlight else rawTool
 
+        // Pre-load existing ink from the annotation being edited.
+        val initialInk = intent.getByteArrayExtra(EXTRA_INITIAL_INK_PNG)
+        val initialInkId = intent.getStringExtra(EXTRA_INITIAL_INK_ID)
+        if (initialInk != null && initialInkId != null) {
+            capturedInkBytes = initialInk
+            inkId = initialInkId
+        }
+
         setContentView(buildUi(existingNote, selectedText))
+
+        if (initialInk != null) updateInkButton(true)
 
         if (!existingNote.isNullOrEmpty()) {
             editText.setText(existingNote)
@@ -272,11 +282,10 @@ class NoteActivity : Activity() {
         btn.addView(inkLabel)
         btn.setOnTouchListener(PenTapListener(this) {
             if (inkId == null) inkId = newId()
-            startActivityForResult(
-                Intent(this, InkNoteActivity::class.java)
-                    .putExtra(InkNoteActivity.EXTRA_SELECTED_TEXT, selectedText),
-                REQ_PANEL_INK,
-            )
+            val intent = Intent(this, InkNoteActivity::class.java)
+                .putExtra(InkNoteActivity.EXTRA_SELECTED_TEXT, selectedText)
+            capturedInkBytes?.let { intent.putExtra(InkNoteActivity.EXTRA_EXISTING_INK, it) }
+            startActivityForResult(intent, REQ_PANEL_INK)
         })
         inkButton = btn
         return btn
@@ -379,13 +388,17 @@ class NoteActivity : Activity() {
     private fun dp(v: Float): Int = ReaderTheme.dp(this, v).toInt()
 
     companion object {
-        const val EXTRA_NOTE          = "note"
-        const val EXTRA_SELECTED_TEXT = "selected_text"
-        const val EXTRA_INITIAL_TOOL  = "initial_tool"
-        const val EXTRA_RESULT_TOOL   = "result_tool"
-        const val EXTRA_RESULT_TAG    = "result_tag"
-        const val EXTRA_INK_PNG       = "ink_png"
-        const val EXTRA_INK_ID        = "ink_id"
+        const val EXTRA_NOTE            = "note"
+        const val EXTRA_SELECTED_TEXT   = "selected_text"
+        const val EXTRA_INITIAL_TOOL    = "initial_tool"
+        const val EXTRA_RESULT_TOOL     = "result_tool"
+        const val EXTRA_RESULT_TAG      = "result_tag"
+        const val EXTRA_INK_PNG         = "ink_png"
+        const val EXTRA_INK_ID          = "ink_id"
+        /** Optional: ByteArray of existing ink PNG to preload (edit flow). */
+        const val EXTRA_INITIAL_INK_PNG = "initial_ink_png"
+        /** Optional: annotation ID matching [EXTRA_INITIAL_INK_PNG]. */
+        const val EXTRA_INITIAL_INK_ID  = "initial_ink_id"
 
         private const val REQ_PANEL_INK = 1008
     }
