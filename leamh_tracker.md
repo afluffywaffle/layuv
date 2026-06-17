@@ -274,7 +274,9 @@ The four Dart tools in `android_native/tools/golden_gen/` import `package:layuv/
 3. Delete the four Dart tools (or keep in `archive/flutter/` for reference)
 4. Never run `flutter test .../writeback_golden_test.dart` again
 
-**Swift golden parity note:** `macos_native/Packages/LeamhDocx/Tests/.../golden/writeback/` is a copy of the Kotlin golden fixtures. When the same bugs are fixed in the Swift engine (duplicate drawing IDs, bookmark ID collision), update the Swift writeback goldens in parallel: `comments.xml` `id="1"→"2"`, `document.xml` `w:id="10005"→"100000"`.
+**Swift engine parity — DONE (2026-06-17):** All 9 engine bug fixes were ported to `macos_native/Packages/LeamhDocx/` and the Swift writeback goldens were already written with the correct values when the engine was first committed (`d8fc277`): `comments.xml` has `id="2"`, `document.xml` has `w:id="100000"`. `swift test` reports 10/10 passing.
+
+**Swift golden generator — also needed:** `macos_native/Packages/LeamhDocx/Tests/LeamhDocxTests/` currently has hand-authored golden files that can't be regenerated without manually running the engine. When the Kotlin generator (`GenerateGoldens.kt`) is written, write a parallel Swift equivalent — an XCTest helper (or a Swift executable target) that calls `DocxStore.write()`, `PlainTextMapper.build()`, etc. and writes the golden files to disk. Same outputs as the Kotlin generator but for the Swift test resource tree.
 
 **Immediate workaround (until rewrite):** to regenerate goldens now, run:
 ```bash
