@@ -83,16 +83,27 @@ object ReaderTheme {
 
     private val cache = HashMap<String, Typeface>()
 
-    fun body(context: Context): Typeface = font(context, LITERATA)
-    fun bodyItalic(context: Context): Typeface = font(context, LITERATA_ITALIC)
+    /** "literata" or "source_sans" — set from SharedPreferences in ReaderActivity.onCreate(). */
+    var bodyFont: String = "literata"
 
-    /** Literata wght=700 via variable-font axis. Literata defaults to 400 so base is fine;
-     *  bold needs the Builder since synthetic bold over a variable font is unreliable. */
+    fun body(context: Context): Typeface =
+        if (bodyFont == "literata") font(context, LITERATA) else chrome(context)
+
+    fun bodyItalic(context: Context): Typeface =
+        if (bodyFont == "literata") font(context, LITERATA_ITALIC) else chrome(context)
+
+    /** Bold body: Literata wght=700 or Source Sans wght=700 depending on [bodyFont].
+     *  Uses the variable-font axis in both cases — synthetic bold is unreliable on
+     *  variable fonts. */
     fun bodyBold(context: Context): Typeface =
-        cache.getOrPut("$LITERATA:wght700") {
-            Typeface.Builder(context.assets, LITERATA)
-                .setFontVariationSettings("'wght' 700")
-                .build()
+        if (bodyFont == "literata") {
+            cache.getOrPut("$LITERATA:wght700") {
+                Typeface.Builder(context.assets, LITERATA)
+                    .setFontVariationSettings("'wght' 700")
+                    .build()
+            }
+        } else {
+            chromeBold(context)
         }
 
     /** Source Sans 3 at wght=400. The file defaults to wght=200 (ExtraLight), so we

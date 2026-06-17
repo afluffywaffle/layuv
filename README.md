@@ -1,17 +1,36 @@
-# layuv
+# Léamh
 
-A new Flutter project.
+A manuscript annotation tool for Supernote Nomad/Manta e-ink devices.
 
-## Getting Started
+Annotations are stored as native DOCX comments (`word/comments.xml`),
+round-tripping with Word, Pages, and Google Docs.
 
-This project is a starting point for a Flutter application.
+## Project structure
 
-A few resources to get you started if this is your first Flutter project:
+```
+android_native/   — active product (Kotlin, Android 11, no GMS)
+  app/            — reader Activities, Views, EPD/ink wrappers
+  docx/           — pure-JVM DOCX engine (parse, anchor, read, write-back)
+  tools/          — golden-test generators
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+archive/flutter/  — archived Flutter cross-platform app (reference only)
+leamh_tracker.md  — task tracker
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Build
+
+```bash
+cd android_native
+
+# Run engine tests
+./gradlew :docx:test
+
+# Build debug APK
+./gradlew :app:assembleDebug
+```
+
+Requires JDK 21. No Google Play Services.
+
+## License
+
+GPL v3 — see `LICENSE`.

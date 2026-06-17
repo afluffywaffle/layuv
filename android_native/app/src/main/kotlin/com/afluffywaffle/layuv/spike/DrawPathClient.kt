@@ -8,16 +8,13 @@ import android.util.Log
  * SPIKE — client for the Supernote drawPath low-latency handwriting service
  * (drawPath.apk, package com.ratta.drawpath).
  *
- * The full API + transaction codes below were recovered by disassembling the
- * BpMyService proxy in `librecgnition.so` (radare2) on a real Nomad — far richer
- * than the 2 functions in Ratta's PDF:
- *   code 1  setWritableAndNonWritableArea(app, FlagRect[])  — the REAL disable API
- *   code 2  setPenInfo(app, type, width, color)             — pen (PDF)
- *   code 4  sayHello() / askTrailData(app, ...)             — get strokes back
+ * Transaction codes (based on Ratta's drawPath PDF + on-device probing):
+ *   code 1  setWritableAndNonWritableArea(app, FlagRect[])  — disable/whitelist areas
+ *   code 2  setPenInfo(app, type, width, color)             — pen attributes
+ *   code 4  askTrailData(app, ...)                          — get strokes back
  *   code 6  clearScreen(app, int=255)                       — programmatic full clear
  *   code 9  setWalcomEmrInfo(app, int)                      — Wacom EMR digitizer
- *   code 16 askDeletedlData(...)                            — eraser/deleted strokes
- *   code 99999 setDebugMode(app, int)
+ *   code 16 askDeletedData(...)                             — eraser/deleted strokes
  *
  * Service: "service_myservice" (ServiceManager). Interface token:
  * "android.demo.IMyService". NATIVE C++ binder — do NOT call readException() on
@@ -39,6 +36,7 @@ object DrawPathClient {
     private const val CODE_WRITABLE_AREA = 1
     private const val CODE_PEN = 2
     private const val CODE_CLEAR = 6
+    private const val CODE_WALCOM_EMR = 9
 
     /** Whole-screen rect for the mandatory post-resume reset. */
     val RESET_RECT = intArrayOf(0, 0, 18888, 18888)
@@ -91,6 +89,18 @@ object DrawPathClient {
                 it.writeInt(if (r.size > 4) r[4] else 0)
             }
         } + " n=${rects.size}"
+
+    /**
+     * code 9 — setWalcomEmrInfo. Wacom EMR digitizer config on drawPath.
+     * Hypothesis: controls pen-up recognition trigger (symbol SET_PEN_UP_RECG_TRIGGER
+     * seen in librecgnition.so). Probe values 0, 1, 50, 100 to see which shortens
+     * the ~150–300ms kernel pen-up delay. Watch pen-up latency in logcat (drawAPP)
+     * and on-device feel after each call.
+     */
+    fun sendWalcomEmrInfo(appName: String, value: Int): String =
+        transactInts("walcomEmr", CODE_WALCOM_EMR, appName) {
+            it.writeInt(value)
+        } + " value=$value"
 
     /** The mandatory post-resume reset: whole screen, flag 0 (per Ratta PDF). */
     fun sendReset(appName: String): String =

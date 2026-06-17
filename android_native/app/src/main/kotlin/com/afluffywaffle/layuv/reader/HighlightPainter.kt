@@ -163,6 +163,7 @@ class HighlightPainter(context: Context) {
             AnnotationTool.underline -> line(canvas, xStart, xEnd, baseline + underlineOffset, solid)
             AnnotationTool.highlight,
             AnnotationTool.comment -> { /* grey text via ForegroundColorSpan in buildSpanned — no line */ }
+            AnnotationTool.inkAnnotation -> line(canvas, xStart, xEnd, baseline + underlineOffset, dotted)
             AnnotationTool.bookmark -> { /* margin icon only — no line decoration */ }
             else -> { /* unknown tool — no decoration */ }
         }

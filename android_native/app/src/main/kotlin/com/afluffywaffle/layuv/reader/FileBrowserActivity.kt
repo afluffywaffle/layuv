@@ -8,7 +8,9 @@ import android.os.Environment
 import android.text.TextUtils
 import android.text.format.DateUtils
 import android.util.TypedValue
+import android.view.GestureDetector
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
@@ -46,6 +48,25 @@ class FileBrowserActivity : Activity() {
 
     private val rowHeight by lazy { dp(68f) }
     private val dividerHeight by lazy { dp(1f).coerceAtLeast(1) }
+
+    private val swipeDetector by lazy {
+        GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
+                val dx = e2.x - (e1?.x ?: return false)
+                val dy = e2.y - (e1?.y ?: return false)
+                if (kotlin.math.abs(dx) > kotlin.math.abs(dy) && kotlin.math.abs(dx) > dp(60f)) {
+                    if (dx < 0) { page++; render() } else if (page > 0) { page--; render() }
+                    return true
+                }
+                return false
+            }
+        })
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        swipeDetector.onTouchEvent(ev)
+        return super.dispatchTouchEvent(ev)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -101,11 +122,13 @@ class FileBrowserActivity : Activity() {
         prevButton = chromeButton("‹ Prev") { if (page > 0) { page--; render() } }
         nextButton = chromeButton("Next ›") { page++; render() }
         pageView = TextView(this).apply {
-            typeface = ReaderTheme.chrome(this@FileBrowserActivity)
+            typeface = ReaderTheme.body(this@FileBrowserActivity)
             setTextColor(ReaderTheme.INK)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             gravity = Gravity.CENTER
         }
+        val cancelButton = chromeButton("Cancel") { finish() }
+        bottomBar.addView(cancelButton)
         bottomBar.addView(prevButton)
         bottomBar.addView(pageView, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         bottomBar.addView(nextButton)
@@ -119,7 +142,7 @@ class FileBrowserActivity : Activity() {
     private fun chromeButton(label: String, onClick: () -> Unit): Button = Button(this).apply {
         text = label
         isAllCaps = false
-        typeface = ReaderTheme.chrome(this@FileBrowserActivity)
+        typeface = ReaderTheme.bodyBold(this@FileBrowserActivity)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
         setTextColor(ReaderTheme.INK)
         minHeight = dp(56f)
@@ -152,7 +175,7 @@ class FileBrowserActivity : Activity() {
 
         if (entries.isEmpty()) {
             body.addView(TextView(this).apply {
-                typeface = ReaderTheme.chrome(this@FileBrowserActivity)
+                typeface = ReaderTheme.body(this@FileBrowserActivity)
                 setTextColor(MUTED)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
                 gravity = Gravity.CENTER

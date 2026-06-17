@@ -182,6 +182,39 @@ object DocxStore {
     fun readInkPng(docxBytes: ByteArray, annotationId: String): ByteArray? =
         DocxArchive.read(docxBytes).bytes("word/media/ink_$annotationId.png")
 
+    /**
+     * Embeds stroke JSON at `word/media/ink_<annotationId>_strokes.json`. Saved
+     * alongside the PNG so lasso erase works on re-opened ink notes (vector
+     * strokes are restored into InkCanvasView.committed on load).
+     */
+    fun saveInkStrokes(docxBytes: ByteArray, annotationId: String, json: String): ByteArray {
+        val entries = DocxArchive.read(docxBytes).toMutableEntries()
+        entries["word/media/ink_${annotationId}_strokes.json"] = json.toByteArray(Charsets.UTF_8)
+        return DocxArchive.write(entries)
+    }
+
+    /** Reads stored stroke JSON for [annotationId], or null if absent (rasterized note). */
+    fun readInkStrokes(docxBytes: ByteArray, annotationId: String): String? =
+        DocxArchive.read(docxBytes).bytes("word/media/ink_${annotationId}_strokes.json")
+            ?.toString(Charsets.UTF_8)
+
+    /**
+     * Removes all `*_strokes.json` files from the archive — flattens all ink
+     * annotations to PNG-only. After this call lasso erase works at pixel level
+     * (shaped hole in the raster) rather than removing whole strokes.
+     */
+    fun removeAllInkStrokes(docxBytes: ByteArray): ByteArray {
+        val entries = DocxArchive.read(docxBytes).toMutableEntries()
+        entries.keys.removeAll { it.startsWith("word/media/ink_") && it.endsWith("_strokes.json") }
+        return DocxArchive.write(entries)
+    }
+
+    /** Returns true if the archive contains at least one `*_strokes.json` file. */
+    fun hasAnyInkStrokes(docxBytes: ByteArray): Boolean =
+        DocxArchive.read(docxBytes).names.any {
+            it.startsWith("word/media/ink_") && it.endsWith("_strokes.json")
+        }
+
     /** Writes/updates `leamh/position.json`. Mirror of `_savePositionInner`. */
     fun writePosition(docxBytes: ByteArray, position: ReadingPosition): ByteArray {
         val entries = DocxArchive.read(docxBytes).toMutableEntries()

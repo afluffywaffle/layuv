@@ -7,12 +7,18 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.PathMeasure
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
+import android.graphics.RectF
+import android.graphics.Region
 import android.graphics.Typeface
+import org.json.JSONArray
+import org.json.JSONObject
 import android.os.Bundle
 import android.text.TextUtils
 import android.util.TypedValue
@@ -28,7 +34,7 @@ import com.afluffywaffle.layuv.R
 import com.afluffywaffle.layuv.reader.DrawPathClient
 import java.io.ByteArrayOutputStream
 
-enum class InkTool { THIN, THICK, ERASER }
+enum class InkTool { THIN, THICK, ERASER, LASSO }
 
 /**
  * Ink canvas for stylus annotation. Mirrors Flutter's InkCanvasScreen:
@@ -45,6 +51,7 @@ class InkNoteActivity : Activity() {
     private lateinit var thinBtn: TextView
     private lateinit var thickBtn: TextView
     private lateinit var eraseBtn: TextView
+    private lateinit var lassoBtn: TextView
     private lateinit var linesBtn: TextView
     private var ruleStyle = "none"
     private var exclusionPx = 0
@@ -63,9 +70,17 @@ class InkNoteActivity : Activity() {
             if (wasOn) "wide" else "none"
         }
         setContentView(buildUi(selectedText))
-        // Pre-load existing ink as a background bitmap so the user can draw on top.
-        intent.getByteArrayExtra(EXTRA_EXISTING_INK)?.let { bytes ->
-            canvas.setExistingInk(bytes)
+        val launch = InkNoteActivity.pendingLaunch
+        InkNoteActivity.pendingLaunch = null
+        val strokeJson = launch?.strokeJson ?: intent.getStringExtra(EXTRA_STROKE_JSON)
+        if (strokeJson != null) {
+            // Vector strokes available — load into committed list; lasso works on all ink.
+            // existingBitmap is intentionally NOT loaded: strokes are the source of truth.
+            canvas.loadStrokesFromJson(strokeJson)
+        } else {
+            // Rasterized / legacy note — load PNG as background; lasso punches pixel holes.
+            val existingInk = launch?.existingInkBytes ?: intent.getByteArrayExtra(EXTRA_EXISTING_INK)
+            existingInk?.let { bytes -> canvas.setExistingInk(bytes) }
         }
     }
 
@@ -82,10 +97,12 @@ class InkNoteActivity : Activity() {
     }
 
     private fun applyPenToDrawPath() {
+        if (!DrawPathClient.available()) return
         when (activeTool) {
-            InkTool.THIN    -> DrawPathClient.sendPen(pkg, 10, 150, 0)
-            InkTool.THICK   -> DrawPathClient.sendPen(pkg, 10, 450, 0)
-            InkTool.ERASER  -> DrawPathClient.sendPen(pkg, 10, 400, 254) // white pen
+            InkTool.THIN   -> DrawPathClient.sendPen(pkg, 10, 150, 0)
+            InkTool.THICK  -> DrawPathClient.sendPen(pkg, 10, 450, 0)
+            InkTool.ERASER -> DrawPathClient.sendPen(pkg, 10, 400, 254) // white pen
+            InkTool.LASSO  -> DrawPathClient.sendPen(pkg, 4, 120, 0) // type 4 = dotted lasso pen
         }
     }
 
@@ -180,17 +197,19 @@ class InkNoteActivity : Activity() {
             setPadding(dp(4f), 0, dp(4f), 0)
         }
 
-        thinBtn  = toolToggleView("Thin",  activeTool == InkTool.THIN)  { setTool(InkTool.THIN) }
-        thickBtn = toolToggleView("Thick", activeTool == InkTool.THICK) { setTool(InkTool.THICK) }
+        thinBtn  = toolToggleView("Thin",  activeTool == InkTool.THIN)   { setTool(InkTool.THIN) }
+        thickBtn = toolToggleView("Thick", activeTool == InkTool.THICK)  { setTool(InkTool.THICK) }
         eraseBtn = toolToggleView("Erase", activeTool == InkTool.ERASER) { setTool(InkTool.ERASER) }
+        lassoBtn = toolToggleView("Lasso", activeTool == InkTool.LASSO)  { setTool(InkTool.LASSO) }
         linesBtn = toolbarTextBtn(rulesLabel()) { cycleRules() }
         val clearBtn = toolbarTextBtn("Clear") { onClear() }
         val doneBtn  = toolbarTextBtn("Done")  { onDone() }
 
-        val btnW = dp(72f)
+        val btnW = dp(84f)
         toolbar.addView(thinBtn,  LinearLayout.LayoutParams(btnW, MATCH_PARENT))
         toolbar.addView(thickBtn, LinearLayout.LayoutParams(btnW, MATCH_PARENT))
         toolbar.addView(eraseBtn, LinearLayout.LayoutParams(btnW, MATCH_PARENT))
+        toolbar.addView(lassoBtn, LinearLayout.LayoutParams(btnW, MATCH_PARENT))
         toolbar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         toolbar.addView(linesBtn, LinearLayout.LayoutParams(btnW, MATCH_PARENT))
         toolbar.addView(clearBtn, LinearLayout.LayoutParams(btnW, MATCH_PARENT))
@@ -203,12 +222,14 @@ class InkNoteActivity : Activity() {
     // -------------------------------------------------------------------------
 
     private fun setTool(tool: InkTool) {
-        val wasEraser = activeTool == InkTool.ERASER
+        val prev = activeTool
         activeTool = tool
         canvas.activeTool = tool
         refreshToolButtons()
-        // Clear white eraser drawPath strokes before switching to ink
-        if (wasEraser && DrawPathClient.available()) DrawPathClient.clearScreen(pkg)
+        // Clear eraser/lasso drawPath overlay before switching to a different tool
+        if ((prev == InkTool.ERASER || prev == InkTool.LASSO) && DrawPathClient.available()) {
+            DrawPathClient.clearScreen(pkg)
+        }
         if (DrawPathClient.available()) {
             DrawPathClient.sendReset(pkg)
             applyPenToDrawPath()
@@ -223,12 +244,18 @@ class InkNoteActivity : Activity() {
     }
 
     private fun onDone() {
-        val pngBytes = canvas.renderToPng() // null if no meaningful ink
-        val result = Intent()
-        if (pngBytes != null) result.putExtra(EXTRA_INK_PNG, pngBytes)
-        // Always RESULT_OK — caller decides what to do with a null/absent PNG
-        setResult(RESULT_OK, result)
-        finish()
+        // PNG encoding of a full-screen bitmap can take 1-3s — run off the main thread
+        // to avoid Activity pause timeout. Store result in a static field rather than
+        // Intent extras to avoid TransactionTooLargeException on complex notes.
+        Thread {
+            val pngBytes   = canvas.renderToPng()
+            val strokeJson = canvas.getStrokeJson()
+            InkNoteActivity.pendingResult = InkResult(pngBytes, strokeJson)
+            runOnUiThread {
+                setResult(RESULT_OK, Intent())
+                finish()
+            }
+        }.start()
     }
 
     private fun cycleRules() {
@@ -239,6 +266,7 @@ class InkNoteActivity : Activity() {
         }
         canvas.ruleStyle = ruleStyle
         linesBtn.text = rulesLabel()
+        getSharedPreferences("leamh", Context.MODE_PRIVATE).edit().putString("ink_rule_lines", ruleStyle).apply()
         canvas.invalidate()
     }
 
@@ -254,6 +282,7 @@ class InkNoteActivity : Activity() {
         boldIf(thinBtn,  activeTool == InkTool.THIN)
         boldIf(thickBtn, activeTool == InkTool.THICK)
         boldIf(eraseBtn, activeTool == InkTool.ERASER)
+        boldIf(lassoBtn, activeTool == InkTool.LASSO)
     }
 
     // -------------------------------------------------------------------------
@@ -264,7 +293,7 @@ class InkNoteActivity : Activity() {
         TextView(this).apply {
             text = label
             typeface = if (selected) ReaderTheme.bodyBold(context) else ReaderTheme.body(context)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
             setTextColor(ReaderTheme.INK_87)
             gravity = Gravity.CENTER
             setOnTouchListener(PenTapListener(this@InkNoteActivity, onClick))
@@ -274,7 +303,7 @@ class InkNoteActivity : Activity() {
         TextView(this).apply {
             text = label
             typeface = ReaderTheme.body(context)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
             setTextColor(ReaderTheme.INK_87)
             gravity = Gravity.CENTER
             setOnTouchListener(PenTapListener(this@InkNoteActivity, onClick))
@@ -283,11 +312,30 @@ class InkNoteActivity : Activity() {
     private fun hDivider(): View = View(this).apply { setBackgroundColor(ReaderTheme.INK_12) }
     private fun dp(v: Float): Int = ReaderTheme.dp(this, v).toInt()
 
+    /** Large data passed into InkNoteActivity — bypasses Binder IPC size limit. */
+    data class InkLaunch(val existingInkBytes: ByteArray? = null, val strokeJson: String? = null)
+
+    /** Large data returned from InkNoteActivity — bypasses Binder IPC size limit. */
+    data class InkResult(val pngBytes: ByteArray? = null, val strokeJson: String? = null)
+
     companion object {
         const val EXTRA_SELECTED_TEXT = "selected_text"
         const val EXTRA_INK_PNG       = "ink_png"
+        const val EXTRA_STROKE_JSON   = "stroke_json"
         /** Optional: ByteArray of an existing ink PNG to display as a background layer. */
         const val EXTRA_EXISTING_INK  = "existing_ink"
+
+        /**
+         * Set before calling startActivityForResult; cleared in onCreate().
+         * Avoids TransactionTooLargeException when passing existing ink via Binder.
+         */
+        @Volatile var pendingLaunch: InkLaunch? = null
+
+        /**
+         * Set in onDone() before finish(); read in the caller's onActivityResult().
+         * Avoids TransactionTooLargeException when returning large PNG via Binder.
+         */
+        @Volatile var pendingResult: InkResult? = null
     }
 }
 
@@ -305,10 +353,12 @@ class InkNoteActivity : Activity() {
  */
 class InkCanvasView(context: Context) : View(context) {
 
-    private data class Stroke(val path: Path, val tool: InkTool)
+    /** [pts] is a flat [x0,y0, x1,y1, ...] list — same sequence used to build [path]. */
+    private class Stroke(val path: Path, val tool: InkTool, val pts: List<Float>)
 
     private val committed = ArrayList<Stroke>()
     private var current: Path? = null
+    private var currentPts = mutableListOf<Float>()
     private var lastX = 0f
     private var lastY = 0f
     private var existingBitmap: Bitmap? = null
@@ -337,6 +387,11 @@ class InkCanvasView(context: Context) : View(context) {
     }
     private val rulePaint = Paint().apply {
         color = 0x4D000000.toInt(); style = Paint.Style.STROKE; strokeWidth = 1f
+    }
+    private val lassoPaint = Paint().apply {
+        color = Color.BLACK; style = Paint.Style.STROKE
+        strokeWidth = 2f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+        pathEffect = DashPathEffect(floatArrayOf(12f, 8f), 0f)
     }
 
     fun clearStrokes() {
@@ -380,6 +435,7 @@ class InkCanvasView(context: Context) : View(context) {
             style = Paint.Style.STROKE; strokeWidth = 36f
             strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
         }
+        InkTool.LASSO -> Paint() // lasso strokes are never committed, so never exported
     }
 
     // -------------------------------------------------------------------------
@@ -391,6 +447,7 @@ class InkCanvasView(context: Context) : View(context) {
             MotionEvent.ACTION_DOWN -> {
                 lastX = event.x; lastY = event.y
                 current = Path().apply { moveTo(lastX, lastY) }
+                currentPts = mutableListOf(lastX, lastY)
             }
             MotionEvent.ACTION_MOVE -> {
                 val p = current ?: return true
@@ -398,20 +455,32 @@ class InkCanvasView(context: Context) : View(context) {
                     val hx = event.getHistoricalX(i); val hy = event.getHistoricalY(i)
                     p.quadTo(lastX, lastY, (hx + lastX) / 2f, (hy + lastY) / 2f)
                     lastX = hx; lastY = hy
+                    currentPts.add(hx); currentPts.add(hy)
                 }
                 p.quadTo(lastX, lastY, (event.x + lastX) / 2f, (event.y + lastY) / 2f)
                 lastX = event.x; lastY = event.y
+                currentPts.add(lastX); currentPts.add(lastY)
                 // drawPath provides live display — no per-move invalidate needed
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                current?.let { committed.add(Stroke(it, activeTool)) }
-                current = null
-                invalidate() // committed strokes visible; triggers EPD auto-refresh
-                if (activeTool == InkTool.ERASER) {
-                    // Flush the white-pen eraser strokes from drawPath's buffer so
-                    // the EPD redraw shows our corrected software layer
-                    DrawPathClient.clearScreen(context.packageName)
+                current?.let { path ->
+                    when (activeTool) {
+                        InkTool.LASSO -> {
+                            path.close()
+                            eraseLassoStrokes(path)
+                            DrawPathClient.clearScreen(context.packageName)
+                            RattaEink.sendOneFullFrame(context)
+                        }
+                        InkTool.ERASER -> {
+                            committed.add(Stroke(path, activeTool, currentPts.toList()))
+                            DrawPathClient.clearScreen(context.packageName)
+                        }
+                        else -> committed.add(Stroke(path, activeTool, currentPts.toList()))
+                    }
                 }
+                current = null
+                currentPts = mutableListOf()
+                invalidate()
             }
         }
         return true
@@ -424,6 +493,13 @@ class InkCanvasView(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         canvas.drawColor(0xFFF5F0E8.toInt()) // paper background
 
+        existingBitmap?.let { bmp ->
+            canvas.drawBitmap(bmp, null, Rect(0, 0, width, height), null)
+        }
+        for (stroke in committed) canvas.drawPath(stroke.path, displayPaint(stroke.tool))
+        current?.let { canvas.drawPath(it, displayPaint(activeTool)) }
+
+        // Rule lines drawn after strokes so paper-colored eraser can't cover them
         val density = resources.displayMetrics.density
         val spacing = when (ruleStyle) {
             "wide"    -> 40f * density
@@ -437,17 +513,126 @@ class InkCanvasView(context: Context) : View(context) {
                 y += spacing
             }
         }
-
-        existingBitmap?.let { bmp ->
-            canvas.drawBitmap(bmp, null, Rect(0, 0, width, height), null)
-        }
-        for (stroke in committed) canvas.drawPath(stroke.path, displayPaint(stroke.tool))
-        current?.let { canvas.drawPath(it, displayPaint(activeTool)) }
     }
 
     private fun displayPaint(tool: InkTool) = when (tool) {
         InkTool.THIN   -> thinPaint
         InkTool.THICK  -> thickPaint
         InkTool.ERASER -> eraserPaint
+        InkTool.LASSO  -> lassoPaint
+    }
+
+    // -------------------------------------------------------------------------
+    // Stroke JSON — serialise / deserialise
+    // -------------------------------------------------------------------------
+
+    /**
+     * Serialise all committed (non-eraser) strokes to a compact JSON string.
+     * Format: `[{"t":"THIN","p":[x0,y0,x1,y1,...]}, ...]`
+     * Returns null when there are no ink strokes to save.
+     */
+    fun getStrokeJson(): String? {
+        val inkStrokes = committed.filter { it.tool != InkTool.ERASER && it.tool != InkTool.LASSO }
+        if (inkStrokes.isEmpty()) return null
+        val arr = JSONArray()
+        for (s in inkStrokes) {
+            val obj = JSONObject()
+            obj.put("t", s.tool.name)
+            val pts = JSONArray()
+            for (v in s.pts) pts.put(v.toDouble())
+            obj.put("p", pts)
+            arr.put(obj)
+        }
+        return arr.toString()
+    }
+
+    /**
+     * Deserialise [json] into [committed]. Clears [existingBitmap] — vector
+     * strokes are the source of truth; the PNG is not double-drawn.
+     */
+    fun loadStrokesFromJson(json: String) {
+        committed.clear()
+        existingBitmap = null
+        val arr = JSONArray(json)
+        for (i in 0 until arr.length()) {
+            val obj = arr.getJSONObject(i)
+            val tool = try { InkTool.valueOf(obj.getString("t")) } catch (_: Exception) { InkTool.THIN }
+            val ptsArr = obj.getJSONArray("p")
+            val pts = ArrayList<Float>(ptsArr.length())
+            for (j in 0 until ptsArr.length()) pts.add(ptsArr.getDouble(j).toFloat())
+            committed.add(Stroke(ptsToPath(pts), tool, pts))
+        }
+    }
+
+    private fun ptsToPath(pts: List<Float>): Path {
+        val path = Path()
+        if (pts.size < 2) return path
+        path.moveTo(pts[0], pts[1])
+        var lx = pts[0]; var ly = pts[1]
+        var i = 2
+        while (i + 1 < pts.size) {
+            val x = pts[i]; val y = pts[i + 1]
+            path.quadTo(lx, ly, (x + lx) / 2f, (y + ly) / 2f)
+            lx = x; ly = y
+            i += 2
+        }
+        return path
+    }
+
+    // -------------------------------------------------------------------------
+    // Lasso erase
+    // -------------------------------------------------------------------------
+
+    /**
+     * Remove committed strokes inside [lassoPath] (vector erase), and also punch
+     * [existingBitmap] with the lasso shape (raster erase for flattened/legacy notes).
+     * Both branches run together — for notes with stroke data [existingBitmap] is
+     * null so the bitmap punch is a no-op; for rasterized notes [committed] has no
+     * loaded strokes so the vector removal is a no-op.
+     */
+    private fun eraseLassoStrokes(lassoPath: Path) {
+        val bounds = RectF()
+        lassoPath.computeBounds(bounds, true)
+        if (bounds.isEmpty) return
+
+        // Vector erase — remove whole strokes that intersect the lasso region
+        val clipRegion = Region(
+            bounds.left.toInt(), bounds.top.toInt(),
+            bounds.right.toInt() + 1, bounds.bottom.toInt() + 1,
+        )
+        val lassoRegion = Region()
+        lassoRegion.setPath(lassoPath, clipRegion)
+        committed.removeAll { stroke ->
+            val pm = PathMeasure(stroke.path, false)
+            val len = pm.length
+            if (len == 0f) {
+                val pos = FloatArray(2)
+                pm.getPosTan(0f, pos, null)
+                lassoRegion.contains(pos[0].toInt(), pos[1].toInt())
+            } else {
+                val pos = FloatArray(2)
+                var dist = 0f
+                var hit = false
+                while (!hit && dist <= len) {
+                    pm.getPosTan(dist, pos, null)
+                    hit = lassoRegion.contains(pos[0].toInt(), pos[1].toInt())
+                    dist += 8f
+                }
+                hit
+            }
+        }
+
+        // Raster erase — punch the lasso shape into the bitmap (flattened/legacy notes)
+        existingBitmap?.let { bmp ->
+            val mutable = if (bmp.isMutable) bmp else bmp.copy(Bitmap.Config.ARGB_8888, true)
+            val c = Canvas(mutable)
+            val paint = Paint().apply {
+                xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
+                style = Paint.Style.FILL
+            }
+            c.drawPath(lassoPath, paint)
+            existingBitmap = mutable
+            if (mutable !== bmp) bmp.recycle()
+        }
     }
 }

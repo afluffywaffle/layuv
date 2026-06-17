@@ -177,9 +177,11 @@ port still depends on it and must be de-Onyxed too:
 - Step 7's ink plan referenced the Flutter app's now-deleted `InkCanvasView` /
   `InkActivity`; redo it via the drawPath low-latency pen instead.
 
-Left in place for now: this port is reference-only while the reader consolidates
-on Flutter. Remove when reviving the native reader, or drop the whole port if
-Flutter wins.
+**Status (2026-06-17): this native port IS the product — the active, primary
+codebase.** The Flutter app (repo root) is being archived as reference only; it
+is no longer maintained, and a future macOS/iOS app would be a Swift port (the
+Dart store + this Kotlin engine as reference), not a Flutter revival. The
+de-Onyx work above still stands.
 
 **Build environment:** AGP 8.13.2 on the Gradle 9.1 wrapper. The machine's
 default JDK is 26, which AGP rejects — `gradle.properties` pins

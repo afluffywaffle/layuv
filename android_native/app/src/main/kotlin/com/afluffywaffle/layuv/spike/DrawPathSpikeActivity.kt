@@ -80,6 +80,17 @@ class DrawPathSpikeActivity : Activity() {
             log("clearScreen → $r")
         })
 
+        // code 9 — setWalcomEmrInfo: probe which value shortens pen-up delay.
+        // Symbol SET_PEN_UP_RECG_TRIGGER in librecgnition.so suggests drawPath uses
+        // this to tune the Wacom EMR kernel pen-up recognition window (~150–300ms).
+        // After each tap, write a stroke and compare how long after pen-lift the
+        // ACTION_UP arrives (watch drawAPP logcat + on-device feel).
+        val row4 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row4.addView(btn("EMR 0")   { log(DrawPathClient.sendWalcomEmrInfo(pkg, 0)) })
+        row4.addView(btn("EMR 1")   { log(DrawPathClient.sendWalcomEmrInfo(pkg, 1)) })
+        row4.addView(btn("EMR 50")  { log(DrawPathClient.sendWalcomEmrInfo(pkg, 50)) })
+        row4.addView(btn("EMR 100") { log(DrawPathClient.sendWalcomEmrInfo(pkg, 100)) })
+
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#F0F0F0"))
@@ -88,6 +99,7 @@ class DrawPathSpikeActivity : Activity() {
             addView(row1, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(row2, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(row3, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+            addView(row4, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         }
 
         canvas = InkProbeView(this)

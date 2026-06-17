@@ -12,10 +12,10 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+import android.view.MotionEvent
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import com.afluffywaffle.layuv.R
@@ -61,11 +61,19 @@ class AnnotationsPanelActivity : Activity() {
     private var editMode = false
     private val selectedIds = mutableSetOf<String>()
 
+    // Pagination
+    private var currentPage = 0
+    private var pageSize = 8
+    private var availableListHeight = 0
+    private var swipeDownX = 0f
+    private var swipeDownY = 0f
+
     // Root views rebuilt on data changes
     private lateinit var filterRow: HorizontalScrollView
     private lateinit var filterChips: LinearLayout
-    private lateinit var mainScroll: ScrollView
     private lateinit var listContainer: LinearLayout
+    private lateinit var paginationRow: LinearLayout
+    private lateinit var pageLabel: TextView
     private lateinit var bottomBar: LinearLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -124,13 +132,49 @@ class AnnotationsPanelActivity : Activity() {
         }
         root.addView(filterRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
-        // Scrollable list area
-        listContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        mainScroll = ScrollView(this).apply {
-            overScrollMode = View.OVER_SCROLL_NEVER
-            addView(listContainer, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        // Paginated list area — no ScrollView; pages are sized to fit the screen
+        listContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            clipChildren = true
+            clipToPadding = true
+            viewTreeObserver.addOnGlobalLayoutListener(object : android.view.ViewTreeObserver.OnGlobalLayoutListener {
+                override fun onGlobalLayout() {
+                    if (height > 0 && availableListHeight == 0) {
+                        availableListHeight = height
+                        viewTreeObserver.removeOnGlobalLayoutListener(this)
+                    }
+                }
+            })
         }
-        root.addView(mainScroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        root.addView(listContainer, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+
+        root.addView(hDivider(), LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
+
+        // Pagination row — hidden when content fits one page
+        paginationRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8f), dp(4f), dp(8f), dp(4f))
+            setBackgroundColor(ReaderTheme.PAPER)
+            minimumHeight = dp(56f)
+            visibility = View.GONE
+        }
+        pageLabel = TextView(this).apply {
+            typeface = ReaderTheme.body(this@AnnotationsPanelActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTextColor(ReaderTheme.INK_54)
+            gravity = Gravity.CENTER
+        }
+        paginationRow.addView(
+            textButton("← Prev") { navigatePage(-1) },
+            LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT),
+        )
+        paginationRow.addView(pageLabel, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        paginationRow.addView(
+            textButton("Next →") { navigatePage(+1) },
+            LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT),
+        )
+        root.addView(paginationRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
         root.addView(hDivider(), LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
 
@@ -216,6 +260,7 @@ class AnnotationsPanelActivity : Activity() {
             buildFilterChip("All", allActive) {
                 activeFilters.clear()
                 filterHasNote = false
+                currentPage = 0
                 rebuildList()
                 updateFilterChips()
                 updateBottomBar()
@@ -229,6 +274,7 @@ class AnnotationsPanelActivity : Activity() {
             filterChips.addView(
                 buildFilterChip(toolSectionLabel(tool), active) {
                     if (active) activeFilters.remove(tool) else activeFilters.add(tool)
+                    currentPage = 0
                     rebuildList()
                     updateFilterChips()
                     updateBottomBar()
@@ -242,6 +288,7 @@ class AnnotationsPanelActivity : Activity() {
             filterChips.addView(
                 buildFilterChip("Has note", filterHasNote) {
                     filterHasNote = !filterHasNote
+                    currentPage = 0
                     rebuildList()
                     updateFilterChips()
                     updateBottomBar()
@@ -261,16 +308,62 @@ class AnnotationsPanelActivity : Activity() {
         val visible = visibleAnnotations()
         if (visible.isEmpty()) {
             listContainer.addView(emptyLabel())
+            paginationRow.visibility = View.GONE
             return
         }
 
-        // If a filter is active: flat list, no sections
+        pageSize = computePageSize()
+        val totalPages = (visible.size + pageSize - 1) / pageSize
+        currentPage = currentPage.coerceIn(0, totalPages - 1)
+
+        val start = currentPage * pageSize
+        val pageItems = visible.subList(start, minOf(start + pageSize, visible.size))
+
         val filtered = activeFilters.isNotEmpty() || filterHasNote
         if (filtered) {
-            buildFlatList(visible)
+            buildFlatList(pageItems)
         } else {
-            buildSectionedList(visible)
+            buildSectionedList(pageItems)
         }
+
+        paginationRow.visibility = if (totalPages > 1) View.VISIBLE else View.GONE
+        pageLabel.text = "${currentPage + 1} / $totalPages"
+    }
+
+    private fun navigatePage(delta: Int) {
+        val visible = visibleAnnotations()
+        if (visible.isEmpty()) return
+        val totalPages = (visible.size + pageSize - 1) / pageSize
+        val newPage = (currentPage + delta).coerceIn(0, totalPages - 1)
+        if (newPage == currentPage) return
+        currentPage = newPage
+        rebuildList()
+    }
+
+    private fun computePageSize(): Int {
+        // Each row is 64dp min + 20dp vertical padding + 1dp divider ≈ 85dp.
+        // Section headers add 44dp. Use 90dp as a conservative per-item estimate
+        // so the page never overflows into the pagination bar below.
+        val rowH = ReaderTheme.dp(this, 90f).toInt()
+        val available = if (availableListHeight > 0) availableListHeight else {
+            val reserved = ReaderTheme.dp(this, 56f + 48f + 56f + 56f).toInt()
+            resources.displayMetrics.heightPixels - reserved
+        }
+        return (available / rowH).coerceIn(3, 12)
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { swipeDownX = ev.x; swipeDownY = ev.y }
+            MotionEvent.ACTION_UP -> {
+                val dx = ev.x - swipeDownX
+                val dy = ev.y - swipeDownY
+                if (Math.abs(dx) > dp(60f) && Math.abs(dx) > Math.abs(dy)) {
+                    navigatePage(if (dx < 0) +1 else -1)
+                }
+            }
+        }
+        return super.dispatchTouchEvent(ev)
     }
 
     private fun buildFlatList(annotations: List<Annotation>) {

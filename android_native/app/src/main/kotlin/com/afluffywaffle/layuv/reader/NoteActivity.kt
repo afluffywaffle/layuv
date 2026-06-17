@@ -44,6 +44,7 @@ class NoteActivity : Activity() {
     private var selectedTool = AnnotationTool.highlight
     private var selectedTag: AnnotationTag? = null
     private var capturedInkBytes: ByteArray? = null
+    private var capturedStrokeJson: String? = null
     private var inkId: String? = null
 
     private val toolContainers = mutableMapOf<AnnotationTool, FrameLayout>()
@@ -80,12 +81,17 @@ class NoteActivity : Activity() {
         selectedTool      = if (rawTool == AnnotationTool.comment) AnnotationTool.highlight else rawTool
 
         // Pre-load existing ink from the annotation being edited.
-        val initialInk = intent.getByteArrayExtra(EXTRA_INITIAL_INK_PNG)
-        val initialInkId = intent.getStringExtra(EXTRA_INITIAL_INK_ID)
+        // Large data comes via pendingLaunch (avoids Binder IPC size limit); Intent
+        // extras are the fallback for any caller that hasn't been updated yet.
+        val launch = NoteActivity.pendingLaunch
+        NoteActivity.pendingLaunch = null
+        val initialInk   = launch?.initialInkBytes ?: intent.getByteArrayExtra(EXTRA_INITIAL_INK_PNG)
+        val initialInkId = launch?.initialInkId    ?: intent.getStringExtra(EXTRA_INITIAL_INK_ID)
         if (initialInk != null && initialInkId != null) {
             capturedInkBytes = initialInk
             inkId = initialInkId
         }
+        capturedStrokeJson = launch?.strokeJson ?: intent.getStringExtra(EXTRA_INITIAL_STROKE_JSON)
 
         setContentView(buildUi(existingNote, selectedText))
 
@@ -105,12 +111,16 @@ class NoteActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (requestCode == REQ_PANEL_INK) {
             if (resultCode == RESULT_OK) {
-                val bytes = data?.getByteArrayExtra(InkNoteActivity.EXTRA_INK_PNG)
+                // Large data via static — avoids Binder IPC size limit.
+                val inkResult = InkNoteActivity.pendingResult
+                InkNoteActivity.pendingResult = null
+                val bytes = inkResult?.pngBytes
                 if (bytes != null && bytes.isNotEmpty()) {
                     capturedInkBytes = bytes
                     if (inkId == null) inkId = newId()
                     updateInkButton(true)
                 }
+                inkResult?.strokeJson?.let { capturedStrokeJson = it }
             }
         } else {
             @Suppress("DEPRECATION")
@@ -124,16 +134,15 @@ class NoteActivity : Activity() {
 
     private fun onSave() {
         val note = editText.text.toString().trim()
+        val ink = capturedInkBytes
+        val id  = inkId
+        // Pass large data via static to avoid Binder IPC size limit.
+        NoteActivity.pendingResult = NoteResult(inkBytes = ink, inkId = id, strokeJson = capturedStrokeJson)
         val result = Intent()
             .putExtra(EXTRA_NOTE, note)
             .putExtra(EXTRA_RESULT_TOOL, selectedTool.name)
             .putExtra(EXTRA_RESULT_TAG, selectedTag?.name)
-        val ink = capturedInkBytes
-        val id  = inkId
-        if (ink != null && id != null) {
-            result.putExtra(EXTRA_INK_PNG, ink)
-            result.putExtra(EXTRA_INK_ID, id)
-        }
+        if (id != null) result.putExtra(EXTRA_INK_ID, id) // small string, safe to keep
         setResult(RESULT_OK, result)
         finish()
     }
@@ -282,9 +291,14 @@ class NoteActivity : Activity() {
         btn.addView(inkLabel)
         btn.setOnTouchListener(PenTapListener(this) {
             if (inkId == null) inkId = newId()
+            val sj = capturedStrokeJson
+            // Pass large data via static to avoid Binder IPC size limit.
+            InkNoteActivity.pendingLaunch = InkNoteActivity.InkLaunch(
+                existingInkBytes = if (sj == null) capturedInkBytes else null,
+                strokeJson = sj,
+            )
             val intent = Intent(this, InkNoteActivity::class.java)
                 .putExtra(InkNoteActivity.EXTRA_SELECTED_TEXT, selectedText)
-            capturedInkBytes?.let { intent.putExtra(InkNoteActivity.EXTRA_EXISTING_INK, it) }
             startActivityForResult(intent, REQ_PANEL_INK)
         })
         inkButton = btn
@@ -393,13 +407,32 @@ class NoteActivity : Activity() {
         const val EXTRA_INITIAL_TOOL    = "initial_tool"
         const val EXTRA_RESULT_TOOL     = "result_tool"
         const val EXTRA_RESULT_TAG      = "result_tag"
-        const val EXTRA_INK_PNG         = "ink_png"
-        const val EXTRA_INK_ID          = "ink_id"
+        const val EXTRA_INK_PNG             = "ink_png"
+        const val EXTRA_INK_ID              = "ink_id"
+        const val EXTRA_STROKE_JSON         = "stroke_json"
+        const val EXTRA_INITIAL_STROKE_JSON = "initial_stroke_json"
         /** Optional: ByteArray of existing ink PNG to preload (edit flow). */
         const val EXTRA_INITIAL_INK_PNG = "initial_ink_png"
         /** Optional: annotation ID matching [EXTRA_INITIAL_INK_PNG]. */
         const val EXTRA_INITIAL_INK_ID  = "initial_ink_id"
 
+        @Volatile var pendingLaunch: NoteLaunch? = null
+        @Volatile var pendingResult: NoteResult? = null
+
         private const val REQ_PANEL_INK = 1008
     }
+
+    /** Large data passed into NoteActivity — bypasses Binder IPC size limit. */
+    data class NoteLaunch(
+        val initialInkBytes: ByteArray? = null,
+        val initialInkId: String? = null,
+        val strokeJson: String? = null,
+    )
+
+    /** Large data returned from NoteActivity — bypasses Binder IPC size limit. */
+    data class NoteResult(
+        val inkBytes: ByteArray? = null,
+        val inkId: String? = null,
+        val strokeJson: String? = null,
+    )
 }

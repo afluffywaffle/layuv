@@ -1,6 +1,7 @@
 package com.afluffywaffle.layuv.spike
 
 import android.content.Context
+import android.graphics.Rect
 import android.os.IBinder
 import android.util.Log
 import android.view.View
@@ -9,10 +10,6 @@ import android.view.View
  * SPIKE — client for the Supernote native EPD refresh path. This is the Ratta
  * equivalent of Onyx's `EpdController` and the CORRECT refresh route on
  * Supernote; the Onyx `EpdController` in `reader/Epd.kt` is a Boox no-op here.
- *
- * Recovered 2026-06-09 by decompiling, on a real Manta:
- *   /system/framework/libeinkpwcoreapi.jar  (com.htfyun.eink.pw.core.*)
- *   android.os.EinkManager / android.os.IEinkManager  (framework.jar)
  *
  * Model: the EPD waveform is selected by the system property `sys.eink.mode`
  * (set via `EinkManager.setMode` / `IEinkManager.setProperty`), then a normal
@@ -26,8 +23,7 @@ import android.view.View
  * Hidden-API reflection needs `settings put global hidden_api_policy 0` (same
  * caveat as [DrawPathClient]).
  *
- * Waveform strings are `android.os.EinkManager.EinkMode` (the `sys.eink.mode`
- * values). Mapping to the reader's [com.afluffywaffle.layuv.reader.Epd] ops:
+ * Waveform mode values for `sys.eink.mode`, mapped to reader Epd ops:
  *   "2"  FULL_GC16 — full clean greyscale   (Onyx GC  → fullClear)
  *   "8"  PART_GL16 — partial greyscale, fast (Onyx GU  → pageTurn)
  *   "14" DU        — direct update 1-bit     (Onyx DU  → selection / region)
@@ -167,6 +163,58 @@ object EinkClient {
             }
         } catch (e: Throwable) {
             "disableAutoMode THREW: ${e.javaClass.simpleName}: ${e.message}"
+        }.also { Log.i(TAG, it) }
+    }
+
+    // -------------------------------------------------------------------------
+    // EinkPwInternalY — partial-window regional refresh (hidden API, needs policy 0).
+    // Used internally by drawPath for its own EPD rect updates.
+    // -------------------------------------------------------------------------
+
+    private var pwInternal: Any? = null  // htfyun.penwrite.ctrl.EinkPwInternalY instance
+    private var pwClass: Class<*>? = null
+
+    /**
+     * Init the EinkPwInternalY singleton. Call once before [postRectForPw].
+     * If this fails, the class doesn't exist on this firmware or hidden_api_policy
+     * is still enforced.
+     */
+    fun initPwInternal(context: Context): String {
+        return try {
+            val cls = Class.forName("htfyun.penwrite.ctrl.EinkPwInternalY")
+            val inst = cls.getMethod("getEinkPwInternal").invoke(null)
+            cls.getMethod("initForPw", Context::class.java).invoke(inst, context)
+            pwInternal = inst
+            pwClass = cls
+            "EinkPwInternalY.initForPw ok — inst=${inst.javaClass.simpleName}"
+        } catch (e: Throwable) {
+            "initPwInternal THREW: ${e.javaClass.simpleName}: ${e.message}"
+        }.also { Log.i(TAG, it) }
+    }
+
+    /**
+     * Post a regional EPD refresh via htfyun.penwrite.ctrl.EinkPwInternalY.
+     * Call [initPwInternal] first.
+     *
+     * Waveform probes (dispMode / dataMode / a2Gate):
+     *   postRectForPw(rect, 3,  3, 0)   — GL16 quality text (page turns)
+     *   postRectForPw(rect, 16, 1, 183) — fast A2 (ink)
+     *   postRectForPw(rect, 16, 9, 183) — default ink bitfield
+     */
+    fun postRectForPw(rect: Rect, dispMode: Int, dataMode: Int, a2Gate: Int): String {
+        val inst = pwInternal ?: return "FAIL: not initialized — call PW init first"
+        val cls = pwClass ?: return "FAIL: no class"
+        return try {
+            cls.getMethod(
+                "postRectForPw",
+                Rect::class.java,
+                Int::class.javaPrimitiveType!!,
+                Int::class.javaPrimitiveType!!,
+                Int::class.javaPrimitiveType!!,
+            ).invoke(inst, rect, dispMode, dataMode, a2Gate)
+            "postRectForPw(disp=$dispMode,data=$dataMode,a2=$a2Gate) ok"
+        } catch (e: Throwable) {
+            "postRectForPw THREW: ${e.javaClass.simpleName}: ${e.message}"
         }.also { Log.i(TAG, it) }
     }
 

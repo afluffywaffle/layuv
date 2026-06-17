@@ -23,10 +23,8 @@ import android.graphics.drawable.ColorDrawable
 import android.text.TextUtils
 import android.widget.FrameLayout
 import android.widget.LinearLayout
-import android.widget.PopupMenu
 import android.widget.PopupWindow
 import android.widget.TextView
-import android.widget.ScrollView
 import android.widget.Toast
 import com.afluffywaffle.layuv.R
 import com.afluffywaffle.layuv.docx.DocxStore
@@ -103,6 +101,7 @@ class ReaderActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        ReaderTheme.bodyFont = prefs.getString(KEY_BODY_FONT, "literata") ?: "literata"
         setContentView(buildUi())
         readerView.setNavSide(prefs.getString(KEY_NAV_SIDE, "both") ?: "both")
         Log.i(TAG, "smallestScreenWidthDp=${resources.configuration.smallestScreenWidthDp} (auto 2-col >= $AUTO_TWO_COL_MIN_DP)")
@@ -403,20 +402,214 @@ class ReaderActivity : Activity() {
         }
     }
 
-    /** Overflow menu: open another document, reader settings, export (soon). */
+    /** Overflow menu: open document + all reader settings as tap-to-cycle rows. */
     private fun showOverflowMenu() {
-        PopupMenu(this, moreButton).apply {
-            menu.add(0, 1, 0, getString(R.string.open_document))
-            menu.add(0, 2, 1, "Settings")
-            menu.add(0, 3, 2, "Export (coming soon)").isEnabled = false
-            setOnMenuItemClickListener { item ->
-                when (item.itemId) {
-                    1 -> { launchOpen(); true }
-                    2 -> { showSettingsPopup(); true }
-                    else -> false
+        // Migrate ink_rule_lines from legacy Boolean to String on first open.
+        try {
+            prefs.getString(KEY_RULE_LINES, null)
+        } catch (_: ClassCastException) {
+            val wasOn = try { prefs.getBoolean(KEY_RULE_LINES, false) } catch (_: Exception) { false }
+            prefs.edit().remove(KEY_RULE_LINES).putString(KEY_RULE_LINES, if (wasOn) "wide" else "none").commit()
+        }
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundResource(R.drawable.popup_bg)
+        }
+        var popup: PopupWindow? = null
+
+        root.addView(overflowActionRow(getString(R.string.open_document)) {
+            popup?.dismiss()
+            launchOpen()
+        })
+        root.addView(overflowMenuDivider())
+        root.addView(overflowCycleRow(
+            "PAGE TURN",
+            prefs.getString(KEY_NAV_SIDE, "both") ?: "both",
+            listOf("both" to "Both sides", "left" to "Left only", "right" to "Right only", "none" to "None"),
+        ) { value ->
+            prefs.edit().putString(KEY_NAV_SIDE, value).apply()
+            readerView.setNavSide(value)
+        })
+        root.addView(overflowMenuDivider())
+        root.addView(overflowCycleRow(
+            "FONT SIZE",
+            prefs.getString(KEY_FONT_SIZE, "medium") ?: "medium",
+            listOf("small" to "Small", "medium" to "Medium", "large" to "Large"),
+        ) { value ->
+            prefs.edit().putString(KEY_FONT_SIZE, value).apply()
+            applyTypographyPrefs()
+        })
+        root.addView(overflowMenuDivider())
+        root.addView(overflowCycleRow(
+            "LINE SPACING",
+            prefs.getString(KEY_LINE_SPACING, "comfortable") ?: "comfortable",
+            listOf("normal" to "Normal", "comfortable" to "Comfortable", "spacious" to "Spacious"),
+        ) { value ->
+            prefs.edit().putString(KEY_LINE_SPACING, value).apply()
+            applyTypographyPrefs()
+        })
+        root.addView(overflowMenuDivider())
+        root.addView(overflowCycleRow(
+            "COLUMNS",
+            resolveColumns().toString(),
+            listOf("1" to "1 column", "2" to "2 columns"),
+        ) { value ->
+            prefs.edit().putInt(KEY_COLUMNS, value.toInt()).apply()
+            applyColumns()
+        })
+        root.addView(overflowMenuDivider())
+        root.addView(overflowCycleRow(
+            "NAV DIRECTION",
+            if (prefs.getBoolean(KEY_NAV_REVERSED, false)) "true" else "false",
+            listOf("false" to "Normal", "true" to "Reversed"),
+        ) { value -> prefs.edit().putBoolean(KEY_NAV_REVERSED, value == "true").apply() })
+        root.addView(overflowMenuDivider())
+        root.addView(overflowCycleRow(
+            "FONT FAMILY",
+            prefs.getString(KEY_BODY_FONT, "literata") ?: "literata",
+            listOf("literata" to "Literata", "source_sans" to "Source Sans"),
+        ) { value ->
+            prefs.edit().putString(KEY_BODY_FONT, value).apply()
+            ReaderTheme.bodyFont = value
+            recreate()
+        })
+        root.addView(overflowMenuDivider())
+        root.addView(overflowActionRow("Flatten ink…") {
+            popup?.dismiss()
+            confirmFlattenInk()
+        })
+        val popupW = dp(310f)
+        root.measure(
+            View.MeasureSpec.makeMeasureSpec(popupW, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        val popupH = root.measuredHeight
+        val loc = IntArray(2)
+        moreButton.getLocationInWindow(loc)
+        val x = (loc[0] + moreButton.width - popupW).coerceAtLeast(dp(8f))
+        val y = (loc[1] - popupH - dp(4f)).coerceAtLeast(dp(8f))
+
+        val pw = PopupWindow(root, popupW, WRAP_CONTENT, true).apply {
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0))
+            elevation = ReaderTheme.dp(this@ReaderActivity, 6f)
+            isOutsideTouchable = true
+        }
+        popup = pw
+        pw.showAtLocation(readerView, Gravity.TOP or Gravity.START, x, y)
+    }
+
+    private fun overflowCycleRow(
+        label: String,
+        initialValue: String,
+        options: List<Pair<String, String>>,
+        onPick: (String) -> Unit,
+    ): View {
+        var current = initialValue
+        val valueLabel = TextView(this).apply {
+            typeface = ReaderTheme.bodyBold(this@ReaderActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+            setTextColor(ReaderTheme.INK_87)
+            text = options.firstOrNull { it.first == current }?.second ?: current
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(58f)
+            setPadding(dp(16f), dp(8f), dp(12f), dp(8f))
+            isClickable = true
+            isFocusable = true
+            stateListAnimator = null
+            addView(
+                TextView(context).apply {
+                    text = label
+                    typeface = ReaderTheme.bodyBold(this@ReaderActivity)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                    setTextColor(ReaderTheme.INK_54)
+                    letterSpacing = 0.08f
+                },
+                LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f),
+            )
+            addView(valueLabel, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
+            addView(object : View(context) {
+                override fun onDraw(canvas: Canvas) =
+                    undoRenderer.drawVecIcon(canvas, R.drawable.ic_arrow_back, width / 2f, height / 2f, ReaderTheme.dp(this@ReaderActivity, 14f))
+            }.apply { rotation = 180f }, LinearLayout.LayoutParams(dp(20f), dp(20f)))
+            setOnTouchListener(PenTapListener(context) {
+                val idx = options.indexOfFirst { it.first == current }
+                val next = options[(idx + 1) % options.size]
+                current = next.first
+                valueLabel.text = next.second
+                onPick(current)
+            })
+        }
+    }
+
+    private fun overflowActionRow(label: String, onClick: () -> Unit): View =
+        TextView(this).apply {
+            text = label
+            typeface = ReaderTheme.bodyBold(this@ReaderActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+            setTextColor(ReaderTheme.INK)
+            minimumHeight = dp(58f)
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16f), dp(8f), dp(16f), dp(8f))
+            isClickable = true
+            isFocusable = true
+            stateListAnimator = null
+            setOnTouchListener(PenTapListener(this@ReaderActivity) { onClick() })
+        }
+
+    private fun overflowMenuDivider(): View = View(this).apply {
+        setBackgroundColor(ReaderTheme.INK_12)
+        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(1f))
+    }
+
+    /**
+     * Ask the user to confirm flattening all ink annotations to PNG-only.
+     * After flattening, lasso erase works at pixel level instead of removing
+     * whole strokes, and the DOCX can no longer be un-flattened.
+     */
+    private fun confirmFlattenInk() {
+        val opened = book ?: return
+        val file   = opened.file ?: run {
+            Toast.makeText(this, "File is read-only — can't flatten.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val hasStrokes = opened.bytes.let { DocxStore.hasAnyInkStrokes(it) }
+        if (!hasStrokes) {
+            Toast.makeText(this, "No stroke data to flatten.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Flatten ink?")
+            .setMessage(
+                "This removes all saved stroke data from the document. " +
+                "After flattening, ink annotations can't be edited with the lasso eraser — " +
+                "only the freeform eraser will work. This cannot be undone."
+            )
+            .setPositiveButton("Flatten") { _, _ -> flattenInk(opened, file) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun flattenInk(opened: OpenBook, file: File) {
+        DocxWriteQueue.submit(
+            file,
+            transform = { base -> DocxStore.removeAllInkStrokes(base) },
+            onSuccess = { newBytes ->
+                val freshDoc = DocxStore.load(newBytes)
+                main.post {
+                    book = OpenBook(opened.displayName, newBytes, freshDoc, file)
+                    Toast.makeText(this, "Ink flattened.", Toast.LENGTH_SHORT).show()
                 }
-            }
-        }.show()
+            },
+            onError = { ex ->
+                Log.e(TAG, "flattenInk failed", ex)
+                main.post { Toast.makeText(this, "Could not flatten.", Toast.LENGTH_SHORT).show() }
+            },
+        )
     }
 
     /** Remove the most recently created annotation (persistent undo). */
@@ -428,167 +621,6 @@ class ReaderActivity : Activity() {
         val newList = opened.doc.annotations.map { it.annotation }.filter { it.id != id }
         lastAnnotationId = null
         saveAnnotations(opened, file, newList)
-    }
-
-    /** Inline settings popup — replaces the old full-screen SettingsActivity. */
-    private fun showSettingsPopup() {
-        // Migrate ink_rule_lines from legacy Boolean to String on first open.
-        try {
-            prefs.getString(KEY_RULE_LINES, null)
-        } catch (_: ClassCastException) {
-            val wasOn = try { prefs.getBoolean(KEY_RULE_LINES, false) } catch (_: Exception) { false }
-            prefs.edit().remove(KEY_RULE_LINES).putString(KEY_RULE_LINES, if (wasOn) "wide" else "none").commit()
-        }
-
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(ReaderTheme.PAPER)
-        }
-
-        var popup: PopupWindow? = null
-
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(4f), dp(8f), dp(16f), dp(4f))
-        }
-        header.addView(
-            ChromeIconButton(this, R.drawable.ic_arrow_back) { popup?.dismiss() },
-            LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT),
-        )
-        header.addView(
-            TextView(this).apply {
-                text = "Settings"
-                typeface = ReaderTheme.bodyBold(this@ReaderActivity)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-                setTextColor(ReaderTheme.INK_87)
-            },
-            LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f),
-        )
-        root.addView(header, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-        root.addView(View(this).apply { setBackgroundColor(ReaderTheme.INK_12) }, LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
-
-        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-
-        body.addView(settingsSectionHeader("PAGE TURN"))
-        body.addView(settingsRadioGroup(
-            prefs.getString(KEY_NAV_SIDE, "both") ?: "both",
-            listOf("both" to "Both sides", "left" to "Left side only", "right" to "Right side only", "none" to "None"),
-        ) { value ->
-            prefs.edit().putString(KEY_NAV_SIDE, value).apply()
-            readerView.setNavSide(value)
-        })
-        body.addView(settingsSectionSpacer())
-
-        body.addView(settingsSectionHeader("NAVIGATION DIRECTION"))
-        body.addView(settingsRadioGroup(
-            if (prefs.getBoolean(KEY_NAV_REVERSED, false)) "true" else "false",
-            listOf("false" to "Normal", "true" to "Reversed"),
-        ) { value -> prefs.edit().putBoolean(KEY_NAV_REVERSED, value == "true").apply() })
-        body.addView(settingsSectionSpacer())
-
-        body.addView(settingsSectionHeader("FONT SIZE"))
-        body.addView(settingsRadioGroup(
-            prefs.getString(KEY_FONT_SIZE, "medium") ?: "medium",
-            listOf("small" to "Small", "medium" to "Medium", "large" to "Large"),
-        ) { value ->
-            prefs.edit().putString(KEY_FONT_SIZE, value).apply()
-            applyTypographyPrefs()
-        })
-        body.addView(settingsSectionSpacer())
-
-        body.addView(settingsSectionHeader("LINE SPACING"))
-        body.addView(settingsRadioGroup(
-            prefs.getString(KEY_LINE_SPACING, "comfortable") ?: "comfortable",
-            listOf("normal" to "Normal", "comfortable" to "Comfortable", "spacious" to "Spacious"),
-        ) { value ->
-            prefs.edit().putString(KEY_LINE_SPACING, value).apply()
-            applyTypographyPrefs()
-        })
-        body.addView(settingsSectionSpacer())
-
-        body.addView(settingsSectionHeader("INK CANVAS"))
-        body.addView(settingsRadioGroup(
-            prefs.getString(KEY_RULE_LINES, "none") ?: "none",
-            listOf("none" to "Plain", "wide" to "Wide ruled", "college" to "College ruled"),
-        ) { value -> prefs.edit().putString(KEY_RULE_LINES, value).apply() })
-
-        val scroll = ScrollView(this)
-        scroll.addView(body, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-        root.addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
-
-        val pw = PopupWindow(root, MATCH_PARENT, MATCH_PARENT, true).apply {
-            setBackgroundDrawable(ColorDrawable(ReaderTheme.PAPER))
-            isOutsideTouchable = false
-        }
-        popup = pw
-        pw.showAtLocation(readerView, Gravity.TOP or Gravity.START, 0, 0)
-    }
-
-    private fun settingsSectionHeader(title: String): View = TextView(this).apply {
-        text = title
-        typeface = ReaderTheme.body(this@ReaderActivity)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-        setTextColor(ReaderTheme.INK_54)
-        letterSpacing = 0.08f
-        setPadding(dp(20f), dp(20f), dp(20f), dp(6f))
-    }
-
-    private fun settingsRadioGroup(
-        selected: String,
-        options: List<Pair<String, String>>,
-        onPick: (String) -> Unit,
-    ): View {
-        var current = selected
-        val checks = mutableListOf<Pair<String, View>>()
-        val group = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        options.forEachIndexed { index, (value, label) ->
-            if (index > 0) group.addView(
-                View(this).apply { setBackgroundColor(ReaderTheme.FILL_08) },
-                LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)),
-            )
-            val checkView = object : View(this) {
-                override fun onDraw(canvas: Canvas) {
-                    if (tag == true) undoRenderer.drawVecIcon(canvas, R.drawable.ic_check, width / 2f, height / 2f, ReaderTheme.dp(this@ReaderActivity, 20f))
-                }
-            }.apply { tag = value == current }
-            checks.add(value to checkView)
-            group.addView(
-                LinearLayout(this).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    minimumHeight = dp(56f)
-                    isClickable = true
-                    isFocusable = true
-                    stateListAnimator = null
-                    setPadding(dp(20f), dp(8f), dp(20f), dp(8f))
-                    addView(
-                        TextView(context).apply {
-                            text = label
-                            typeface = ReaderTheme.body(context)
-                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-                            setTextColor(ReaderTheme.INK)
-                        },
-                        LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f),
-                    )
-                    addView(checkView, LinearLayout.LayoutParams(dp(24f), dp(24f)))
-                    setOnTouchListener(PenTapListener(context) {
-                        if (value != current) {
-                            current = value
-                            checks.forEach { (v, cv) -> cv.tag = v == current; cv.invalidate() }
-                            onPick(value)
-                        }
-                    })
-                },
-                LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT),
-            )
-        }
-        return group
-    }
-
-    private fun settingsSectionSpacer(): View = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        addView(View(this@ReaderActivity).apply { setBackgroundColor(ReaderTheme.INK_12) }, LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
     }
 
     // --- Permission ----------------------------------------------------------
@@ -660,6 +692,13 @@ class ReaderActivity : Activity() {
         )
     }
 
+    private fun applyColumns() {
+        val opened = book ?: return
+        val columns = resolveColumns()
+        val offset = readerView.currentCharOffset()
+        readerView.showContent(opened.doc.plainText, opened.doc.annotations, columns, offset, opened.doc.formatSpans)
+    }
+
     private fun applyTypographyPrefs() {
         val fontSizeSp = ReaderTheme.bodySizeSp(prefs.getString(KEY_FONT_SIZE, "medium") ?: "medium")
         val spacingMult = ReaderTheme.lineSpacingMult(prefs.getString(KEY_LINE_SPACING, "comfortable") ?: "comfortable")
@@ -688,9 +727,13 @@ class ReaderActivity : Activity() {
                     val tool = AnnotationTool.fromName(data?.getStringExtra(NoteActivity.EXTRA_RESULT_TOOL))
                     val note = data?.getStringExtra(NoteActivity.EXTRA_NOTE)
                     val tag  = AnnotationTag.fromName(data?.getStringExtra(NoteActivity.EXTRA_RESULT_TAG))
-                    val ink  = data?.getByteArrayExtra(NoteActivity.EXTRA_INK_PNG)
-                    val inkId = data?.getStringExtra(NoteActivity.EXTRA_INK_ID)
-                    commitAnnotationFromPanel(tool, note, tag, ink, inkId)
+                    // Large data via static — avoids Binder IPC size limit.
+                    val noteResult = NoteActivity.pendingResult
+                    NoteActivity.pendingResult = null
+                    val ink        = noteResult?.inkBytes
+                    val inkId      = noteResult?.inkId ?: data?.getStringExtra(NoteActivity.EXTRA_INK_ID)
+                    val strokeJson = noteResult?.strokeJson
+                    commitAnnotationFromPanel(tool, note, tag, ink, inkId, strokeJson)
                 } else {
                     readerView.cancelSelection()
                 }
@@ -700,8 +743,10 @@ class ReaderActivity : Activity() {
                 val inkId = pendingInkId
                 pendingInkId = null
                 if (resultCode == RESULT_OK && inkId != null) {
-                    val pngBytes = data?.getByteArrayExtra(InkNoteActivity.EXTRA_INK_PNG)
-                    commitInkAnnotation(inkId, pngBytes)
+                    // Large data via static — avoids Binder IPC size limit.
+                    val inkResult = InkNoteActivity.pendingResult
+                    InkNoteActivity.pendingResult = null
+                    commitInkAnnotation(inkId, inkResult?.pngBytes, inkResult?.strokeJson)
                 } else {
                     readerView.cancelSelection()
                 }
@@ -718,8 +763,12 @@ class ReaderActivity : Activity() {
                     val tool  = AnnotationTool.fromName(data?.getStringExtra(NoteActivity.EXTRA_RESULT_TOOL))
                     val note  = data?.getStringExtra(NoteActivity.EXTRA_NOTE)?.takeIf { it.isNotEmpty() }
                     val tag   = AnnotationTag.fromName(data?.getStringExtra(NoteActivity.EXTRA_RESULT_TAG))
-                    val ink   = data?.getByteArrayExtra(NoteActivity.EXTRA_INK_PNG)
-                    val inkId = data?.getStringExtra(NoteActivity.EXTRA_INK_ID)
+                    // Large data via static — avoids Binder IPC size limit.
+                    val noteResult = NoteActivity.pendingResult
+                    NoteActivity.pendingResult = null
+                    val ink        = noteResult?.inkBytes
+                    val inkId      = noteResult?.inkId ?: data?.getStringExtra(NoteActivity.EXTRA_INK_ID)
+                    val strokeJson = noteResult?.strokeJson
                     val opened = book ?: run {
                         Log.e(TAG, "REQ_RETOOL_NOTE: book is null — cannot save")
                         return
@@ -736,7 +785,8 @@ class ReaderActivity : Activity() {
                     )
                     val newList = opened.doc.annotations.map { it.annotation }
                         .map { if (it.id == updated.id) updated else it }
-                    val inkPng = if (ink != null && inkId != null) Pair(inkId, ink) else null
+                    val inkPng    = if (ink != null && inkId != null) Pair(inkId, ink) else null
+                    val inkStroke = if (strokeJson != null && inkId != null) Pair(inkId, strokeJson) else null
                     // Optimistic update: show the new note immediately on the main thread
                     // instead of waiting for the background DOCX write to complete.
                     val updatedResolved = ResolvedAnnotation(updated, ann.span)
@@ -745,7 +795,7 @@ class ReaderActivity : Activity() {
                     val optimisticDoc = LoadedDocument(opened.doc.plainMap, optimisticAnnotations, opened.doc.position)
                     book = OpenBook(opened.displayName, opened.bytes, optimisticDoc, opened.file)
                     readerView.updateAnnotations(optimisticAnnotations)
-                    saveAnnotations(opened, file, newList, inkPng)
+                    saveAnnotations(opened, file, newList, inkPng, inkStroke)
                 }
                 readerView.post { initDrawPathLasso() }
             }
@@ -899,8 +949,8 @@ class ReaderActivity : Activity() {
         )
     }
 
-    /** Commit an ink annotation using the pre-allocated [inkId] and optional PNG bytes. */
-    private fun commitInkAnnotation(inkId: String, pngBytes: ByteArray?) {
+    /** Commit an ink annotation using the pre-allocated [inkId] and optional PNG + stroke data. */
+    private fun commitInkAnnotation(inkId: String, pngBytes: ByteArray?, strokeJson: String? = null) {
         val opened = book ?: return
         val file = opened.file ?: run {
             Toast.makeText(this, "File is read-only — can't save annotation.", Toast.LENGTH_SHORT).show()
@@ -932,9 +982,10 @@ class ReaderActivity : Activity() {
         lastAnnotationId = inkId
         showUndoPill(lastAnchorX, lastAnchorY)
 
-        val existing = opened.doc.annotations.map { it.annotation }
-        val inkPng = if (pngBytes != null) Pair(inkId, pngBytes) else null
-        saveAnnotations(opened, file, existing + annotation, inkPng)
+        val existing   = opened.doc.annotations.map { it.annotation }
+        val inkPng     = if (pngBytes != null) Pair(inkId, pngBytes) else null
+        val inkStrokes = if (strokeJson != null) Pair(inkId, strokeJson) else null
+        saveAnnotations(opened, file, existing + annotation, inkPng, inkStrokes)
     }
 
     /** Open the note editor for an existing annotation. Panel pre-selects its current tool. */
@@ -945,22 +996,32 @@ class ReaderActivity : Activity() {
         }
         pendingAnnotation = resolved
         Log.d(TAG, "editAnnotationNote: set pendingAnnotation=${resolved.annotation.id} note=${resolved.annotation.note}")
+        // Pass large ink data via static to avoid Binder IPC size limit.
+        NoteActivity.pendingLaunch = null
+        if (resolved.annotation.hasInk) {
+            val bytes = book?.bytes
+            if (bytes != null) {
+                val strokeJson = DocxStore.readInkStrokes(bytes, resolved.annotation.id)
+                if (strokeJson != null) {
+                    NoteActivity.pendingLaunch = NoteActivity.NoteLaunch(
+                        strokeJson = strokeJson,
+                        initialInkId = resolved.annotation.id,
+                    )
+                } else {
+                    val inkBytes = DocxStore.readInkPng(bytes, resolved.annotation.id)
+                    if (inkBytes != null) {
+                        NoteActivity.pendingLaunch = NoteActivity.NoteLaunch(
+                            initialInkBytes = inkBytes,
+                            initialInkId = resolved.annotation.id,
+                        )
+                    }
+                }
+            }
+        }
         val intent = Intent(this, NoteActivity::class.java)
             .putExtra(NoteActivity.EXTRA_NOTE, resolved.annotation.note ?: "")
             .putExtra(NoteActivity.EXTRA_SELECTED_TEXT, resolved.annotation.selectedText)
             .putExtra(NoteActivity.EXTRA_INITIAL_TOOL, resolved.annotation.tool.name)
-        // If the annotation has ink, read the PNG from the archive and pre-populate
-        // NoteActivity so the user can open InkNoteActivity and see the existing ink.
-        if (resolved.annotation.hasInk) {
-            val bytes = book?.bytes
-            if (bytes != null) {
-                val inkBytes = DocxStore.readInkPng(bytes, resolved.annotation.id)
-                if (inkBytes != null) {
-                    intent.putExtra(NoteActivity.EXTRA_INITIAL_INK_PNG, inkBytes)
-                    intent.putExtra(NoteActivity.EXTRA_INITIAL_INK_ID, resolved.annotation.id)
-                }
-            }
-        }
         startActivityForResult(intent, REQ_RETOOL_NOTE)
     }
 
@@ -974,6 +1035,7 @@ class ReaderActivity : Activity() {
         tag: AnnotationTag?,
         inkBytes: ByteArray?,
         inkId: String?,
+        strokeJson: String? = null,
     ) {
         val opened = book ?: return
         val file = opened.file ?: run {
@@ -1009,9 +1071,10 @@ class ReaderActivity : Activity() {
         lastAnnotationId = annotation.id
         showUndoPill(lastAnchorX, lastAnchorY)
 
-        val existing = opened.doc.annotations.map { it.annotation }
-        val inkPng = if (inkBytes != null && inkId != null) Pair(inkId, inkBytes) else null
-        saveAnnotations(opened, file, existing + annotation, inkPng)
+        val existing   = opened.doc.annotations.map { it.annotation }
+        val inkPng     = if (inkBytes != null && inkId != null) Pair(inkId, inkBytes) else null
+        val inkStrokes = if (strokeJson != null && inkId != null) Pair(inkId, strokeJson) else null
+        saveAnnotations(opened, file, existing + annotation, inkPng, inkStrokes)
     }
 
     private fun copyText(text: String) {
@@ -1062,20 +1125,17 @@ class ReaderActivity : Activity() {
         file: File,
         newList: List<Annotation>,
         inkPng: Pair<String, ByteArray>? = null,
+        inkStrokes: Pair<String, String>? = null,
     ) {
         DocxWriteQueue.submit(
             file,
             transform = { base ->
-                // Read-modify-write from the CURRENT on-disk bytes (not
-                // opened.bytes, which may be a stale optimistic snapshot) so a
-                // concurrently-saved reading position or annotation is never
-                // dropped. The shared queue serializes this against every other
-                // docx write in the app.
-                val baseBytes = if (inkPng != null)
-                    DocxStore.saveInkPng(base, inkPng.first, inkPng.second)
-                else
-                    base
-                DocxStore.write(baseBytes, newList)
+                var bytes = base
+                if (inkPng != null)
+                    bytes = DocxStore.saveInkPng(bytes, inkPng.first, inkPng.second)
+                if (inkStrokes != null)
+                    bytes = DocxStore.saveInkStrokes(bytes, inkStrokes.first, inkStrokes.second)
+                DocxStore.write(bytes, newList)
             },
             onSuccess = { newBytes ->
                 val freshDoc = DocxStore.load(newBytes)
@@ -1274,6 +1334,7 @@ class ReaderActivity : Activity() {
         private const val KEY_FONT_SIZE = "body_font_size"
         private const val KEY_LINE_SPACING = "line_spacing"
         private const val KEY_RULE_LINES = "ink_rule_lines"
+        private const val KEY_BODY_FONT = "body_font"
         // The Nomad reports smallestScreenWidthDp=1024 and reads best at 1 col,
         // so the auto-2-col threshold sits above it; the larger Manta should land
         // above this and default to 2 col. Confirm the Manta's logged value and

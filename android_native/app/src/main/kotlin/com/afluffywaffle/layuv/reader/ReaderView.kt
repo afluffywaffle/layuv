@@ -479,7 +479,8 @@ class ReaderView(context: Context) : View(context) {
         for (resolved in annotations) {
             val span = resolved.span ?: continue
             if (resolved.annotation.tool != AnnotationTool.highlight &&
-                resolved.annotation.tool != AnnotationTool.comment) continue
+                resolved.annotation.tool != AnnotationTool.comment &&
+                resolved.annotation.tool != AnnotationTool.inkAnnotation) continue
             val s = span.start.coerceIn(0, len)
             val e = span.end.coerceIn(0, len)
             if (e <= s) continue
@@ -618,7 +619,9 @@ class ReaderView(context: Context) : View(context) {
      */
     private fun drawMarginIcons(canvas: Canvas, pl: PageLayout) {
         for (resolved in annotations) {
-            if (resolved.annotation.note.isNullOrEmpty()) continue
+            val hasNote = !resolved.annotation.note.isNullOrEmpty()
+            val isInk = resolved.annotation.tool == AnnotationTool.inkAnnotation
+            if (!hasNote && !isInk) continue
             val span = resolved.span ?: continue
             val colInPage = columnOfChar(span.start) ?: continue // not on this page
             val top = charPointInView(span.start, bottom = false) ?: continue

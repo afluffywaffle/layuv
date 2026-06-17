@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Rect
 import android.os.Bundle
 import android.util.Log
 import android.view.View
@@ -93,6 +94,26 @@ class EinkRefreshSpikeActivity : Activity() {
             log(EinkClient.setViewMode(testView, 0, 12))
         })
 
+        // EinkPwInternalY — htfypw.jar partial-window refresh (2026-06-12 RE).
+        // "PW init" must succeed before any postPW button. Probe which mode
+        // produces the best visual quality vs. speed on page-turn-sized rects.
+        //   GLUI (3,3,0)   = GL16 quality text    DUAUTO (16,1,183) = fast A2 ink
+        //   DU-def (16,9,183) = default 1-arg postRectForPw params from decompile
+        val pwRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        pwRow.addView(btn("PW init") { log(EinkClient.initPwInternal(this)) })
+        pwRow.addView(btn("postPW GLUI") {
+            testView.toggle()
+            log(EinkClient.postRectForPw(fullRect(), 3, 3, 0))
+        })
+        pwRow.addView(btn("postPW A2") {
+            testView.toggle()
+            log(EinkClient.postRectForPw(fullRect(), 16, 1, 183))
+        })
+        pwRow.addView(btn("postPW def") {
+            testView.toggle()
+            log(EinkClient.postRectForPw(fullRect(), 16, 9, 183))
+        })
+
         testView = TestView(this)
 
         root.addView(status, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
@@ -100,8 +121,14 @@ class EinkRefreshSpikeActivity : Activity() {
         root.addView(actRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         root.addView(diagRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         root.addView(viewModeRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        root.addView(pwRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         root.addView(testView, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
         setContentView(root)
+    }
+
+    private fun fullRect(): Rect {
+        val dm = resources.displayMetrics
+        return Rect(0, 0, dm.widthPixels, dm.heightPixels)
     }
 
     private fun selectMode(m: String, name: String) {
