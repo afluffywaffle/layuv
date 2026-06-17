@@ -7,7 +7,8 @@ package com.afluffywaffle.layuv.docx
  */
 object ContentTypes {
     fun ensure(raw: String): String {
-        var r = raw
+        // Expand self-closed root so all replaceFirst("</Types>") calls below find their target.
+        var r = raw.replace("<Types/>", "<Types></Types>")
         if (!r.contains("PartName=\"/word/comments.xml\"")) {
             r = r.replaceFirst(
                 "</Types>",

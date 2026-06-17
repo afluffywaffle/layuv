@@ -565,6 +565,9 @@ class AnnotationsPanelActivity : Activity() {
             message = "Delete ${ids.size} annotation${if (ids.size == 1) "" else "s"}?",
             skipPrefKey = null,
             onConfirm = {
+                // Set result before the async write so navigating back mid-write
+                // still signals the reader to reload (reader re-reads from disk).
+                setResult(RESULT_FIRST_USER)
                 // Route through the shared DocxWriteQueue so this delete is
                 // serialized against every reader write and can never interleave
                 // on the temp file or clobber a concurrent save.
@@ -584,7 +587,6 @@ class AnnotationsPanelActivity : Activity() {
                             allAnnotations = freshDoc.annotations.map { it.annotation }
                                 .sortedBy { it.position }
                             exitEditMode()
-                            setResult(RESULT_FIRST_USER)
                             refreshAll()
                         }
                     },

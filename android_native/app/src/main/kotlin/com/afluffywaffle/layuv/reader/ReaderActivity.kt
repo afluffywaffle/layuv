@@ -1200,6 +1200,11 @@ class ReaderActivity : Activity() {
         savePosition()
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        ioExecutor.shutdown()
+    }
+
     /** Write the current reading position back into the DOCX file (off-main). */
     private fun savePosition() {
         val opened = book ?: return

@@ -28,14 +28,16 @@ object XmlEntities {
             "quot" -> "\""
             "apos" -> "'"
             else -> {
-                val code = if (e.startsWith("#x")) {
-                    e.substring(2).toInt(16)
+                val code: Int? = if (e.startsWith("#x")) {
+                    e.substring(2).toLongOrNull(16)?.takeIf { it in 0x0L..0x10FFFFL }?.toInt()
                 } else {
-                    e.substring(1).toInt()
+                    e.substring(1).toLongOrNull()?.takeIf { it in 0L..0x10FFFFL }?.toInt()
                 }
+                // Return original entity unchanged when code is out of range or malformed
+                // (avoids NumberFormatException / IllegalArgumentException crashing load).
+                if (code == null) return@replace m.value
                 // Character.toChars handles supplementary code points (emoji)
-                // by emitting a UTF-16 surrogate pair, matching Dart's
-                // String.fromCharCode.
+                // by emitting a UTF-16 surrogate pair, matching Dart's String.fromCharCode.
                 String(Character.toChars(code))
             }
         }

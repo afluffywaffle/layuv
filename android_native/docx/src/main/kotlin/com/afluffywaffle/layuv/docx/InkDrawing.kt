@@ -12,11 +12,15 @@ object InkDrawing {
     fun relId(annotationId: String): String =
         "rId_ink_" + annotationId.replace(Regex("[^a-zA-Z0-9_]"), "_")
 
-    fun build(relId: String): String =
+    /**
+     * [drawingId] must be unique across all drawings in the document; callers
+     * (CommentWriter) use 1-based comment index to guarantee uniqueness.
+     */
+    fun build(relId: String, drawingId: Int): String =
         "<w:p><w:r><w:drawing>" +
             "<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">" +
             "<wp:extent cx=\"$CX\" cy=\"$CY\"/>" +
-            "<wp:docPr id=\"1\" name=\"Ink\"/>" +
+            "<wp:docPr id=\"$drawingId\" name=\"Ink\"/>" +
             "<wp:cNvGraphicFramePr>" +
             "<a:graphicFrameLocks noChangeAspect=\"1\"/>" +
             "</wp:cNvGraphicFramePr>" +
@@ -24,7 +28,7 @@ object InkDrawing {
             "<a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">" +
             "<pic:pic>" +
             "<pic:nvPicPr>" +
-            "<pic:cNvPr id=\"1\" name=\"ink.png\"/>" +
+            "<pic:cNvPr id=\"$drawingId\" name=\"ink.png\"/>" +
             "<pic:cNvPicPr/>" +
             "</pic:nvPicPr>" +
             "<pic:blipFill>" +

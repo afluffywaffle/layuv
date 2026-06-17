@@ -201,17 +201,18 @@ object RunPropertyInjector {
             val finalOpens = RUN_OPEN.findAll(xml).toList()
             val finalCloses = RUN_CLOSE.findAll(xml).toList()
 
-            for (bk in bookmarkInsertions) {
+            bookmarkInsertions.forEachIndexed { bkIdx, bk ->
                 val loc = Anchoring.locateInPlain(finalMap.plain, bk.selectedText, bk.prefix, bk.suffix, bk.position)
-                    ?: continue
+                    ?: return@forEachIndexed
                 val startXmlPos = finalMap.xmlOffsets[loc.start]
                 val endXmlPos = finalMap.xmlOffsets[loc.end - 1]
                 val sIdx = findRunIdxBS(finalOpens, startXmlPos)
                 val eIdx = findRunIdxBS(finalOpens, endXmlPos)
-                if (sIdx < 0 || eIdx < 0) continue
-                val endRC = findRunClose(finalCloses, finalOpens[eIdx]) ?: continue
+                if (sIdx < 0 || eIdx < 0) return@forEachIndexed
+                val endRC = findRunClose(finalCloses, finalOpens[eIdx]) ?: return@forEachIndexed
                 val safeId = bk.annotationId.replace(NON_ID, "_")
-                val bkId = 10000 + sIdx
+                // Use a large base offset to avoid colliding with existing doc bookmarks.
+                val bkId = 100000 + bkIdx
                 finalInsertions.add(Ins(finalOpens[sIdx].start(), "<w:bookmarkStart w:id=\"$bkId\" w:name=\"leamh_$safeId\"/>"))
                 finalInsertions.add(Ins(endRC.end(), "<w:bookmarkEnd w:id=\"$bkId\"/>"))
             }

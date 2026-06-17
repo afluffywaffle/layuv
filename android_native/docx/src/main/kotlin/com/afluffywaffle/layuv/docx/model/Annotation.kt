@@ -45,17 +45,18 @@ data class Annotation(
         fun fromMap(map: Map<String, Any?>): Annotation {
             // Dart: json['tool'] ?? json['toolType'] (legacy) ?? highlight.name
             val toolName =
-                (map["tool"] ?: map["toolType"] ?: AnnotationTool.highlight.name) as String
+                (map["tool"] as? String) ?: (map["toolType"] as? String) ?: AnnotationTool.highlight.name
+            val timestampStr = (map["timestamp"] as? String) ?: ""
             return Annotation(
                 // Dart falls back to timestamp as id for old records without one.
-                id = (map["id"] as? String) ?: (map["timestamp"] as String),
-                selectedText = map["selectedText"] as String,
-                prefix = map["prefix"] as String,
-                suffix = map["suffix"] as String,
+                id = (map["id"] as? String) ?: timestampStr.ifEmpty { newId() },
+                selectedText = (map["selectedText"] as? String) ?: "",
+                prefix = (map["prefix"] as? String) ?: "",
+                suffix = (map["suffix"] as? String) ?: "",
                 tool = AnnotationTool.fromName(toolName),
                 note = map["note"] as? String,
                 tag = AnnotationTag.fromName(map["tag"] as? String),
-                timestamp = Timestamps.parse(map["timestamp"] as String),
+                timestamp = Timestamps.parse(timestampStr),
                 position = (map["position"] as? Number)?.toDouble() ?: 0.0,
                 hasInk = (map["hasInk"] as? Boolean) ?: false,
             )

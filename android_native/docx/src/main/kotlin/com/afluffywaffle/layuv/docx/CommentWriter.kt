@@ -24,7 +24,7 @@ object CommentWriter {
         } else {
             ""
         }
-        val drawingXml = if (inkRelId != null) InkDrawing.build(inkRelId) else ""
+        val drawingXml = if (inkRelId != null) InkDrawing.build(inkRelId, xmlId + 1) else ""
         val bodyParts = listOf(noteXml, tagXml, drawingXml).filter { it.isNotEmpty() }
         val bodyXml = if (bodyParts.isEmpty()) "<w:p/>" else bodyParts.joinToString("")
 
@@ -66,20 +66,38 @@ object CommentWriter {
         val rel = "<Relationship Id=\"rId_leamh_comments\"" +
             " Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments\"" +
             " Target=\"comments.xml\"/>"
-        return raw.replaceFirst("</Relationships>", "$rel\n</Relationships>")
+        // Expand self-closed root so replaceFirst finds its target.
+        val expanded = raw.replace("<Relationships/>", "<Relationships></Relationships>")
+        return expanded.replaceFirst("</Relationships>", "$rel\n</Relationships>")
     }
 
-    /** Full `word/_rels/comments.xml.rels` mapping each ink rel-id to its media PNG. */
-    fun buildCommentsRels(inkAnnotations: List<Annotation>): String {
-        val entries = inkAnnotations.joinToString("\n") { a ->
+    private val INK_REL_PATTERN = Regex("<Relationship[^>]+rId_ink_[^>]*/?>")
+    private val ANY_REL_PATTERN = Regex("<Relationship[^>]*/?>")
+
+    /**
+     * Rebuilds `word/_rels/comments.xml.rels` for [inkAnnotations].
+     *
+     * [existingRels] is the current file content (if any). Pre-existing rels that
+     * are NOT Léamh ink entries are preserved so foreign-DOCX comment images survive
+     * the write-back.
+     */
+    fun buildCommentsRels(inkAnnotations: List<Annotation>, existingRels: String? = null): String {
+        val preserved = if (existingRels != null) {
+            val stripped = existingRels.replace(INK_REL_PATTERN, "")
+            ANY_REL_PATTERN.findAll(stripped).map { it.value }.toList()
+        } else {
+            emptyList()
+        }
+        val newEntries = inkAnnotations.map { a ->
             "<Relationship Id=\"${InkDrawing.relId(a.id)}\"" +
                 " Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\"" +
                 " Target=\"media/ink_${a.id}.png\"/>"
         }
+        val allEntries = (preserved + newEntries).joinToString("\n")
         return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n" +
             "<Relationships" +
             " xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\n" +
-            "$entries\n" +
+            "$allEntries\n" +
             "</Relationships>"
     }
 }

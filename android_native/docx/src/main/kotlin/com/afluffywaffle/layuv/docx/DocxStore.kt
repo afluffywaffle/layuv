@@ -69,11 +69,17 @@ object DocxStore {
     ): List<ResolvedAnnotation> = try {
         val raw = archive.text(ANNOTATIONS)
         val annotations: List<Annotation> = if (raw != null) {
-            Json.parseArray(raw).filterIsInstance<Map<String, Any?>>().map { m ->
-                val a = Annotation.fromMap(m)
-                // PNG presence is the source of truth for hasInk.
-                val hasInk = archive.contains("word/media/ink_${a.id}.png")
-                if (hasInk != a.hasInk) a.copy(hasInk = hasInk) else a
+            Json.parseArray(raw).filterIsInstance<Map<String, Any?>>().mapNotNull { m ->
+                try {
+                    val a = Annotation.fromMap(m)
+                    // Non-empty PNG is the source of truth for hasInk (a 0-byte or
+                    // corrupt PNG must not generate a broken <w:drawing> on next write).
+                    val hasInk = archive.bytes("word/media/ink_${a.id}.png")?.isNotEmpty() == true
+                    if (hasInk != a.hasInk) a.copy(hasInk = hasInk) else a
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    null  // skip one bad record; don't drop the entire list
+                }
             }
         } else {
             val baseMicros = now.epochSecond * 1_000_000 + now.nano / 1000
@@ -145,8 +151,9 @@ object DocxStore {
             }
             val inkAnnotations = commentAnnotations.filter { it.hasInk }
             if (inkAnnotations.isNotEmpty()) {
+                val existingRels = entries[COMMENTS_RELS]?.toString(Charsets.UTF_8)
                 entries[COMMENTS_RELS] =
-                    CommentWriter.buildCommentsRels(inkAnnotations).toByteArray(Charsets.UTF_8)
+                    CommentWriter.buildCommentsRels(inkAnnotations, existingRels).toByteArray(Charsets.UTF_8)
             }
         } else if (entries.containsKey(COMMENTS)) {
             entries[COMMENTS] = CommentWriter.EMPTY_COMMENTS.toByteArray(Charsets.UTF_8)
