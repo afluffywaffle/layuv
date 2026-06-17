@@ -14,7 +14,7 @@
 | iPad / iPhone | Standalone app | Active — Flutter now, Swift/SwiftUI rewrite planned |
 | Supernote Nomad/Manta | Native Kotlin APK (sideload) | Active — native rewrite in `android_native/`; Flutter APK retired for Supernote |
 
-**Native Android port (`android_native/`):** A ground-up native Kotlin app for Supernote Nomad/Manta replaces the Flutter APK there — Flutter's compositor fought e-ink partial refresh. Same DOCX files round-trip with the Flutter app (macOS/iOS) and Word/Pages/GDocs. The pure-JVM `docx/` engine (parse, anchor, read incl. native-format + comment import fallback, full write-back) is **complete and golden-tested byte-for-byte against the real Dart `DocxStore`** (`cd android_native && ./gradlew :docx:test`). Reader uses one clean canonical plain-text string for both render and anchor, drawn by `StaticLayout` over a `LAYER_TYPE_SOFTWARE` `View` owning the Onyx `EpdController` waveforms (not Compose). See `android_native/README.md` and the CLAUDE.md native-port section.
+**Native Android port (`android_native/`) — THE active product:** Native Kotlin app for Supernote Nomad/Manta. Flutter codebase archived to `archive/flutter/` 2026-06-17 — Flutter's compositor fought e-ink partial refresh. The pure-JVM `docx/` engine (parse, anchor, read incl. native-format + comment import fallback, full write-back) is complete and golden-tested (`cd android_native && ./gradlew :docx:test`). Engine is the authority — goldens are generated from correct native output, not Dart. Reader uses one clean canonical plain-text string for both render and anchor, drawn by `StaticLayout` over a `LAYER_TYPE_SOFTWARE` `View` owning the EPD waveforms (not Compose). See `android_native/README.md` and CLAUDE.md.
 
 **Sync layer:** DOCX file on iCloud Drive (or any file sync). No proprietary sync needed — annotations are native Word comments and run formatting, readable on any platform. Open the same file in Léamh on macOS, Léamh on iPad, or Léamh on Supernote and all annotations are present.
 
@@ -218,13 +218,68 @@ then move on).
 - [ ] `lib/reader/annotation_toolbar.dart` (~641 lines) — moderate; lower priority
 
 ### Native review — DOCX engine + write/corruption path (Run 1, 2026-06-17)
-Hybrid review (Opus finders, Sonnet verify w/ high-sev → Opus) of `android_native/docx/` + `app/reader/DocxWriteQueue`/BookLoader + ReaderActivity write sites. **17 confirmed bugs, 3 refuted, 3 cleanups; none critical.** KEY: now that Flutter/Dart is being archived, the "byte-identical to the Dart store" golden constraint **dissolves** — fix on the native side and regenerate goldens from corrected native output (real constraint = round-trips with Word/Pages/GDocs). Two confirmed "compat" findings (numeric-entity superset; clean-P vs legacy `_buildPlainMap`) were cross-app-drift-vs-Flutter only → **MOOT post-archive** (native behavior is the correct one).
-- **Compat (Word/Pages/GDocs):** duplicate DrawingML `id="1"` with ≥2 ink notes (`InkDrawing.kt:19,27`); bookmark `w:id=10000+runIndex` self-collides + not namespaced vs existing doc bookmarks (`RunPropertyInjector.kt:214-216`); ContentTypes/rels no-op on self-closed `<Types/>`/`<Relationships/>` roots → comments.xml unreferenced (`ContentTypes.kt`, `CommentWriter.kt:69`); `buildCommentsRels` overwrites comments.xml.rels → orphans foreign rels (`CommentWriter.kt:73-84`); `splitRunAt` drops non-`<w:t>` children (tab/br/field) on split (low, `RunPropertyInjector.kt:289-310`).
-- **Crash / load robustness:** `XmlEntities.decode` throws on malformed/out-of-range numeric refs → whole-doc load fails (`XmlEntities.kt:31-39`); `Annotation.fromMap` hard-cast → one bad record drops the ENTIRE annotation list (`model/Annotation.kt:51-58`); PNG-presence `hasInk` on 0-byte/invalid PNG (low, `DocxStore.kt:74-76`).
-- **Perf:** `RunPropertyInjector` still O(annotations×docSize) — per-annotation `PlainTextMapper.build` + full `findAll` re-scans + per-insert splice (`RunPropertyInjector.kt:86-195`).
-- **Android lifecycle/concurrency:** `ioExecutor` never shut down → leak + `onBookLoaded` on destroyed Activity (`ReaderActivity.kt`); onPause position write lost on process death, no `onSaveInstanceState` fallback; AnnotationsPanel `deleteSelected` setResult-after-finish → reader never reloads (`AnnotationsPanelActivity.kt:571-599`); reads bypass write queue → stale display (low); `savingPosition` flag threading (low); static cross-Activity handoff unsynchronized (low).
-- **Cleanups (safe):** `DocxArchive.write` re-deflates all entries (drops ZipEntry metadata); `PlainTextMapper` `<w:t>` scan unbounded; `Anchoring.snapToWordBoundaries` walks UTF-16 code units (surrogate pairs).
+Hybrid review (Opus finders, Sonnet verify w/ high-sev → Opus) of `android_native/docx/` + `app/reader/DocxWriteQueue`/BookLoader + ReaderActivity write sites. **17 confirmed bugs, 3 refuted, 3 cleanups; none critical.** KEY: now that Flutter/Dart is archived, the "byte-identical to the Dart store" golden constraint **dissolves** — fix on the native side and regenerate goldens from corrected native output (real constraint = round-trips with Word/Pages/GDocs). Two confirmed "compat" findings (numeric-entity superset; clean-P vs legacy `_buildPlainMap`) were cross-app-drift-vs-Flutter only → **MOOT post-archive** (native behavior is the correct one).
+
+**10 of 17 bugs fixed 2026-06-17 (commit 692764f); golden tests green (41/41):**
+- [x] ✅ Duplicate DrawingML `id="1"` with ≥2 ink annotations — `InkDrawing.build` now takes `drawingId` from caller
+- [x] ✅ Bookmark `w:id` self-collision — `100000+bkIdx` replaces `10000+runIndex`
+- [x] ✅ ContentTypes self-closed `<Types/>` no-op — expand before replaceFirst
+- [x] ✅ `ensureRelsEntry` self-closed `<Relationships/>` no-op — expand before replaceFirst
+- [x] ✅ `buildCommentsRels` overwrites entire comments.xml.rels — now merges, preserving non-leamh rels
+- [x] ✅ `XmlEntities.decode` throws on large/malformed numeric refs — `toLongOrNull()` + range check
+- [x] ✅ `Annotation.fromMap` hard-cast drops entire list — safe casts + per-record try/catch in `loadAnnotations`
+- [x] ✅ `hasInk` set true on 0-byte/corrupt PNG — `bytes().isNotEmpty()` check
+- [x] ✅ `ioExecutor` never shut down in ReaderActivity — `onDestroy()` calls `shutdown()`
+- [x] ✅ `deleteSelected` setResult-after-finish race — setResult called before async write begins
+
+**Still open (7 remaining):**
+- [ ] `splitRunAt` drops non-`<w:t>` children (tab/br/field) on split (low, `RunPropertyInjector.kt:289-310`)
+- [ ] `RunPropertyInjector` O(annotations×docSize) — per-annotation `PlainTextMapper.build` + full `findAll` re-scans (medium perf, `RunPropertyInjector.kt:86-195`)
+- [ ] onPause position write can be lost on process death; no `onSaveInstanceState` fallback (medium)
+- [ ] Reads bypass write queue → stale display on concurrent load/write (low)
+- [ ] `savingPosition` flag threading — not reset on error in all paths (low)
+- [ ] Static `@Volatile` cross-Activity handoff (`NoteActivity`/`InkNoteActivity` `pendingResult`/`pendingLaunch`) — unsynchronized global; fix = FileProvider URI or temp file (low)
+- [ ] `DocxArchive.write` re-deflates all entries (drops ZipEntry compression metadata) — low perf impact
 - **Run 2 (pending):** app reader UI in depth — ReaderView, Paginator, HighlightPainter, selection, AnnotationsPanel/Search/popups, EPD/Epd/EinkClient.
+
+### Kotlin golden generator rewrite — eliminate Flutter/Dart dependency
+**Status:** blocked/broken as of 2026-06-17 Flutter archive.
+
+The four Dart tools in `android_native/tools/golden_gen/` import `package:layuv/models/...` which resolved via the root `pubspec.yaml` to `lib/`. After the Flutter archive both are in `archive/flutter/`. Running the generators now requires `cd archive/flutter && dart run ../../android_native/tools/golden_gen/<tool>.dart` — fragile, requires a Flutter SDK, and couples golden generation to archived code.
+
+**Why this matters:** if the anchoring algorithm, model serialization, or XML entity decoder changes, the JUnit golden tests need fresh input files. Right now you can't regenerate them without the Flutter toolchain.
+
+**What each tool generates (for the Kotlin rewrite):**
+
+| Dart tool | Outputs | Purpose |
+|---|---|---|
+| `gen_engine_goldens.dart` | `golden/anchoring/locate.json`, `wordsnap.json`, `golden/model/annotations.json`, `model/position.json` | Anchoring test cases (copies of `_locateInPlain`/`snapToWordBoundaries` run against known inputs); model JSON round-trip (Annotation/ReadingPosition toJson) |
+| `gen_goldens.dart` | `golden/clean/*.offsets.json`, `golden/legacy/*.offsets.json` | PlainTextMapper golden offsets for all test fixtures |
+| `gen_import_goldens.dart` | `golden/import/*.json` | NativeImport test cases |
+| `writeback_golden_test.dart` | `golden/writeback/document.xml`, `comments.xml`, `comments.xml.rels`, etc. | Full DocxStore.write() output byte-equality |
+
+**Rewrite plan (one Kotlin JUnit generator per tool):**
+- The `gen_goldens.dart` and `gen_import_goldens.dart` tools copy logic VERBATIM from Dart — the Kotlin equivalents already exist (`PlainTextMapper`, `NativeImport`). A Kotlin generator just calls the real Kotlin code and writes JSON/XML files. No Dart logic to port.
+- `gen_engine_goldens.dart` logic to port: `_locateInPlain`, `_findClosest`, `_normaliseQuotes` (from docx_store.dart) and `snapToWordBoundaries`/`_isWordBoundary` (from annotation_utils.dart). The Kotlin versions of these functions already exist (`Anchoring.kt`). The model JSON cases use Annotation/ReadingPosition `.toMap()` — also already Kotlin.
+- `writeback_golden_test.dart` is the easiest: it just calls `DocxStore.write()` with known input annotations and writes the ZIP entries. Pure Kotlin, no Dart logic.
+
+**Concrete steps:**
+1. Write `android_native/tools/golden_gen/GenerateGoldens.kt` — a Kotlin `main()` that reproduces all four tools:
+   - Call `PlainTextMapper.build(xml)` for each test fixture XML, write `.offsets.json`
+   - Call `NativeImport.importNativeFormatting(...)` for import fixtures, write `.json`
+   - Call `Anchoring.locateInPlain(...)` for anchoring cases, write `locate.json`/`wordsnap.json`
+   - Serialize known `Annotation`/`ReadingPosition` via `.toMap()`, write model JSONs
+   - Call `DocxStore.write()` with `writeback/input.docx` + known annotations, write each ZIP entry to a golden file
+2. Wire it as a Gradle task (`./gradlew :docx:generateGoldens`) so it's one command
+3. Delete the four Dart tools (or keep in `archive/flutter/` for reference)
+4. Never run `flutter test .../writeback_golden_test.dart` again
+
+**Immediate workaround (until rewrite):** to regenerate goldens now, run:
+```bash
+cd archive/flutter
+dart run ../../android_native/tools/golden_gen/gen_engine_goldens.dart
+# (requires Flutter SDK and `dart pub get` in archive/flutter/)
+```
 
 ### E-ink nav — RTL direction support
 - [ ] Add a setting to reverse nav direction (right=prev, left=next) for RTL texts (Japanese light novels, etc.)
