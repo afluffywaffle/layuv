@@ -1,0 +1,26 @@
+[
+  {
+    "id": "uuid-abc-123",
+    "selectedText": "the quote",
+    "prefix": "",
+    "suffix": "",
+    "tool": "underline",
+    "note": "a note line",
+    "tag": "pacing",
+    "timestamp": "2026-06-08T10:00:00.000Z",
+    "position": 0.25,
+    "hasInk": false
+  },
+  {
+    "id": "word_1",
+    "selectedText": "annotated span",
+    "prefix": "Intro text. ",
+    "suffix": " after.\n",
+    "tool": "comment",
+    "note": "Nice point here",
+    "tag": null,
+    "timestamp": "2026-06-08T11:00:00.000Z",
+    "position": 0.35294117647058826,
+    "hasInk": false
+  }
+]

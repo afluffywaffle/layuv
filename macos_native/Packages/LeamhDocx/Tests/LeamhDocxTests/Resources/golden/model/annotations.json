@@ -1,0 +1,62 @@
+[
+  {
+    "id": "1000",
+    "selectedText": "Hello",
+    "prefix": "",
+    "suffix": " world",
+    "tool": "highlight",
+    "note": null,
+    "tag": null,
+    "timestamp": "2026-01-02T03:04:05.000006Z",
+    "position": 0.0,
+    "hasInk": false
+  },
+  {
+    "id": "1001",
+    "selectedText": "naïve café 😀",
+    "prefix": "a “smart” ",
+    "suffix": " end\nline",
+    "tool": "comment",
+    "note": "a note with \"quotes\"\nand a newline",
+    "tag": "query",
+    "timestamp": "2026-06-08T12:00:00.000Z",
+    "position": 0.5,
+    "hasInk": false
+  },
+  {
+    "id": "1002",
+    "selectedText": "underlined twice",
+    "prefix": "see ",
+    "suffix": ".",
+    "tool": "doubleUnderline",
+    "note": null,
+    "tag": null,
+    "timestamp": "2026-06-08T12:30:00.123Z",
+    "position": 0.123456,
+    "hasInk": false
+  },
+  {
+    "id": "1003",
+    "selectedText": "ink here",
+    "prefix": "",
+    "suffix": "",
+    "tool": "inkAnnotation",
+    "note": null,
+    "tag": "voice",
+    "timestamp": "2026-06-08T13:00:00.000Z",
+    "position": 1.0,
+    "hasInk": true
+  },
+  {
+    "id": "1004",
+    "selectedText": "marker",
+    "prefix": "",
+    "suffix": "",
+    "tool": "bookmark",
+    "note": null,
+    "tag": null,
+    "timestamp": "2026-06-08T14:00:00.000Z",
+    "position": 0.75,
+    "hasInk": false
+  }
+]

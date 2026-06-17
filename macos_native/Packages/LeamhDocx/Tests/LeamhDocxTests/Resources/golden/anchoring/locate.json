@@ -1,0 +1,71 @@
+[
+  {
+    "name": "context_match",
+    "plain": "The quick brown fox jumps",
+    "selectedText": "brown",
+    "prefix": "quick ",
+    "suffix": " fox",
+    "positionHint": 0.0,
+    "expected": {
+      "start": 10,
+      "end": 15
+    }
+  },
+  {
+    "name": "position_hint_picks_last",
+    "plain": "cat dog cat dog cat",
+    "selectedText": "cat",
+    "prefix": "",
+    "suffix": "",
+    "positionHint": 0.9,
+    "expected": {
+      "start": 16,
+      "end": 19
+    }
+  },
+  {
+    "name": "context_beats_hint",
+    "plain": "foo bar X foo bar",
+    "selectedText": "bar",
+    "prefix": "foo ",
+    "suffix": "",
+    "positionHint": 1.0,
+    "expected": {
+      "start": 4,
+      "end": 7
+    }
+  },
+  {
+    "name": "quote_normalised_fallback",
+    "plain": "say “hello” now",
+    "selectedText": "\"hello\"",
+    "prefix": "say ",
+    "suffix": " now",
+    "positionHint": 0.0,
+    "expected": {
+      "start": 4,
+      "end": 11
+    }
+  },
+  {
+    "name": "not_found",
+    "plain": "abc def",
+    "selectedText": "xyz",
+    "prefix": "",
+    "suffix": "",
+    "positionHint": 0.0,
+    "expected": null
+  },
+  {
+    "name": "emoji_selected",
+    "plain": "react with 😀 here",
+    "selectedText": "😀",
+    "prefix": "with ",
+    "suffix": " here",
+    "positionHint": 0.0,
+    "expected": {
+      "start": 11,
+      "end": 13
+    }
+  }
+]

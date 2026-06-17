@@ -1,0 +1,2 @@
+before	after
+nextline-still-same-para

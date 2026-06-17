@@ -1,0 +1,48 @@
+{
+  "plainText": "The quick brown fox jumps over the lazy dog.\nSecond paragraph here.\n",
+  "position": {
+    "mode": "pageFlip",
+    "page": 1,
+    "scrollOffset": 0.0,
+    "fraction": 0.5
+  },
+  "annotations": [
+    {
+      "id": "annA",
+      "hasInk": false,
+      "span": {
+        "start": 10,
+        "end": 19
+      }
+    },
+    {
+      "id": "annB",
+      "hasInk": false,
+      "span": {
+        "start": 45,
+        "end": 51
+      }
+    },
+    {
+      "id": "annC",
+      "hasInk": false,
+      "span": null
+    },
+    {
+      "id": "ink1",
+      "hasInk": true,
+      "span": {
+        "start": 35,
+        "end": 43
+      }
+    },
+    {
+      "id": "flagonly",
+      "hasInk": false,
+      "span": {
+        "start": 4,
+        "end": 9
+      }
+    }
+  ]
+}
