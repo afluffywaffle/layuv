@@ -11,6 +11,8 @@ final class DocumentStore: ObservableObject {
     @Published private(set) var recentURLs: [URL] = []
     @Published private(set) var isLoading = false
     @Published var selectedAnnotationId: String?
+    /// Set to open the annotation edit sheet from anywhere (VC tap, panel row, comment creation).
+    @Published var editingAnnotation: Annotation?
 
     private var currentURL: URL?
     // Track the URL whose security scope we're holding so we can release on next load.

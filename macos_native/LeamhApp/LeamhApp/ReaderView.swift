@@ -4,22 +4,14 @@ import AppKit
 // MARK: - Page coordinator
 
 /// Bridges page-navigation state between ReaderViewController (AppKit) and SwiftUI toolbar.
-/// Hold as @StateObject in ReaderScreen; pass into ReaderView so it acts as the Coordinator.
 final class ReaderCoordinator: NSObject, ObservableObject {
     @Published var currentPage: Int = 0
     @Published var pageCount:   Int = 1
 
     weak var viewController: ReaderViewController?
 
-    func nextPage() {
-        viewController?.nextPage()
-        sync()
-    }
-
-    func previousPage() {
-        viewController?.previousPage()
-        sync()
-    }
+    func nextPage()     { viewController?.nextPage();     sync() }
+    func previousPage() { viewController?.previousPage(); sync() }
 
     func sync() {
         currentPage = viewController?.currentPage ?? 0
@@ -39,9 +31,12 @@ struct ReaderView: NSViewControllerRepresentable {
         let vc = ReaderViewController()
         coordinator.viewController = vc
 
-        // Annotation creation callback — keep store reference weak to avoid retain cycle.
         vc.onAnnotationCreated = { [weak store] annotation in
             store?.addAnnotation(annotation)
+        }
+        // Opens the edit sheet — stored on DocumentStore so VC can trigger it.
+        vc.onAnnotationTapped = { [weak store] annotation in
+            Task { @MainActor in store?.editingAnnotation = annotation }
         }
         return vc
     }
@@ -49,8 +44,50 @@ struct ReaderView: NSViewControllerRepresentable {
     func updateNSViewController(_ vc: ReaderViewController, context: Context) {
         guard let doc = store.document else { return }
         vc.update(document: doc, annotations: store.annotations)
-        // Page count is layout-dependent; nudge after content loads.
         DispatchQueue.main.async { coordinator.sync() }
+    }
+}
+
+// MARK: - NSTextView subclass for annotation tap detection
+
+final class AnnotatingTextView: NSTextView {
+    /// Returns the Annotation whose span covers the given UTF-16 index, or nil.
+    var annotationAtCharIndex: ((Int) -> Annotation?)?
+    /// Called when the user clicks on an existing annotation.
+    var onAnnotationTapped: ((Annotation) -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        let pointInView = convert(event.locationInWindow, from: nil)
+        if let annotation = annotationAt(pointInView) {
+            onAnnotationTapped?(annotation)
+            // Don't call super — prevents starting a selection on annotated text.
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    /// Finds an annotation under the given point (in the text view's coordinate system).
+    ///
+    /// NSTextView.characterIndex(for:) doesn't work in TextKit 2 because it uses the
+    /// old NSLayoutManager path. NSLayoutManager.characterIndex(for:in:fraction:) is the
+    /// correct API — it takes text-container coordinates, not text-view coordinates.
+    private func annotationAt(_ pointInView: NSPoint) -> Annotation? {
+        guard let lookup = annotationAtCharIndex else { return nil }
+
+        // Primary path: NSLayoutManager works in TK2 via the compat layer Apple provides.
+        if let lm = layoutManager, let tc = textContainer {
+            let inset = textContainerInset
+            let ptInContainer = NSPoint(x: pointInView.x - inset.width,
+                                        y: pointInView.y - inset.height)
+            let idx = lm.characterIndex(for: ptInContainer, in: tc,
+                                         fractionOfDistanceBetweenInsertionPoints: nil)
+            let len = (string as NSString).length
+            if idx < len { return lookup(idx) }
+        }
+
+        // Fallback: NSTextView's own method (may return NSNotFound in some TK2 builds).
+        let idx = characterIndex(for: pointInView)
+        return idx != NSNotFound ? lookup(idx) : nil
     }
 }
 
@@ -61,19 +98,18 @@ final class ReaderViewController: NSViewController {
     static let pageHeight: CGFloat = 860
     static let margin:     CGFloat = 56
 
-    private var textView:   NSTextView!
+    private var textView:   AnnotatingTextView!
     private var scrollView: NSScrollView!
 
-    // Page navigation
     private(set) var currentPage = 0
+    private var currentAnnotations: [ResolvedAnnotation] = []
 
-    // Annotation creation
     var onAnnotationCreated: ((Annotation) -> Void)?
+    var onAnnotationTapped:  ((Annotation) -> Void)?
 
-    // Tool popover
-    private var toolPopover: NSPopover?
-    private var pendingRange = NSRange(location: NSNotFound, length: 0)
-    private var lastShownRange = NSRange(location: NSNotFound, length: 0)
+    private var toolPopover:     NSPopover?
+    private var pendingRange     = NSRange(location: NSNotFound, length: 0)
+    private var lastShownRange   = NSRange(location: NSNotFound, length: 0)
 
     // MARK: View lifecycle
 
@@ -84,9 +120,9 @@ final class ReaderViewController: NSViewController {
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers    = true
 
-        textView = NSTextView(frame: NSRect(x: 0, y: 0,
-                                            width: Self.pageWidth,
-                                            height: Self.pageHeight))
+        textView = AnnotatingTextView(frame: NSRect(x: 0, y: 0,
+                                                    width: Self.pageWidth,
+                                                    height: Self.pageHeight))
         textView.isEditable            = false
         textView.isSelectable          = true
         textView.backgroundColor       = AppTheme.warmPaperNS
@@ -98,6 +134,17 @@ final class ReaderViewController: NSViewController {
             width:  Self.pageWidth - 2 * Self.margin,
             height: .greatestFiniteMagnitude
         )
+
+        // Annotation tap: look up by char index in currentAnnotations at call time.
+        textView.annotationAtCharIndex = { [weak self] idx in
+            self?.currentAnnotations.first {
+                guard let span = $0.span else { return false }
+                return idx >= span.start && idx < span.end
+            }?.annotation
+        }
+        textView.onAnnotationTapped = { [weak self] annotation in
+            self?.onAnnotationTapped?(annotation)
+        }
 
         scrollView.documentView = textView
         view = scrollView
@@ -113,28 +160,14 @@ final class ReaderViewController: NSViewController {
         )
     }
 
-    override func viewDidLayout() {
-        super.viewDidLayout()
-        // Notify coordinator of updated page count after layout.
-        let pc = pageCount
-        let cp = currentPage
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            // Access coordinator through the representable's coordinator reference —
-            // use the callback approach to avoid a direct coordinator dependency on VC.
-            _ = (pc, cp) // triggers layout update via coordinator.sync() called by updateNSViewController
-        }
-    }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
+    deinit { NotificationCenter.default.removeObserver(self) }
 
     // MARK: Content update
 
     func update(document: LoadedDocument, annotations: [ResolvedAnnotation]) {
-        let attributed = buildAttributedString(from: document)
+        currentAnnotations = annotations
 
+        let attributed = buildAttributedString(from: document)
         if let cs = textView.textContentStorage {
             cs.performEditingTransaction {
                 cs.textStorage?.setAttributedString(attributed)
@@ -151,7 +184,6 @@ final class ReaderViewController: NSViewController {
             .font:            AppTheme.nsBody(),
             .foregroundColor: NSColor.labelColor,
         ])
-
         let utf16len = doc.plainText.utf16.count
         for span in doc.formatSpans {
             let len = span.end - span.start
@@ -168,36 +200,76 @@ final class ReaderViewController: NSViewController {
         return str
     }
 
-    // CLAUDE.md: highlight = dotted underline, black at ~15% opacity.
+    /// Applies tool-specific visual styles. macOS has no e-ink constraints —
+    /// use standard affordances: yellow fill, solid underlines, strikethrough, etc.
     private func applyHighlights(_ annotations: [ResolvedAnnotation]) {
         guard let storage = textView.textStorage else { return }
         let full = NSRange(location: 0, length: storage.length)
-        storage.removeAttribute(.underlineStyle, range: full)
-        storage.removeAttribute(.underlineColor, range: full)
+        storage.removeAttribute(.backgroundColor,    range: full)
+        storage.removeAttribute(.underlineStyle,     range: full)
+        storage.removeAttribute(.underlineColor,     range: full)
+        storage.removeAttribute(.strikethroughStyle, range: full)
+        storage.removeAttribute(.strikethroughColor, range: full)
 
-        let dotted = NSUnderlineStyle.patternDot.rawValue | NSUnderlineStyle.single.rawValue
         for resolved in annotations {
             guard let span = resolved.span else { continue }
             let len = span.end - span.start
             guard len > 0, span.start + len <= storage.length else { continue }
             let r = NSRange(location: span.start, length: len)
-            storage.addAttribute(.underlineStyle, value: dotted, range: r)
-            storage.addAttribute(.underlineColor, value: AppTheme.highlightNS, range: r)
+
+            switch resolved.annotation.tool {
+            case .highlight:
+                storage.addAttribute(.backgroundColor,
+                                     value: NSColor.systemYellow.withAlphaComponent(0.45), range: r)
+
+            case .underline:
+                storage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: r)
+                storage.addAttribute(.underlineColor, value: NSColor.labelColor, range: r)
+
+            case .doubleUnderline:
+                storage.addAttribute(.underlineStyle, value: NSUnderlineStyle.double.rawValue, range: r)
+                storage.addAttribute(.underlineColor, value: NSColor.labelColor, range: r)
+
+            case .strikethrough:
+                storage.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: r)
+                storage.addAttribute(.strikethroughColor, value: NSColor.labelColor, range: r)
+
+            case .wavyUnderline:
+                // NSUnderlineStyle has no native wavy; thick+dash is the closest approximation.
+                let style = NSUnderlineStyle.patternDash.rawValue | NSUnderlineStyle.thick.rawValue
+                storage.addAttribute(.underlineStyle, value: style, range: r)
+                storage.addAttribute(.underlineColor, value: NSColor.systemTeal, range: r)
+
+            case .bookmark:
+                storage.addAttribute(.backgroundColor,
+                                     value: NSColor.systemOrange.withAlphaComponent(0.15), range: r)
+
+            case .comment:
+                // Thick dotted green underline + faint background tint — clearly visible.
+                let style = NSUnderlineStyle.patternDot.rawValue | NSUnderlineStyle.thick.rawValue
+                storage.addAttribute(.underlineStyle, value: style, range: r)
+                storage.addAttribute(.underlineColor, value: NSColor.systemGreen, range: r)
+                storage.addAttribute(.backgroundColor,
+                                     value: NSColor.systemGreen.withAlphaComponent(0.1), range: r)
+
+            case .inkAnnotation:
+                // Ink is shown as an embedded image; no text decoration needed.
+                break
+            }
         }
     }
 
     // MARK: Page navigation
 
     var pageCount: Int {
-        let docHeight = textView.frame.height
-        guard docHeight > 0 else { return 1 }
-        return max(1, Int(ceil(docHeight / Self.pageHeight)))
+        let h = textView.frame.height
+        guard h > 0 else { return 1 }
+        return max(1, Int(ceil(h / Self.pageHeight)))
     }
 
     func scrollToPage(_ page: Int) {
         let clamped = max(0, min(page, pageCount - 1))
-        let y = CGFloat(clamped) * Self.pageHeight
-        scrollView.documentView?.scroll(NSPoint(x: 0, y: y))
+        scrollView.documentView?.scroll(NSPoint(x: 0, y: CGFloat(clamped) * Self.pageHeight))
         currentPage = clamped
     }
 
@@ -225,13 +297,18 @@ final class ReaderViewController: NSViewController {
     private func showToolPopover(forRange range: NSRange) {
         guard let window = textView.window, range.length > 0 else { return }
 
-        // Anchor popover at the end of selection.
-        let anchorRange = NSRange(
-            location: min(range.location + range.length - 1, max(0, (textView.string as NSString).length - 1)),
+        // TextKit 2's firstRect returns .zero for characters not yet laid out;
+        // fall back to the current mouse position which is always correct after drag-select.
+        var dummy = NSRange()
+        let anchorLoc = NSRange(
+            location: min(range.location + range.length - 1,
+                          max(0, (textView.string as NSString).length - 1)),
             length: 1
         )
-        var dummy = NSRange()
-        let screenRect = textView.firstRect(forCharacterRange: anchorRange, actualRange: &dummy)
+        var screenRect = textView.firstRect(forCharacterRange: anchorLoc, actualRange: &dummy)
+        if screenRect.origin == .zero {
+            screenRect = NSRect(origin: NSEvent.mouseLocation, size: CGSize(width: 1, height: 1))
+        }
         let windowRect = window.convertFromScreen(screenRect)
         let viewRect   = textView.convert(windowRect, from: nil)
 
@@ -243,7 +320,7 @@ final class ReaderViewController: NSViewController {
                 self?.commitAnnotation(tool: tool)
             })
             popover.contentViewController = pickerVC
-            popover.contentSize = NSSize(width: 284, height: 62)
+            popover.contentSize = NSSize(width: 336, height: 62)
             toolPopover = popover
         }
 
@@ -255,8 +332,8 @@ final class ReaderViewController: NSViewController {
         let range = pendingRange
         guard range.length > 0, range.location != NSNotFound else { return }
 
-        let ns   = textView.string as NSString
-        let len  = ns.length
+        let ns  = textView.string as NSString
+        let len = ns.length
         guard range.location + range.length <= len else { return }
 
         let selectedText = ns.substring(with: range)
@@ -277,9 +354,14 @@ final class ReaderViewController: NSViewController {
             timestamp:    Date(),
             position:     position
         )
+
         onAnnotationCreated?(annotation)
 
-        // Clear the text selection after creating annotation.
+        // For comment annotations, open the edit sheet immediately so the user can add a note.
+        if tool == .comment {
+            onAnnotationTapped?(annotation)
+        }
+
         textView.setSelectedRange(NSRange(location: range.location, length: 0))
     }
 }

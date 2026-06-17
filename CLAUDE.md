@@ -67,6 +67,52 @@ bugs in one engine, apply the same fix to the other. The two engines share
 identical test fixture files (same golden JSON/XML/DOCX) but maintain separate
 expected-output goldens — updating one does NOT update the other.
 
+### Key files — macOS app
+
+Always read these before modifying.
+
+| File | Purpose |
+|---|---|
+| `macos_native/LeamhApp/LeamhApp/ReaderView.swift` | NSTextView reader — AnnotatingTextView subclass, tool popover, per-tool highlight rendering, ReaderCoordinator |
+| `macos_native/LeamhApp/LeamhApp/DocumentStore.swift` | @MainActor state store — file open/save, annotation CRUD, security-scoped bookmarks, editingAnnotation |
+| `macos_native/LeamhApp/LeamhApp/HomeView.swift` | Root layout — NavigationSplitView recents sidebar, ReaderScreen with toolbar |
+| `macos_native/LeamhApp/LeamhApp/AnnotationsPanel.swift` | Annotations list — search field, tag filter chips, tap-to-edit |
+| `macos_native/LeamhApp/LeamhApp/AnnotationEditSheet.swift` | Edit sheet — note TextEditor, tag toggles, tool picker |
+| `macos_native/LeamhApp/LeamhApp/ToolPickerView.swift` | Floating tool picker popover (6 tools) |
+| `macos_native/LeamhApp/LeamhApp/AppTheme.swift` | Typography + colour constants (warm paper, Literata, Source Sans 3) |
+| `macos_native/Packages/LeamhDocx/Sources/LeamhDocx/DocxStore.swift` | Swift DOCX engine read/write entry point |
+
+### Feature status (commit 42920fe, branch native-port-drawpath-ink)
+
+**Implemented:**
+- File open (NSOpenPanel) + recents sidebar with security-scoped bookmarks
+- Text rendering — TextKit 2 NSTextView, bold/italic format spans, warm-paper background
+- Text selection → tool picker popover → annotation creation (6 tools)
+- Per-tool annotation rendering: yellow fill (highlight), solid underline, double underline, strikethrough, thick-dash teal (wavy), orange tint (bookmark), thick dotted green + green tint (comment)
+- Tap annotated text in reader → opens edit sheet
+- Annotations panel with search + multi-select tag filter chips
+- Annotation edit sheet — note, tag, tool; auto-opens for new comment annotations
+- Save (atomic write via replaceItemAt, reads base bytes fresh from disk)
+- App Sandbox entitlements + security-scoped bookmarks for recents
+
+**Pending (priority order):**
+1. Font size preference (body text size user setting)
+2. Two-column layout
+3. Reader full-text search
+4. App icon (placeholder only)
+
+### Coding standards — Swift / macos_native
+
+- `DocumentStore` is `@MainActor` — all mutations on main thread; I/O in `Task.detached`
+- All DOCX writes go through `DocumentStore.save()` — reads base bytes fresh from disk,
+  writes to temp file, then `FileManager.replaceItemAt` atomic rename. Never bypass.
+- `editingAnnotation` on `DocumentStore` is the single trigger for the edit sheet —
+  set it from anywhere (VC tap, panel row, comment creation) rather than passing bindings.
+- No AppKit/UIKit imports in `macos_native/Packages/LeamhDocx/` — engine must stay pure Swift.
+- After every engine change: run `swift test` from `macos_native/Packages/LeamhDocx/`.
+- After every app-layer change: run `xcodebuild` and confirm BUILD SUCCEEDED.
+- No e-ink constraints on macOS — use standard AppKit affordances (fills, solid colours, animations OK).
+
 ---
 
 ## android_native/ — the active codebase

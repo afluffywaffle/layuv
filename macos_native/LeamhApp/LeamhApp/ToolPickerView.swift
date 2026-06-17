@@ -13,11 +13,12 @@ struct ToolPickerView: View {
     }
 
     private let tools: [Tool] = [
-        Tool(tool: .highlight,     icon: "highlighter",   color: .orange, label: "Highlight"),
-        Tool(tool: .underline,     icon: "underline",     color: .blue,   label: "Underline"),
-        Tool(tool: .comment,       icon: "text.bubble",   color: .green,  label: "Comment"),
-        Tool(tool: .bookmark,      icon: "bookmark.fill", color: .orange, label: "Bookmark"),
-        Tool(tool: .strikethrough, icon: "strikethrough", color: .red,    label: "Strike"),
+        Tool(tool: .highlight,       icon: "highlighter",   color: .orange, label: "Highlight"),
+        Tool(tool: .underline,       icon: "underline",     color: .blue,   label: "Underline"),
+        Tool(tool: .doubleUnderline, icon: "underline",     color: .indigo, label: "Double"),
+        Tool(tool: .strikethrough,   icon: "strikethrough", color: .red,    label: "Strike"),
+        Tool(tool: .comment,         icon: "text.bubble",   color: .green,  label: "Comment"),
+        Tool(tool: .bookmark,        icon: "bookmark.fill", color: .orange, label: "Bookmark"),
     ]
 
     var body: some View {

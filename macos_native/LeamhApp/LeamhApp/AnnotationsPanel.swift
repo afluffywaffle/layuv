@@ -67,9 +67,16 @@ struct AnnotationsPanel: View {
                 .buttonStyle(.plain)
             }
         }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color(nsColor: .textBackgroundColor))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25)))
+        )
         .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .padding(.vertical, 8)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     // MARK: Tag chips
@@ -99,10 +106,12 @@ struct AnnotationsPanel: View {
     // MARK: List
 
     private var annotationList: some View {
+        // Button wrapping is required on macOS — onTapGesture is swallowed by the List.
         List(filtered, id: \.annotation.id) { resolved in
-            AnnotationRow(resolved: resolved)
-                .contentShape(Rectangle())
-                .onTapGesture { editingAnnotation = resolved.annotation }
+            Button { editingAnnotation = resolved.annotation } label: {
+                AnnotationRow(resolved: resolved)
+            }
+            .buttonStyle(.plain)
         }
         .listStyle(.sidebar)
         .overlay {
