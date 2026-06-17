@@ -8,19 +8,64 @@ without being re-explained each time.
 
 ## What Léamh is
 
-A manuscript annotation tool targeting Supernote Nomad/Manta e-ink devices.
+A manuscript annotation tool with two active native codebases:
 
-- **Active product:** Native Kotlin Android app in `android_native/`
-- Device: Supernote Nomad/Manta — Android 11, no Google Play Services
-- Format: DOCX annotations (native `word/comments.xml`) — round-trips with
-  Word, Pages, Google Docs
-- Distribution: F-Droid target. GPL v3 licensed.
+| Codebase | Platform | Location |
+|---|---|---|
+| Native Kotlin Android app | Supernote Nomad/Manta (e-ink) | `android_native/` |
+| Native Swift macOS app | macOS (App Store target) | `macos_native/` |
+
+- Format: DOCX annotations (`word/comments.xml`) — round-trips with Word, Pages, Google Docs
 - Bundle ID: `com.afluffywaffle.layuv`
 - Repo: github.com/afluffywaffle/layuv
+- GPL v3 licensed
 
-**Flutter app is archived** to `archive/flutter/`. Kept as reference only —
-for a potential future Swift/native macOS+iOS port. Do not restore it or
-add new Flutter code without explicit instruction.
+**Flutter app is archived** to `archive/flutter/`. Do not restore or add Flutter code.
+
+---
+
+## macos_native/ — Swift macOS app
+
+Swift/SwiftUI app targeting macOS (App Store). Read the memory file for full
+architecture details before touching this tree.
+
+### Structure
+
+- `macos_native/Packages/LeamhDocx/` — pure Swift DOCX engine (no AppKit/UIKit)
+  - Mirrors `android_native/docx/` exactly: same golden fixtures, same JSON format
+  - Depends on ZIPFoundation (vendored at `macos_native/Packages/ZIPFoundation/`)
+- `macos_native/LeamhApp/` — SwiftUI macOS app (Xcode 27 format, objectVersion=90)
+
+### Building and testing
+
+```bash
+# Test the Swift engine
+cd macos_native/Packages/LeamhDocx
+unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
+  /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift test
+
+# Build the app
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcodebuild \
+  -project macos_native/LeamhApp/LeamhApp.xcodeproj \
+  -scheme LeamhApp -configuration Debug -sdk macosx build
+```
+
+### Critical Xcode 27 project format note
+
+- `PBXFileSystemSynchronizedRootGroup` replaces PBXGroup/PBXFileReference — `files`
+  arrays in build phases are **empty** (sources auto-discovered from disk)
+- ZIPFoundation must be a SEPARATE framework target — `import ZIPFoundation` in
+  DocxArchive.swift needs a real module, can't be inlined with LeamhDocx sources
+- `GENERATE_INFOPLIST_FILE = YES` — no manual Info.plist
+- `xcode-select` points to CommandLineTools; always use `DEVELOPER_DIR=` override
+
+### Engine parity with android_native
+
+`macos_native/Packages/LeamhDocx/` mirrors `android_native/docx/`. When fixing
+bugs in one engine, apply the same fix to the other. The two engines share
+identical test fixture files (same golden JSON/XML/DOCX) but maintain separate
+expected-output goldens — updating one does NOT update the other.
 
 ---
 

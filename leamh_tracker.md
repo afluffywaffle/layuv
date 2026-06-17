@@ -274,6 +274,8 @@ The four Dart tools in `android_native/tools/golden_gen/` import `package:layuv/
 3. Delete the four Dart tools (or keep in `archive/flutter/` for reference)
 4. Never run `flutter test .../writeback_golden_test.dart` again
 
+**Swift golden parity note:** `macos_native/Packages/LeamhDocx/Tests/.../golden/writeback/` is a copy of the Kotlin golden fixtures. When the same bugs are fixed in the Swift engine (duplicate drawing IDs, bookmark ID collision), update the Swift writeback goldens in parallel: `comments.xml` `id="1"→"2"`, `document.xml` `w:id="10005"→"100000"`.
+
 **Immediate workaround (until rewrite):** to regenerate goldens now, run:
 ```bash
 cd archive/flutter
