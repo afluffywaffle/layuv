@@ -2,18 +2,150 @@ import SwiftUI
 
 struct AnnotationsPanel: View {
     @EnvironmentObject var store: DocumentStore
+    @Binding var editingAnnotation: Annotation?
+
+    @State private var searchText = ""
+    @State private var activeTags: Set<AnnotationTag> = []
+
+    // All four tags in display order.
+    private let allTags: [AnnotationTag] = [.voice, .pacing, .continuity, .query]
+
+    private var filtered: [ResolvedAnnotation] {
+        store.annotations.filter { resolved in
+            let a = resolved.annotation
+            let matchesSearch = searchText.isEmpty
+                || a.selectedText.localizedCaseInsensitiveContains(searchText)
+                || (a.note?.localizedCaseInsensitiveContains(searchText) ?? false)
+            let matchesTag = activeTags.isEmpty
+                || (a.tag.map { activeTags.contains($0) } ?? false)
+            return matchesSearch && matchesTag
+        }
+    }
+
+    // Tags that actually appear in the current annotation set.
+    private var presentTags: [AnnotationTag] {
+        allTags.filter { tag in store.annotations.contains { $0.annotation.tag == tag } }
+    }
+
+    private var isFiltering: Bool { !searchText.isEmpty || !activeTags.isEmpty }
 
     var body: some View {
-        List(store.annotations, id: \.annotation.id) { resolved in
-            AnnotationRow(resolved: resolved)
+        VStack(spacing: 0) {
+            searchBar
+            Divider()
+
+            if !presentTags.isEmpty {
+                tagFilterRow
+                Divider()
+            }
+
+            annotationList
         }
-        .listStyle(.sidebar)
-        .navigationTitle("Annotations")
-        .overlay {
-            if store.annotations.isEmpty {
-                ContentUnavailableView("No Annotations", systemImage: "text.badge.plus")
+        .navigationTitle(isFiltering
+            ? "Annotations (\(filtered.count) / \(store.annotations.count))"
+            : "Annotations")
+    }
+
+    // MARK: Search bar
+
+    private var searchBar: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+                .font(.system(size: 12))
+            TextField("Search text or notes…", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(AppTheme.chrome())
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                        .font(.system(size: 12))
+                }
+                .buttonStyle(.plain)
             }
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    // MARK: Tag chips
+
+    private var tagFilterRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(presentTags, id: \.rawValue) { tag in
+                    let count   = store.annotations.filter { $0.annotation.tag == tag }.count
+                    let isActive = activeTags.contains(tag)
+                    TagFilterChip(tag: tag, count: count, isActive: isActive) {
+                        if isActive { activeTags.remove(tag) } else { activeTags.insert(tag) }
+                    }
+                }
+                if !activeTags.isEmpty {
+                    Button("Clear") { activeTags.removeAll() }
+                        .font(AppTheme.chrome(size: 11))
+                        .foregroundStyle(.secondary)
+                        .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+        }
+    }
+
+    // MARK: List
+
+    private var annotationList: some View {
+        List(filtered, id: \.annotation.id) { resolved in
+            AnnotationRow(resolved: resolved)
+                .contentShape(Rectangle())
+                .onTapGesture { editingAnnotation = resolved.annotation }
+        }
+        .listStyle(.sidebar)
+        .overlay {
+            if store.annotations.isEmpty {
+                ContentUnavailableView("No Annotations",
+                    systemImage: "text.badge.plus",
+                    description: Text("Select text in the reader and choose a tool to annotate."))
+            } else if filtered.isEmpty {
+                ContentUnavailableView("No Results",
+                    systemImage: "magnifyingglass",
+                    description: Text("Try a different search term or clear the tag filter."))
+            }
+        }
+    }
+}
+
+// MARK: - Tag filter chip
+
+private struct TagFilterChip: View {
+    let tag: AnnotationTag
+    let count: Int
+    let isActive: Bool
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 4) {
+                Text(tag.rawValue.capitalized)
+                    .font(AppTheme.chromeBold(size: 11))
+                Text("\(count)")
+                    .font(AppTheme.chrome(size: 10))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(isActive ? Color.white.opacity(0.25) : Color.secondary.opacity(0.15))
+                    .clipShape(Capsule())
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(isActive ? Color.accentColor : Color.secondary.opacity(0.1))
+            .foregroundStyle(isActive ? Color.white : Color.primary)
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 }
 
