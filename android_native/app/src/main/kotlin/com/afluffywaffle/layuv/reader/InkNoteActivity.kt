@@ -19,6 +19,7 @@ import android.graphics.Region
 import org.json.JSONArray
 import org.json.JSONObject
 import android.os.Bundle
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -90,19 +91,21 @@ class InkNoteActivity : Activity() {
     }
 
     private fun initDrawPath() {
-        if (!DrawPathClient.available()) return
-        DrawPathClient.sendReset(pkg)
-        applyPenToDrawPath()
+        val avail = DrawPathClient.available()
+        Log.d(TAG, "initDrawPath: available=$avail exclusionPx=$exclusionPx")
+        if (!avail) return
+        Log.d(TAG, "initDrawPath: ${DrawPathClient.sendReset(pkg)}")
+        Log.d(TAG, "initDrawPath: ${applyPenToDrawPath()}")
         disableExclusionArea()
     }
 
-    private fun applyPenToDrawPath() {
-        if (!DrawPathClient.available()) return
-        when (activeTool) {
+    private fun applyPenToDrawPath(): String {
+        if (!DrawPathClient.available()) return "drawPath unavailable"
+        return when (activeTool) {
             InkTool.THIN   -> DrawPathClient.sendPen(pkg, 10, 150, 0)
             InkTool.THICK  -> DrawPathClient.sendPen(pkg, 10, 450, 0)
-            InkTool.ERASER -> DrawPathClient.sendPen(pkg, 10, 400, 254) // white pen
-            InkTool.LASSO  -> DrawPathClient.sendPen(pkg, 4, 120, 0) // type 4 = dotted lasso pen
+            InkTool.ERASER -> DrawPathClient.sendPen(pkg, 10, 400, 254)
+            InkTool.LASSO  -> DrawPathClient.sendPen(pkg, 4, 120, 0)
         }
     }
 
@@ -286,8 +289,10 @@ class InkNoteActivity : Activity() {
         // to avoid Activity pause timeout. Write result to cache files rather than
         // Intent extras to avoid TransactionTooLargeException on complex notes.
         Thread {
+            Log.d(TAG, "onDone: committedStrokes=${canvas.committedCount()} meaningfulInk=${canvas.hasMeaningfulInk()}")
             val pngBytes   = canvas.renderToPng()
             val strokeJson = canvas.getStrokeJson()
+            Log.d(TAG, "onDone: pngBytes=${pngBytes?.size} strokeJsonLen=${strokeJson?.length}")
             writeTempBytes(FILE_RESULT_PNG, pngBytes)
             writeTempText(FILE_RESULT_JSON, strokeJson)
             runOnUiThread {
@@ -377,6 +382,7 @@ class InkNoteActivity : Activity() {
     } catch (_: Exception) {}
 
     companion object {
+        private const val TAG = "LeamhInkNote"
         const val EXTRA_SELECTED_TEXT = "selected_text"
         const val EXTRA_INK_PNG       = "ink_png"
         const val EXTRA_STROKE_JSON   = "stroke_json"
@@ -450,6 +456,7 @@ class InkCanvasView(context: Context) : View(context) {
         committed.clear(); current = null; strokesDirty = true; invalidate()
     }
 
+    fun committedCount(): Int = committed.size
     fun hasMeaningfulInk(): Boolean = committed.any { it.tool != InkTool.ERASER }
 
     /**
@@ -515,7 +522,9 @@ class InkCanvasView(context: Context) : View(context) {
                 // drawPath provides live display — no per-move invalidate needed
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                current?.let { path ->
+                val action = if (event.actionMasked == MotionEvent.ACTION_UP) "UP" else "CANCEL"
+                val path = current
+                if (path != null) {
                     when (activeTool) {
                         InkTool.LASSO -> {
                             path.close()
@@ -530,6 +539,9 @@ class InkCanvasView(context: Context) : View(context) {
                         else -> committed.add(Stroke(path, activeTool, currentPts.toList()))
                     }
                     strokesDirty = true
+                    Log.d("LeamhInkCanvas", "pen-$action tool=$activeTool pts=${currentPts.size / 2} committed=${committed.size}")
+                } else {
+                    Log.w("LeamhInkCanvas", "pen-$action with current=null (missed DOWN?)")
                 }
                 current = null
                 currentPts = mutableListOf()

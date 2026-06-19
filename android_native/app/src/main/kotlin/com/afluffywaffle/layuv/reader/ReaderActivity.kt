@@ -743,11 +743,14 @@ class ReaderActivity : Activity() {
             REQ_INK -> {
                 val inkId = pendingInkId
                 pendingInkId = null
+                Log.d(TAG, "REQ_INK: resultCode=$resultCode inkId=$inkId")
                 if (resultCode == RESULT_OK && inkId != null) {
                     val pngBytes   = readTempBytes(InkNoteActivity.FILE_RESULT_PNG)
                     val strokeJson = readTempText(InkNoteActivity.FILE_RESULT_JSON)
+                    Log.d(TAG, "REQ_INK: pngBytes=${pngBytes?.size} strokeJsonLen=${strokeJson?.length}")
                     commitInkAnnotation(inkId, pngBytes, strokeJson)
                 } else {
+                    Log.w(TAG, "REQ_INK: skipped — resultCode=$resultCode inkId=$inkId")
                     readerView.cancelSelection()
                 }
                 readerView.post { initDrawPathLasso() }
@@ -953,16 +956,26 @@ class ReaderActivity : Activity() {
 
     /** Commit an ink annotation using the pre-allocated [inkId] and optional PNG + stroke data. */
     private fun commitInkAnnotation(inkId: String, pngBytes: ByteArray?, strokeJson: String? = null) {
-        val opened = book ?: return
+        Log.d(TAG, "commitInkAnnotation: inkId=$inkId pngBytes=${pngBytes?.size} book=${book != null} pendingSel=[$pendingSelStart,$pendingSelEnd]")
+        val opened = book ?: run {
+            Log.e(TAG, "commitInkAnnotation: book is null — activity may have been recreated"); return
+        }
         val file = opened.file ?: run {
+            Log.e(TAG, "commitInkAnnotation: file is null — read-only")
             Toast.makeText(this, "File is read-only — can't save annotation.", Toast.LENGTH_SHORT).show()
             readerView.cancelSelection()
             return
         }
-        val text = readerView.textString() ?: run { readerView.cancelSelection(); return }
+        val text = readerView.textString() ?: run {
+            Log.e(TAG, "commitInkAnnotation: textString is null — no book displayed")
+            readerView.cancelSelection(); return
+        }
         val s = pendingSelStart
         val e = pendingSelEnd
-        if (s < 0 || e <= s || e > text.length) { readerView.cancelSelection(); return }
+        if (s < 0 || e <= s || e > text.length) {
+            Log.e(TAG, "commitInkAnnotation: invalid selection s=$s e=$e textLen=${text.length}")
+            readerView.cancelSelection(); return
+        }
 
         val selectedText = text.substring(s, e)
         val prefix = text.substring(maxOf(0, s - 20), s)
@@ -980,6 +993,7 @@ class ReaderActivity : Activity() {
             hasInk = pngBytes != null,
         )
 
+        Log.d(TAG, "commitInkAnnotation: creating annotation hasInk=${pngBytes != null} sel='${selectedText.take(40)}'")
         readerView.cancelSelection()
         lastAnnotationId = inkId
         showUndoPill(lastAnchorX, lastAnchorY)
