@@ -1049,7 +1049,7 @@ class ReaderActivity : Activity() {
             .putExtra(NoteActivity.EXTRA_NOTE, resolved.annotation.note ?: "")
             .putExtra(NoteActivity.EXTRA_SELECTED_TEXT, resolved.annotation.selectedText)
             .putExtra(NoteActivity.EXTRA_INITIAL_TOOL, resolved.annotation.tool.name)
-            .putExtra(NoteActivity.EXTRA_INITIAL_INK_ID, resolved.annotation.id.takeIf { resolved.annotation.hasInk })
+            .putExtra(NoteActivity.EXTRA_INITIAL_INK_ID, resolved.annotation.id)
         startActivityForResult(intent, REQ_RETOOL_NOTE)
     }
 
