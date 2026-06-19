@@ -160,7 +160,7 @@ class FileBrowserActivity : Activity() {
     /** TextView styled like a nav button — Material Button overrides typeface; TextView doesn't. */
     private fun navButton(label: String, onClick: () -> Unit): TextView = TextView(this).apply {
         text = label
-        typeface = ReaderTheme.chromeBold(this@FileBrowserActivity)
+        typeface = ReaderTheme.bodyBold(this@FileBrowserActivity)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
         setTextColor(ReaderTheme.INK)
         minHeight = dp(56f)
@@ -174,7 +174,7 @@ class FileBrowserActivity : Activity() {
     }
 
     private fun chromeText(sizeSp: Float): TextView = TextView(this).apply {
-        typeface = ReaderTheme.chrome(this@FileBrowserActivity)
+        typeface = ReaderTheme.body(this@FileBrowserActivity)
         setTextColor(ReaderTheme.INK)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
     }
@@ -209,7 +209,7 @@ class FileBrowserActivity : Activity() {
         val h = dp(16f); val v = dp(10f)
         setPadding(h, v, h, v)
         addView(TextView(context).apply {
-            typeface = ReaderTheme.chromeBold(context)
+            typeface = ReaderTheme.bodyBold(context)
             setTextColor(ReaderTheme.INK)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
             text = "Browse files…"
@@ -335,7 +335,7 @@ class FileBrowserActivity : Activity() {
 
     private fun sectionHeader(label: String): TextView = TextView(this).apply {
         text = label
-        typeface = ReaderTheme.chromeBold(context)
+        typeface = ReaderTheme.bodyBold(context)
         setTextColor(MUTED)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
         val h = dp(16f); val v = dp(10f)
@@ -379,7 +379,7 @@ class FileBrowserActivity : Activity() {
     private fun crumbLabel(crumb: Crumb): TextView = TextView(this).apply {
         text = crumb.label
         val isEllipsis = crumb.file == null
-        typeface = if (isEllipsis) ReaderTheme.chrome(context) else ReaderTheme.chromeBold(context)
+        typeface = if (isEllipsis) ReaderTheme.body(context) else ReaderTheme.bodyBold(context)
         setTextColor(if (isEllipsis) MUTED else ReaderTheme.INK)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
         maxLines = 1
@@ -394,7 +394,7 @@ class FileBrowserActivity : Activity() {
 
     private fun arrowFor(dir: File?): TextView = TextView(this).apply {
         text = "›"
-        typeface = ReaderTheme.chromeBold(context)
+        typeface = ReaderTheme.bodyBold(context)
         setTextColor(if (dir == null) MUTED else ReaderTheme.INK)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
         minHeight = dp(52f)
