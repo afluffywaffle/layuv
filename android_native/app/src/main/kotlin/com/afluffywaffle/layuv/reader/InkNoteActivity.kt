@@ -265,9 +265,14 @@ class InkNoteActivity : Activity() {
                 message = "Your ink strokes will be lost.",
                 positiveLabel = "Discard",
                 negativeLabel = "Keep editing",
-                onConfirm = { setResult(RESULT_CANCELED); finish() },
+                onConfirm = {
+                    if (DrawPathClient.available()) DrawPathClient.clearScreen(pkg)
+                    setResult(RESULT_CANCELED)
+                    finish()
+                },
             )
         } else {
+            if (DrawPathClient.available()) DrawPathClient.clearScreen(pkg)
             setResult(RESULT_CANCELED)
             finish()
         }
@@ -286,6 +291,10 @@ class InkNoteActivity : Activity() {
             writeTempBytes(FILE_RESULT_PNG, pngBytes)
             writeTempText(FILE_RESULT_JSON, strokeJson)
             runOnUiThread {
+                // Flush drawPath's ink buffer before returning to the reader so the
+                // hardware overlay doesn't bleed onto the reader screen while
+                // repagination (and its sendOneFullFrame) is still pending.
+                if (DrawPathClient.available()) DrawPathClient.clearScreen(pkg)
                 setResult(RESULT_OK, Intent())
                 finish()
             }
