@@ -39,7 +39,6 @@ import com.afluffywaffle.layuv.docx.model.ReadingPosition
 import com.afluffywaffle.layuv.docx.model.newId
 import java.io.File
 import java.time.Instant
-import java.util.concurrent.Executors
 import kotlin.math.roundToInt
 
 /**
@@ -73,7 +72,6 @@ class ReaderActivity : Activity() {
     // Title/filename label — bottom right of toolbar.
     private lateinit var titleLabel: TextView
 
-    private val ioExecutor = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
 
     @Volatile private var book: OpenBook? = null
@@ -88,6 +86,9 @@ class ReaderActivity : Activity() {
     private var lockedTool: AnnotationTool? = null
     // Annotation ID pre-allocated when launching InkNoteActivity so PNG and annotation share it.
     private var pendingInkId: String? = null
+    // In-memory cache of the latest stroke JSON per annotation ID. Updated immediately on save
+    // so editAnnotationNote can pass current strokes even before the background write completes.
+    private val latestStrokes = mutableMapOf<String, String>()
     // Most recently created annotation — the persistent undo button removes it.
     private var lastAnnotationId: String? = null
 
@@ -209,6 +210,8 @@ class ReaderActivity : Activity() {
                 val locked = lockedTool
                 if (locked != null) {
                     // Auto-annotate with the locked tool — no popup.
+                    // inkAnnotation cannot be usefully locked (it requires launching a full
+                    // canvas activity per selection), so it falls back to highlight.
                     when (locked) {
                         AnnotationTool.comment -> startActivityForResult(
                             Intent(this@ReaderActivity, NoteActivity::class.java)
@@ -216,7 +219,7 @@ class ReaderActivity : Activity() {
                                 .putExtra(NoteActivity.EXTRA_INITIAL_TOOL, locked.name),
                             REQ_NOTE,
                         )
-                        AnnotationTool.inkAnnotation -> launchInkCanvas(selText)
+                        AnnotationTool.inkAnnotation -> commitAnnotation(AnnotationTool.highlight, null)
                         else -> commitAnnotation(locked, null)
                     }
                 } else {
@@ -240,18 +243,19 @@ class ReaderActivity : Activity() {
                     onShare = { shareText(selText) },
                     lockedTool = lockedTool,
                     onLockTool = { tool ->
-                        lockedTool = tool
+                        // inkAnnotation can't be usefully locked — redirect to highlight.
+                        val effectiveTool = if (tool == AnnotationTool.inkAnnotation) AnnotationTool.highlight else tool
+                        lockedTool = effectiveTool
                         updateLockSlot()
                         // Apply to current selection immediately, then stay locked.
-                        when (tool) {
+                        when (effectiveTool) {
                             AnnotationTool.comment -> startActivityForResult(
                                 Intent(this@ReaderActivity, NoteActivity::class.java)
                                     .putExtra(NoteActivity.EXTRA_SELECTED_TEXT, selText)
-                                    .putExtra(NoteActivity.EXTRA_INITIAL_TOOL, tool.name),
+                                    .putExtra(NoteActivity.EXTRA_INITIAL_TOOL, effectiveTool.name),
                                 REQ_NOTE,
                             )
-                            AnnotationTool.inkAnnotation -> launchInkCanvas(selText)
-                            else -> commitAnnotation(tool, null)
+                            else -> commitAnnotation(effectiveTool, null)
                         }
                     },
                     onUnlock = { lockedTool = null; updateLockSlot() },
@@ -727,12 +731,9 @@ class ReaderActivity : Activity() {
                     val tool = AnnotationTool.fromName(data?.getStringExtra(NoteActivity.EXTRA_RESULT_TOOL))
                     val note = data?.getStringExtra(NoteActivity.EXTRA_NOTE)
                     val tag  = AnnotationTag.fromName(data?.getStringExtra(NoteActivity.EXTRA_RESULT_TAG))
-                    // Large data via static — avoids Binder IPC size limit.
-                    val noteResult = NoteActivity.pendingResult
-                    NoteActivity.pendingResult = null
-                    val ink        = noteResult?.inkBytes
-                    val inkId      = noteResult?.inkId ?: data?.getStringExtra(NoteActivity.EXTRA_INK_ID)
-                    val strokeJson = noteResult?.strokeJson
+                    val ink        = readTempBytes(NoteActivity.FILE_RESULT_PNG)
+                    val inkId      = data?.getStringExtra(NoteActivity.EXTRA_INK_ID)
+                    val strokeJson = readTempText(NoteActivity.FILE_RESULT_JSON)
                     commitAnnotationFromPanel(tool, note, tag, ink, inkId, strokeJson)
                 } else {
                     readerView.cancelSelection()
@@ -743,10 +744,9 @@ class ReaderActivity : Activity() {
                 val inkId = pendingInkId
                 pendingInkId = null
                 if (resultCode == RESULT_OK && inkId != null) {
-                    // Large data via static — avoids Binder IPC size limit.
-                    val inkResult = InkNoteActivity.pendingResult
-                    InkNoteActivity.pendingResult = null
-                    commitInkAnnotation(inkId, inkResult?.pngBytes, inkResult?.strokeJson)
+                    val pngBytes   = readTempBytes(InkNoteActivity.FILE_RESULT_PNG)
+                    val strokeJson = readTempText(InkNoteActivity.FILE_RESULT_JSON)
+                    commitInkAnnotation(inkId, pngBytes, strokeJson)
                 } else {
                     readerView.cancelSelection()
                 }
@@ -763,12 +763,9 @@ class ReaderActivity : Activity() {
                     val tool  = AnnotationTool.fromName(data?.getStringExtra(NoteActivity.EXTRA_RESULT_TOOL))
                     val note  = data?.getStringExtra(NoteActivity.EXTRA_NOTE)?.takeIf { it.isNotEmpty() }
                     val tag   = AnnotationTag.fromName(data?.getStringExtra(NoteActivity.EXTRA_RESULT_TAG))
-                    // Large data via static — avoids Binder IPC size limit.
-                    val noteResult = NoteActivity.pendingResult
-                    NoteActivity.pendingResult = null
-                    val ink        = noteResult?.inkBytes
-                    val inkId      = noteResult?.inkId ?: data?.getStringExtra(NoteActivity.EXTRA_INK_ID)
-                    val strokeJson = noteResult?.strokeJson
+                    val ink        = readTempBytes(NoteActivity.FILE_RESULT_PNG)
+                    val inkId      = data?.getStringExtra(NoteActivity.EXTRA_INK_ID)
+                    val strokeJson = readTempText(NoteActivity.FILE_RESULT_JSON)
                     val opened = book ?: run {
                         Log.e(TAG, "REQ_RETOOL_NOTE: book is null — cannot save")
                         return
@@ -787,6 +784,10 @@ class ReaderActivity : Activity() {
                         .map { if (it.id == updated.id) updated else it }
                     val inkPng    = if (ink != null && inkId != null) Pair(inkId, ink) else null
                     val inkStroke = if (strokeJson != null && inkId != null) Pair(inkId, strokeJson) else null
+                    Log.d(TAG, "REQ_RETOOL_NOTE: inkId=$inkId inkPngBytes=${ink?.size} strokeJsonLen=${strokeJson?.length} inkPng=${inkPng != null} inkStroke=${inkStroke != null}")
+                    // Cache strokes immediately so editAnnotationNote can find them even
+                    // before the background write updates book.bytes.
+                    if (strokeJson != null && inkId != null) latestStrokes[inkId] = strokeJson
                     // Optimistic update: show the new note immediately on the main thread
                     // instead of waiting for the background DOCX write to complete.
                     val updatedResolved = ResolvedAnnotation(updated, ann.span)
@@ -846,7 +847,7 @@ class ReaderActivity : Activity() {
 
     private fun loadFromFile(file: File) {
         readerView.showHint("Loading…")
-        ioExecutor.execute {
+        DocxWriteQueue.enqueueRead {
             try {
                 val opened = BookLoader.loadFromFile(file)
                 main.post { onBookLoaded(opened) }
@@ -865,7 +866,8 @@ class ReaderActivity : Activity() {
         val columns = resolveColumns()
 
         val length = opened.doc.plainText.length
-        val fraction = opened.doc.position?.fraction ?: 0.0
+        val fraction = opened.doc.position?.fraction
+            ?: prefs.getFloat("pos:${opened.file?.absolutePath ?: ""}", 0f).toDouble()
         val startChar = (fraction * length).roundToInt().coerceIn(0, length)
 
         readerView.showContent(opened.doc.plainText, opened.doc.annotations, columns, startChar, opened.doc.formatSpans)
@@ -982,10 +984,18 @@ class ReaderActivity : Activity() {
         lastAnnotationId = inkId
         showUndoPill(lastAnchorX, lastAnchorY)
 
-        val existing   = opened.doc.annotations.map { it.annotation }
+        // Optimistic update — show the dotted underline immediately without waiting for
+        // the background DOCX write (same pattern as commitAnnotation).
+        val resolvedAnnotation = ResolvedAnnotation(annotation, TextSpan(s, e))
+        val optimisticAnnotations = opened.doc.annotations + resolvedAnnotation
+        val optimisticDoc = LoadedDocument(opened.doc.plainMap, optimisticAnnotations, opened.doc.position)
+        book = OpenBook(opened.displayName, opened.bytes, optimisticDoc, file)
+        readerView.updateAnnotations(optimisticAnnotations)
+
         val inkPng     = if (pngBytes != null) Pair(inkId, pngBytes) else null
         val inkStrokes = if (strokeJson != null) Pair(inkId, strokeJson) else null
-        saveAnnotations(opened, file, existing + annotation, inkPng, inkStrokes)
+        if (strokeJson != null) latestStrokes[inkId] = strokeJson
+        saveAnnotations(opened, file, optimisticAnnotations.map { it.annotation }, inkPng, inkStrokes)
     }
 
     /** Open the note editor for an existing annotation. Panel pre-selects its current tool. */
@@ -996,24 +1006,27 @@ class ReaderActivity : Activity() {
         }
         pendingAnnotation = resolved
         Log.d(TAG, "editAnnotationNote: set pendingAnnotation=${resolved.annotation.id} note=${resolved.annotation.note}")
-        // Pass large ink data via static to avoid Binder IPC size limit.
-        NoteActivity.pendingLaunch = null
+        // Write large ink data to cache files to avoid Binder IPC size limit.
+        writeTempBytes(NoteActivity.FILE_LAUNCH_PNG, null)
+        writeTempText(NoteActivity.FILE_LAUNCH_JSON, null)
         if (resolved.annotation.hasInk) {
-            val bytes = book?.bytes
-            if (bytes != null) {
-                val strokeJson = DocxStore.readInkStrokes(bytes, resolved.annotation.id)
-                if (strokeJson != null) {
-                    NoteActivity.pendingLaunch = NoteActivity.NoteLaunch(
-                        strokeJson = strokeJson,
-                        initialInkId = resolved.annotation.id,
-                    )
-                } else {
-                    val inkBytes = DocxStore.readInkPng(bytes, resolved.annotation.id)
-                    if (inkBytes != null) {
-                        NoteActivity.pendingLaunch = NoteActivity.NoteLaunch(
-                            initialInkBytes = inkBytes,
-                            initialInkId = resolved.annotation.id,
-                        )
+            val id = resolved.annotation.id
+            // Prefer the in-memory cache — it's updated immediately on save, before
+            // the background write finishes updating book.bytes.
+            val cached = latestStrokes[id]
+            if (cached != null) {
+                writeTempText(NoteActivity.FILE_LAUNCH_JSON, cached)
+            } else {
+                val bytes = book?.bytes
+                if (bytes != null) {
+                    val strokeJson = DocxStore.readInkStrokes(bytes, id)
+                    if (strokeJson != null) {
+                        writeTempText(NoteActivity.FILE_LAUNCH_JSON, strokeJson)
+                    } else {
+                        val inkBytes = DocxStore.readInkPng(bytes, id)
+                        if (inkBytes != null) {
+                            writeTempBytes(NoteActivity.FILE_LAUNCH_PNG, inkBytes)
+                        }
                     }
                 }
             }
@@ -1022,6 +1035,7 @@ class ReaderActivity : Activity() {
             .putExtra(NoteActivity.EXTRA_NOTE, resolved.annotation.note ?: "")
             .putExtra(NoteActivity.EXTRA_SELECTED_TEXT, resolved.annotation.selectedText)
             .putExtra(NoteActivity.EXTRA_INITIAL_TOOL, resolved.annotation.tool.name)
+            .putExtra(NoteActivity.EXTRA_INITIAL_INK_ID, resolved.annotation.id.takeIf { resolved.annotation.hasInk })
         startActivityForResult(intent, REQ_RETOOL_NOTE)
     }
 
@@ -1130,12 +1144,10 @@ class ReaderActivity : Activity() {
         DocxWriteQueue.submit(
             file,
             transform = { base ->
-                var bytes = base
-                if (inkPng != null)
-                    bytes = DocxStore.saveInkPng(bytes, inkPng.first, inkPng.second)
-                if (inkStrokes != null)
-                    bytes = DocxStore.saveInkStrokes(bytes, inkStrokes.first, inkStrokes.second)
-                DocxStore.write(bytes, newList)
+                if (inkPng != null) Log.d(TAG, "saveAnnotations: writing inkPng id=${inkPng.first} bytes=${inkPng.second.size}")
+                if (inkStrokes != null) Log.d(TAG, "saveAnnotations: writing inkStrokes id=${inkStrokes.first} len=${inkStrokes.second.length}")
+                // writeWithInk does a single ZIP read+write pass instead of three separate ones.
+                DocxStore.writeWithInk(base, newList, inkPng, inkStrokes)
             },
             onSuccess = { newBytes ->
                 val freshDoc = DocxStore.load(newBytes)
@@ -1202,7 +1214,6 @@ class ReaderActivity : Activity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        ioExecutor.shutdown()
     }
 
     /** Write the current reading position back into the DOCX file (off-main). */
@@ -1221,27 +1232,36 @@ class ReaderActivity : Activity() {
             fraction = fraction,
         )
 
+        // Synchronous write so position survives process death even if the
+        // DocxWriteQueue task below doesn't complete before the process is killed.
+        prefs.edit().putFloat("pos:${file.absolutePath}", fraction.toFloat()).commit()
+
         savingPosition = true
-        DocxWriteQueue.submit(
-            file,
-            // Read the current on-disk bytes so the position layers onto the
-            // latest committed annotations rather than a stale in-memory base.
-            transform = { base -> DocxStore.writePosition(base, position) },
-            onSuccess = { newBytes ->
-                Log.i(TAG, "saved position fraction=$fraction to ${file.name}")
-                main.post {
-                    // Republish the in-memory base so a later annotation save
-                    // layers onto this position instead of reverting it. Guard on
-                    // file identity so a freshly-opened document isn't clobbered.
-                    book?.let { if (it.file == file) book = OpenBook(it.displayName, newBytes, it.doc, it.file) }
-                }
-                savingPosition = false
-            },
-            onError = { e ->
-                Log.w(TAG, "could not save position", e)
-                savingPosition = false
-            },
-        )
+        try {
+            DocxWriteQueue.submit(
+                file,
+                // Read the current on-disk bytes so the position layers onto the
+                // latest committed annotations rather than a stale in-memory base.
+                transform = { base -> DocxStore.writePosition(base, position) },
+                onSuccess = { newBytes ->
+                    Log.i(TAG, "saved position fraction=$fraction to ${file.name}")
+                    main.post {
+                        // Republish the in-memory base so a later annotation save
+                        // layers onto this position instead of reverting it. Guard on
+                        // file identity so a freshly-opened document isn't clobbered.
+                        book?.let { if (it.file == file) book = OpenBook(it.displayName, newBytes, it.doc, it.file) }
+                    }
+                    savingPosition = false
+                },
+                onError = { e ->
+                    Log.w(TAG, "could not save position", e)
+                    savingPosition = false
+                },
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "savePosition: submit threw synchronously", e)
+            savingPosition = false
+        }
     }
 
     /**
@@ -1322,6 +1342,26 @@ class ReaderActivity : Activity() {
             "disable-chrome",
         )
     }
+
+    private fun readTempBytes(name: String): ByteArray? = try {
+        val f = File(cacheDir, name)
+        if (!f.exists()) null else f.readBytes().also { f.delete() }
+    } catch (_: Exception) { null }
+
+    private fun readTempText(name: String): String? = try {
+        val f = File(cacheDir, name)
+        if (!f.exists()) null else f.readText().also { f.delete() }
+    } catch (_: Exception) { null }
+
+    private fun writeTempBytes(name: String, bytes: ByteArray?) = try {
+        val f = File(cacheDir, name)
+        if (bytes != null) f.writeBytes(bytes) else f.delete()
+    } catch (_: Exception) {}
+
+    private fun writeTempText(name: String, text: String?) = try {
+        val f = File(cacheDir, name)
+        if (text != null) f.writeText(text) else f.delete()
+    } catch (_: Exception) {}
 
     companion object {
         private const val TAG = "LeamhActivity"

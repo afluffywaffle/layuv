@@ -40,3 +40,29 @@ tasks.test {
     useJUnitPlatform()
     testLogging { events("passed", "failed", "skipped") }
 }
+
+// ─── generators source set ────────────────────────────────────────────────────
+// Generator code lives here so it never ends up in the production JAR (and thus
+// the APK).  It can see all of main's public API but NOT internal symbols like
+// JsonWriter / Json (which are only needed in main anyway).
+
+val generators by sourceSets.creating {
+    compileClasspath += sourceSets.main.get().output + sourceSets.main.get().compileClasspath
+    runtimeClasspath += sourceSets.main.get().output + sourceSets.main.get().runtimeClasspath
+}
+
+// org.json is compileOnly in main; generators need it at runtime (DocxStore.load)
+// would use it, but the generator avoids that path.  We still add it here so that
+// any indirect pull from the engine (e.g. LegacyComments) resolves at runtime.
+configurations[generators.runtimeClasspathConfigurationName].apply {
+    extendsFrom(configurations["compileOnly"])
+}
+
+tasks.register<JavaExec>("generateGoldens") {
+    group = "verification"
+    description = "Regenerate all docx golden test fixtures. Run from the repo root."
+    classpath = generators.runtimeClasspath
+    mainClass.set("com.afluffywaffle.layuv.docx.GenerateGoldensKt")
+    workingDir = rootProject.projectDir
+    dependsOn(tasks.named("compileGeneratorsKotlin"))
+}

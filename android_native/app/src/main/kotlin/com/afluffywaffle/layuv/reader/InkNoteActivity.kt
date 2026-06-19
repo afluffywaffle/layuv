@@ -16,11 +16,9 @@ import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Region
-import android.graphics.Typeface
 import org.json.JSONArray
 import org.json.JSONObject
 import android.os.Bundle
-import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -33,6 +31,7 @@ import android.widget.TextView
 import com.afluffywaffle.layuv.R
 import com.afluffywaffle.layuv.reader.DrawPathClient
 import java.io.ByteArrayOutputStream
+import java.io.File
 
 enum class InkTool { THIN, THICK, ERASER, LASSO }
 
@@ -55,6 +54,7 @@ class InkNoteActivity : Activity() {
     private lateinit var linesBtn: TextView
     private var ruleStyle = "none"
     private var exclusionPx = 0
+    private var bodySizeSp = ReaderTheme.BODY_TEXT_SP
 
     private val pkg get() = packageName
 
@@ -62,6 +62,8 @@ class InkNoteActivity : Activity() {
         super.onCreate(savedInstanceState)
         val selectedText = intent.getStringExtra(EXTRA_SELECTED_TEXT) ?: ""
         val prefs = getSharedPreferences("leamh", Context.MODE_PRIVATE)
+        ReaderTheme.bodyFont = prefs.getString("body_font", "literata") ?: "literata"
+        bodySizeSp = ReaderTheme.bodySizeSp(prefs.getString("body_font_size", "medium") ?: "medium")
         ruleStyle = try {
             prefs.getString("ink_rule_lines", "none") ?: "none"
         } catch (_: ClassCastException) {
@@ -70,16 +72,14 @@ class InkNoteActivity : Activity() {
             if (wasOn) "wide" else "none"
         }
         setContentView(buildUi(selectedText))
-        val launch = InkNoteActivity.pendingLaunch
-        InkNoteActivity.pendingLaunch = null
-        val strokeJson = launch?.strokeJson ?: intent.getStringExtra(EXTRA_STROKE_JSON)
+        val strokeJson = readTempText(FILE_LAUNCH_JSON) ?: intent.getStringExtra(EXTRA_STROKE_JSON)
         if (strokeJson != null) {
             // Vector strokes available — load into committed list; lasso works on all ink.
             // existingBitmap is intentionally NOT loaded: strokes are the source of truth.
             canvas.loadStrokesFromJson(strokeJson)
         } else {
             // Rasterized / legacy note — load PNG as background; lasso punches pixel holes.
-            val existingInk = launch?.existingInkBytes ?: intent.getByteArrayExtra(EXTRA_EXISTING_INK)
+            val existingInk = readTempBytes(FILE_LAUNCH_PNG) ?: intent.getByteArrayExtra(EXTRA_EXISTING_INK)
             existingInk?.let { bytes -> canvas.setExistingInk(bytes) }
         }
     }
@@ -132,8 +132,9 @@ class InkNoteActivity : Activity() {
         root.addView(header, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         root.addView(hDivider(), LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
 
+        val refBoxHeight = resources.displayMetrics.heightPixels / 3
         val refBox = buildReferenceBox(selectedText)
-        root.addView(refBox, LinearLayout.LayoutParams(MATCH_PARENT, dp(96f)))
+        root.addView(refBox, LinearLayout.LayoutParams(MATCH_PARENT, refBoxHeight))
 
         val toolbar = buildToolbar()
         root.addView(toolbar, LinearLayout.LayoutParams(MATCH_PARENT, dp(64f)))
@@ -154,21 +155,39 @@ class InkNoteActivity : Activity() {
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(4f), dp(8f), dp(16f), dp(4f))
+            setPadding(dp(4f), dp(8f), dp(12f), dp(4f))
         }
         header.addView(
-            ChromeIconButton(this, R.drawable.ic_arrow_back) {
-                setResult(RESULT_CANCELED)
-                finish()
-            },
+            ChromeIconButton(this, R.drawable.ic_arrow_back) { handleBack() },
             LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT),
         )
         header.addView(TextView(this).apply {
             text = "Ink note"
-            typeface = Typeface.create(ReaderTheme.body(context), Typeface.BOLD)
+            typeface = ReaderTheme.bodyBold(this@InkNoteActivity)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
             setTextColor(ReaderTheme.INK_87)
         }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+
+        // Done pill — shifted ~80dp left of NoteActivity's Save position so an
+        // accidental double-tap after Done won't land on Save.
+        val doneBtn = TextView(this).apply {
+            text = "Done"
+            typeface = ReaderTheme.bodyBold(this@InkNoteActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+            setTextColor(ReaderTheme.PAPER)
+            gravity = Gravity.CENTER
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                cornerRadius = ReaderTheme.dp(this@InkNoteActivity, ReaderTheme.RADIUS_BTN)
+                setColor(ReaderTheme.INK_87)
+            }
+            setPadding(dp(20f), dp(10f), dp(20f), dp(10f))
+            minimumHeight = dp(44f)
+        }
+        doneBtn.setOnTouchListener(PenTapListener(this) { onDone() })
+        val doneLp = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
+        doneLp.rightMargin = dp(80f)
+        header.addView(doneBtn, doneLp)
         return header
     }
 
@@ -177,15 +196,13 @@ class InkNoteActivity : Activity() {
             setBackgroundColor(0x0A000000) // ~4% black tint
         }
         frame.addView(TextView(this).apply {
-            text = "“${selectedText.take(200)}”"
+            text = "“${selectedText.take(600)}”"
             typeface = ReaderTheme.bodyItalic(this@InkNoteActivity)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setTextColor(ReaderTheme.INK_54)
-            maxLines = 4
-            ellipsize = TextUtils.TruncateAt.END
-            setLineSpacing(0f, 1.45f)
-            setPadding(dp(16f), dp(10f), dp(16f), dp(10f))
-        }, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, (bodySizeSp - 1f).coerceAtLeast(14f))
+            setTextColor(ReaderTheme.INK_87)
+            setLineSpacing(0f, 1.35f)
+            setPadding(dp(16f), dp(12f), dp(16f), dp(12f))
+        }, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         return frame
     }
 
@@ -203,7 +220,6 @@ class InkNoteActivity : Activity() {
         lassoBtn = toolToggleView("Lasso", activeTool == InkTool.LASSO)  { setTool(InkTool.LASSO) }
         linesBtn = toolbarTextBtn(rulesLabel()) { cycleRules() }
         val clearBtn = toolbarTextBtn("Clear") { onClear() }
-        val doneBtn  = toolbarTextBtn("Done")  { onDone() }
 
         val btnW = dp(84f)
         toolbar.addView(thinBtn,  LinearLayout.LayoutParams(btnW, MATCH_PARENT))
@@ -213,7 +229,6 @@ class InkNoteActivity : Activity() {
         toolbar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         toolbar.addView(linesBtn, LinearLayout.LayoutParams(btnW, MATCH_PARENT))
         toolbar.addView(clearBtn, LinearLayout.LayoutParams(btnW, MATCH_PARENT))
-        toolbar.addView(doneBtn,  LinearLayout.LayoutParams(btnW, MATCH_PARENT))
         return toolbar
     }
 
@@ -243,14 +258,33 @@ class InkNoteActivity : Activity() {
         canvas.clearStrokes()
     }
 
+    private fun handleBack() {
+        if (canvas.strokesDirty) {
+            LeamhDialog.confirm(
+                context = this,
+                message = "Your ink strokes will be lost.",
+                positiveLabel = "Discard",
+                negativeLabel = "Keep editing",
+                onConfirm = { setResult(RESULT_CANCELED); finish() },
+            )
+        } else {
+            setResult(RESULT_CANCELED)
+            finish()
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() = handleBack()
+
     private fun onDone() {
         // PNG encoding of a full-screen bitmap can take 1-3s — run off the main thread
-        // to avoid Activity pause timeout. Store result in a static field rather than
+        // to avoid Activity pause timeout. Write result to cache files rather than
         // Intent extras to avoid TransactionTooLargeException on complex notes.
         Thread {
             val pngBytes   = canvas.renderToPng()
             val strokeJson = canvas.getStrokeJson()
-            InkNoteActivity.pendingResult = InkResult(pngBytes, strokeJson)
+            writeTempBytes(FILE_RESULT_PNG, pngBytes)
+            writeTempText(FILE_RESULT_JSON, strokeJson)
             runOnUiThread {
                 setResult(RESULT_OK, Intent())
                 finish()
@@ -277,8 +311,9 @@ class InkNoteActivity : Activity() {
     }
 
     private fun refreshToolButtons() {
-        fun boldIf(tv: TextView, b: Boolean) =
-            tv.setTypeface(if (b) ReaderTheme.bodyBold(this) else ReaderTheme.body(this), Typeface.NORMAL)
+        fun boldIf(tv: TextView, b: Boolean) {
+            tv.typeface = if (b) ReaderTheme.bodyBold(this) else ReaderTheme.body(this)
+        }
         boldIf(thinBtn,  activeTool == InkTool.THIN)
         boldIf(thickBtn, activeTool == InkTool.THICK)
         boldIf(eraseBtn, activeTool == InkTool.ERASER)
@@ -312,11 +347,25 @@ class InkNoteActivity : Activity() {
     private fun hDivider(): View = View(this).apply { setBackgroundColor(ReaderTheme.INK_12) }
     private fun dp(v: Float): Int = ReaderTheme.dp(this, v).toInt()
 
-    /** Large data passed into InkNoteActivity — bypasses Binder IPC size limit. */
-    data class InkLaunch(val existingInkBytes: ByteArray? = null, val strokeJson: String? = null)
+    private fun readTempBytes(name: String): ByteArray? = try {
+        val f = File(cacheDir, name)
+        if (!f.exists()) null else f.readBytes().also { f.delete() }
+    } catch (_: Exception) { null }
 
-    /** Large data returned from InkNoteActivity — bypasses Binder IPC size limit. */
-    data class InkResult(val pngBytes: ByteArray? = null, val strokeJson: String? = null)
+    private fun readTempText(name: String): String? = try {
+        val f = File(cacheDir, name)
+        if (!f.exists()) null else f.readText().also { f.delete() }
+    } catch (_: Exception) { null }
+
+    private fun writeTempBytes(name: String, bytes: ByteArray?) = try {
+        val f = File(cacheDir, name)
+        if (bytes != null) f.writeBytes(bytes) else f.delete()
+    } catch (_: Exception) {}
+
+    private fun writeTempText(name: String, text: String?) = try {
+        val f = File(cacheDir, name)
+        if (text != null) f.writeText(text) else f.delete()
+    } catch (_: Exception) {}
 
     companion object {
         const val EXTRA_SELECTED_TEXT = "selected_text"
@@ -325,17 +374,10 @@ class InkNoteActivity : Activity() {
         /** Optional: ByteArray of an existing ink PNG to display as a background layer. */
         const val EXTRA_EXISTING_INK  = "existing_ink"
 
-        /**
-         * Set before calling startActivityForResult; cleared in onCreate().
-         * Avoids TransactionTooLargeException when passing existing ink via Binder.
-         */
-        @Volatile var pendingLaunch: InkLaunch? = null
-
-        /**
-         * Set in onDone() before finish(); read in the caller's onActivityResult().
-         * Avoids TransactionTooLargeException when returning large PNG via Binder.
-         */
-        @Volatile var pendingResult: InkResult? = null
+        const val FILE_LAUNCH_PNG  = "ink_launch.png"
+        const val FILE_LAUNCH_JSON = "ink_launch_strokes.json"
+        const val FILE_RESULT_PNG  = "ink_result.png"
+        const val FILE_RESULT_JSON = "ink_result_strokes.json"
     }
 }
 
@@ -365,6 +407,7 @@ class InkCanvasView(context: Context) : View(context) {
 
     var activeTool = InkTool.THIN
     var ruleStyle  = "none"
+    var strokesDirty = false
 
     /** Decode [pngBytes] and store as a background layer drawn beneath new strokes. */
     fun setExistingInk(pngBytes: ByteArray) {
@@ -395,7 +438,7 @@ class InkCanvasView(context: Context) : View(context) {
     }
 
     fun clearStrokes() {
-        committed.clear(); current = null; invalidate()
+        committed.clear(); current = null; strokesDirty = true; invalidate()
     }
 
     fun hasMeaningfulInk(): Boolean = committed.any { it.tool != InkTool.ERASER }
@@ -477,6 +520,7 @@ class InkCanvasView(context: Context) : View(context) {
                         }
                         else -> committed.add(Stroke(path, activeTool, currentPts.toList()))
                     }
+                    strokesDirty = true
                 }
                 current = null
                 currentPts = mutableListOf()

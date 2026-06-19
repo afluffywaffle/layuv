@@ -11,24 +11,25 @@ import com.afluffywaffle.layuv.docx.model.AnnotationTool
  *
  * Run splitting: `<w:rPr>` applies to a whole `<w:r>`, so when a selection
  * starts/ends mid-run the run is split at that boundary first, then rPr is
- * injected only into the covered fragment(s). Annotations are processed one at a
- * time, rebuilding the plain map + run lists after each because splits grow the
- * XML. Comment/bookmark anchors are collected and applied in one final pass
- * (they don't change run structure), so stored positions never go stale.
+ * injected only into the covered fragment(s). The plain map and run lists are
+ * built once and only rebuilt at the start of the next annotation if xml
+ * actually changed in the previous iteration (splits or rPr insertions alter
+ * xml; skipped or bookmark annotations do not). Comment/bookmark anchors are
+ * collected and applied in one final pass (they don't change run structure),
+ * so stored positions never go stale.
  */
 object RunPropertyInjector {
 
     private val RUN_OPEN = Regex("<w:r(?:\\s[^>]*)?>(?<!/>)")
     private val RUN_CLOSE = Regex("</w:r>")
     private val WT = Regex("<w:t(?:[^>]*)>(.*?)</w:t>", RegexOption.DOT_MATCHES_ALL)
-    private val RPR_BLOCK = Regex("<w:rPr>.*?</w:rPr>", RegexOption.DOT_MATCHES_ALL)
-    private val RPR_CHANGE = Regex("<w:rPrChange\\b[^>]*>.*?</w:rPrChange>", RegexOption.DOT_MATCHES_ALL)
 
     private val STRIP_CR_START = Regex("<w:commentRangeStart\\b[^>]*/>")
     private val STRIP_CR_END = Regex("<w:commentRangeEnd\\b[^>]*/>")
     private val STRIP_CR_REF = Regex(
         "<w:r><w:rPr><w:rStyle w:val=\"CommentReference\"/></w:rPr><w:commentReference\\b[^>]*/></w:r>",
     )
+
     private val NON_ID = Regex("[^a-zA-Z0-9_]")
 
     /** OOXML run property for a tool (inner content only). Mirror of `_rPrForTool`. */
@@ -83,15 +84,24 @@ object RunPropertyInjector {
         val anchorInsertions = ArrayList<Anchor>()
         val bookmarkInsertions = ArrayList<Bookmark>()
 
+        // Build once; only rebuild when xml actually changed in the previous iteration.
+        var map = PlainTextMapper.build(xml)
+        var runOpens = RUN_OPEN.findAll(xml).toList()
+        var runCloses = RUN_CLOSE.findAll(xml).toList()
+        var needsRebuild = false
+
         for (a in annotations) {
-            val map = PlainTextMapper.build(xml)
+            if (needsRebuild) {
+                map = PlainTextMapper.build(xml)
+                runOpens = RUN_OPEN.findAll(xml).toList()
+                runCloses = RUN_CLOSE.findAll(xml).toList()
+                needsRebuild = false
+            }
             if (map.plain.isEmpty()) continue
+            val xmlSnapshot = xml
 
             val loc = Anchoring.locateInPlain(map.plain, a.selectedText, a.prefix, a.suffix, a.position)
                 ?: continue
-
-            var runOpens = RUN_OPEN.findAll(xml).toList()
-            var runCloses = RUN_CLOSE.findAll(xml).toList()
 
             val startXmlPos = map.xmlOffsets[loc.start]
             val endXmlPos = map.xmlOffsets[loc.end - 1]
@@ -188,6 +198,7 @@ object RunPropertyInjector {
                 xml = xml.substring(0, ins.pos) + ins.tag + xml.substring(ins.pos)
             }
 
+            needsRebuild = (xml !== xmlSnapshot)
             val commentId = noteCommentId[a.id]
             if (commentId != null) {
                 anchorInsertions.add(Anchor(commentId, a.selectedText, a.prefix, a.suffix, a.position))
@@ -296,16 +307,19 @@ object RunPropertyInjector {
         val fullText = XmlEntities.decode(wtList[0].groupValues[1])
         if (charPos <= 0 || charPos >= fullText.length) return xml
 
-        // Strip <w:rPrChange> so the non-greedy rPr match doesn't stop at its inner </w:rPr>.
-        val rPrChangeStripped = runContent.replace(RPR_CHANGE, "")
-        val rPrXml = RPR_BLOCK.find(rPrChangeStripped)?.value ?: ""
-
         val openTag = xml.substring(runOpen.start(), runOpen.end())
         val t1 = XmlEntities.escape(fullText.substring(0, charPos))
         val t2 = XmlEntities.escape(fullText.substring(charPos))
 
-        val run1 = "$openTag$rPrXml<w:t xml:space=\"preserve\">$t1</w:t></w:r>"
-        val run2 = "$openTag$rPrXml<w:t xml:space=\"preserve\">$t2</w:t></w:r>"
+        // Split runContent around the <w:t> element to preserve all siblings
+        // (<w:rPr>, <w:tab/>, <w:br/>, <w:sym/>, <w:fldChar/>, etc.).
+        // beforeWt goes into both halves; afterWt (post-text siblings) into run2 only.
+        val wtMatch = wtList[0]
+        val beforeWt = runContent.substring(0, wtMatch.range.first)
+        val afterWt = runContent.substring(wtMatch.range.last + 1)
+
+        val run1 = "$openTag${beforeWt}<w:t xml:space=\"preserve\">$t1</w:t></w:r>"
+        val run2 = "$openTag${beforeWt}<w:t xml:space=\"preserve\">$t2</w:t>${afterWt}</w:r>"
 
         return xml.substring(0, runOpen.start()) + run1 + run2 + xml.substring(runClose.end())
     }

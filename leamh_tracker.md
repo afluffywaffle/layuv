@@ -195,28 +195,6 @@ DOCX writes re-encode the whole zip and the annotation injection is O(N×M); on 
 - [x] **Injection ~1.6× faster** — `_buildPlainMap` was rebuilt per-annotation (64% of time); now plain is built once + a lightweight per-`<w:t>` segment index (`_xmlOffsetSegments`/`_byteForChar`) replaces the per-character offset list. Byte-identical.
 - [ ] **OPTIONAL further perf (riskier):** remaining cost is per-iteration regex re-scans (run boundaries + post-split rebuilds). Eliminating them needs incremental run-position maintenance across `_splitRunAt`'s canonical reconstruction — diverges on real Word markup (tables/tracked-changes/native-import) that the synthetic tests don't cover. Only worth it for habitual 100+-annotation chapters. Benchmark harness: `test/inject_perf_test.dart` (520 anns) + correctness `test/inject_characterization_test.dart` (overlaps + all tools); both diff against `/tmp/inject_char_baseline`. Could also defer injection to close/export (json-only intermediate saves) — keeps active annotation fast without touching the injection algorithm.
 
-### Code health — large-file review (leanness + bugs + corruption pathways)
-Several reader/store files have grown past ~1000 lines. Review each for cleaner/leaner
-structure, bugs, and (especially) DOCX corruption / data-loss pathways. **Do this ONE
-FILE AT A TIME** — the multi-agent review fans out many Opus agents and the cache-write
-cost adds up fast; reviewing per-file keeps usage budgeted (run, read the report, decide,
-then move on).
-- [x] `lib/reader_screen.dart` (~1046 lines) — reviewed 2026-06-16 (multi-agent: map → 5-lens find → dedup → 3-lens adversarial verify)
-  - **Fixed 2026-06-16 (analyze clean):** corruption seam — list-panel open now flushes pending saves via `_toggleAnnotationsPanel` (mirrors `_openAnnotationPanel`); e-ink panel double-push guard (`_annotationsRouteOpen`); `_emphasisTimer` mounted guard; leanness — removed dead `kDebugForceReaderView` + vestigial `_modeSetByUser`, de-duped `AnnotationPanel` construction, centralized the 5 `EinkPen.refresh` post-frame idioms into `_refreshEinkAfterFrame()`, moved `_saveDebounce` cancel up in `dispose`, fixed false "identical constructor" comment.
-  - **Presentation extraction done 2026-06-16 (analyze clean):** pulled pure-widget chrome out of `reader_screen.dart` (1054 → 915 lines) — dialogs to `lib/reader/reader_dialogs.dart` (`DeleteAnnotationDialog`, `CloseDocumentDialog`, `SavingDialog`); title/bottom-bar to `lib/reader/reader_chrome.dart` (`ReaderTitleText`, `ReaderBottomBar`). Behavior-preserving; the don't-ask-again pref write + saving-flow flush stay in `_ReaderScreenState`.
-  - **File-breakup decision:** NOT splitting further for now. The remaining size is the `_ReaderScreenState` god-object (save lifecycle + overlays + annotation CRUD + reader-mode switch). The high-value move is decoupling a `SaveCoordinator` + `OverlayController` — but that is HIGH risk (touches the documented dual-write corruption seam + golden-tested `_writeAllAnnotations`), so defer until there's a concrete reason to touch the save path (e.g. the macOS atomic-write fix, or a `saveAll` merge-by-id change). Splitting it into files for its own sake buys little and risks a lot.
-  - **Still open from the review:** (corruption, medium) macOS/iOS `safeWriteBytes` is non-atomic — crash mid-write can truncate the working DOCX; needs a directory-scoped security-scoped bookmark + same-dir temp+rename (`platform_utils.dart:27-28`; not a reader_screen change). (low) lifecycle background flush is fire-and-forget vs OS suspension. (deferred, high effort/risk) the `SaveCoordinator`/`OverlayController` decoupling above.
-- [x] `lib/reader/reader_view.dart` (~1898 lines) — reviewed 2026-06-16 (hybrid: Opus finders + Sonnet verify, high-sev escalated to Opus; run hit the session limit mid-verify, resumed from the journal). 5 confirmed bugs, 7 refuted, 9 leanness recs.
-  - **Confirmed bugs (none write the store — reader_view raises callbacks only):** (med, was high) `charAtPoint` gutter / right-edge taps map to the wrong char — no cx bounds + gutter not modeled (`:311-326`); fix = reject out-of-bounds + gutter taps, clamp localX. (med) Material `Slider` in the jump overlay is reachable on e-ink, violates the no-animation gate (`:1830-1897`); gate behind `!isEink`, keep the chevrons. (low) page-counter tap target <48dp (`:1807-1828`). (low) annotation position is a lossy start-fraction → panel-jump emphasis can mark the WRONG annotation on long docs (`:1472-1474` + reader_screen `:692-694`); match by id or tighten tolerance to ~2/len. (low, borderline 2/3) `_extendScrubTo` mutates `_selStart/_selEnd` outside setState (`:1409-1426`).
-  - **Refuted by verify (7):** programmatic-jump-no-refresh, saved-position rounding, stale-page snap-back, col-0 margin overdraw, oversized-line clip, re-pagination formatSpans key, first-covering-span-only — all traced and cleared.
-  - **Leanness (all vetted safe):** BIG WINS — extract `PageLayout` → `lib/reader/page_layout.dart` (~450 lines) and `ReaderPainter` → `lib/reader/reader_painter.dart` (~450 lines); together ~halve the file, zero behavior change. Quick: remove dead SELCOMMIT debug timing (`:1442,1452-1455`); nav-strip draw helper (`:945-978`); collapse 4 near-identical span-rect loops into one helper (`:730-868`, medium). Deferred/riskier: extract the pointer/selection state machine into a mixin/controller (`:1390-1665`).
-  - **Fixed 2026-06-16 (analyze clean):** `charAtPoint` bounds + gutter reject + localX clamp (bug #1); `Slider` gated behind `!isEink`, chevrons kept (bug #2); page-counter 48dp hit region (bug #5); removed dead SELCOMMIT timing (leanness #1); documented the intentional out-of-setState scrub write (leanness #2, the safe treatment of borderline bug #4).
-  - **Still deferred:** bug — lossy-fraction panel-jump emphasis can mark the wrong annotation on long docs (`reader_view.dart:1472-1474` + `reader_screen.dart:692-694`); proper fix is match-by-id, which needs an `onJumpTo` interface change (low severity, left for a focused pass). Leanness — the two BIG extractions (`PageLayout` → page_layout.dart, `ReaderPainter` → reader_painter.dart; ~900 lines, ~halve the file) + span-rect loop helper + nav-strip helper + pointer/selection mixin.
-- [ ] `lib/models/docx_store.dart` (~1419 lines) — KEY FILE; deepest data-integrity pass (write-archive crash window, comments.xml/OOXML round-trip, _serialized coverage, never-throw rule). Conservative cleanup only.
-- [ ] `lib/reader/annotations_panel.dart` (~1006 lines) — list panel; direct-write-then-reload vs reader's in-memory list
-- [ ] `lib/reader/page_flip_reader.dart` (~988 lines) — verify against the documented sizing contract; do NOT implement the deferred column-width race fix
-- [ ] `lib/reader/annotation_toolbar.dart` (~641 lines) — moderate; lower priority
-
 ### Native review — DOCX engine + write/corruption path (Run 1, 2026-06-17)
 Hybrid review (Opus finders, Sonnet verify w/ high-sev → Opus) of `android_native/docx/` + `app/reader/DocxWriteQueue`/BookLoader + ReaderActivity write sites. **17 confirmed bugs, 3 refuted, 3 cleanups; none critical.** KEY: now that Flutter/Dart is archived, the "byte-identical to the Dart store" golden constraint **dissolves** — fix on the native side and regenerate goldens from corrected native output (real constraint = round-trips with Word/Pages/GDocs). Two confirmed "compat" findings (numeric-entity superset; clean-P vs legacy `_buildPlainMap`) were cross-app-drift-vs-Flutter only → **MOOT post-archive** (native behavior is the correct one).
 
@@ -232,18 +210,18 @@ Hybrid review (Opus finders, Sonnet verify w/ high-sev → Opus) of `android_nat
 - [x] ✅ `ioExecutor` never shut down in ReaderActivity — `onDestroy()` calls `shutdown()`
 - [x] ✅ `deleteSelected` setResult-after-finish race — setResult called before async write begins
 
-**Still open (7 remaining):**
-- [ ] `splitRunAt` drops non-`<w:t>` children (tab/br/field) on split (low, `RunPropertyInjector.kt:289-310`)
+**Still open (6 remaining):**
+- [x] ✅ `splitRunAt` drops non-`<w:t>` children (tab/br/field) on split — fixed 2026-06-18; now splits runContent around the `<w:t>` match, preserving all siblings (`<w:tab/>`, `<w:br/>`, `<w:rPrChange>`, etc.) naturally; removed dead `RPR_BLOCK`/`RPR_CHANGE` regexes; 6 new unit tests in `RunPropertyInjectorTest.kt`
 - [ ] `RunPropertyInjector` O(annotations×docSize) — per-annotation `PlainTextMapper.build` + full `findAll` re-scans (medium perf, `RunPropertyInjector.kt:86-195`)
-- [ ] onPause position write can be lost on process death; no `onSaveInstanceState` fallback (medium)
+- [x] ✅ onPause position write can be lost on process death — fixed 2026-06-19; `savePosition()` now does a synchronous `prefs.edit().putFloat("pos:<path>", fraction).commit()` before the async DocxWriteQueue submit; `onBookLoaded` falls back to the SharedPreferences fraction when the DOCX has no saved position
 - [ ] Reads bypass write queue → stale display on concurrent load/write (low)
 - [ ] `savingPosition` flag threading — not reset on error in all paths (low)
 - [ ] Static `@Volatile` cross-Activity handoff (`NoteActivity`/`InkNoteActivity` `pendingResult`/`pendingLaunch`) — unsynchronized global; fix = FileProvider URI or temp file (low)
 - [ ] `DocxArchive.write` re-deflates all entries (drops ZipEntry compression metadata) — low perf impact
 - **Run 2 (pending):** app reader UI in depth — ReaderView, Paginator, HighlightPainter, selection, AnnotationsPanel/Search/popups, EPD/Epd/EinkClient.
 
-### Kotlin golden generator rewrite — eliminate Flutter/Dart dependency
-**Status:** blocked/broken as of 2026-06-17 Flutter archive.
+### Kotlin golden generator rewrite — DONE ✅ (2026-06-17)
+**Status:** complete. `./gradlew :docx:generateGoldens` (from `android_native/`) regenerates all four golden suites using the real engine — no Dart/Flutter toolchain needed. 41/41 tests green.
 
 The four Dart tools in `android_native/tools/golden_gen/` import `package:layuv/models/...` which resolved via the root `pubspec.yaml` to `lib/`. After the Flutter archive both are in `archive/flutter/`. Running the generators now requires `cd archive/flutter && dart run ../../android_native/tools/golden_gen/<tool>.dart` — fragile, requires a Flutter SDK, and couples golden generation to archived code.
 
@@ -278,12 +256,11 @@ The four Dart tools in `android_native/tools/golden_gen/` import `package:layuv/
 
 **Swift golden generator — also needed:** `macos_native/Packages/LeamhDocx/Tests/LeamhDocxTests/` currently has hand-authored golden files that can't be regenerated without manually running the engine. When the Kotlin generator (`GenerateGoldens.kt`) is written, write a parallel Swift equivalent — an XCTest helper (or a Swift executable target) that calls `DocxStore.write()`, `PlainTextMapper.build()`, etc. and writes the golden files to disk. Same outputs as the Kotlin generator but for the Swift test resource tree.
 
-**Immediate workaround (until rewrite):** to regenerate goldens now, run:
-```bash
-cd archive/flutter
-dart run ../../android_native/tools/golden_gen/gen_engine_goldens.dart
-# (requires Flutter SDK and `dart pub get` in archive/flutter/)
-```
+**Files written:**
+- `android_native/docx/src/generators/kotlin/com/afluffywaffle/layuv/docx/GenerateGoldens.kt` — single `main()` covering all four suites
+- `android_native/docx/build.gradle.kts` — `generators` source set + `generateGoldens` JavaExec task
+
+**Dart tools in `android_native/tools/golden_gen/` remain for reference** but are no longer the path to regenerate goldens.
 
 ### E-ink nav — RTL direction support
 - [ ] Add a setting to reverse nav direction (right=prev, left=next) for RTL texts (Japanese light novels, etc.)

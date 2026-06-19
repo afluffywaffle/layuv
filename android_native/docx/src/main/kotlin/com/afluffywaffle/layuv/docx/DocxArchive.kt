@@ -2,6 +2,7 @@ package com.afluffywaffle.layuv.docx
 
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.util.zip.CRC32
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -15,6 +16,7 @@ import java.util.zip.ZipOutputStream
  */
 class DocxArchive private constructor(
     private val entries: LinkedHashMap<String, ByteArray>,
+    private val methods: Map<String, Int>,
 ) {
     fun bytes(name: String): ByteArray? = entries[name]
     fun text(name: String): String? = entries[name]?.toString(Charsets.UTF_8)
@@ -24,28 +26,53 @@ class DocxArchive private constructor(
     /** A mutable, order-preserving copy of the entries for a full rewrite. */
     fun toMutableEntries(): LinkedHashMap<String, ByteArray> = LinkedHashMap(entries)
 
+    /**
+     * Original compression method (STORED=0, DEFLATED=8) for each entry.
+     * Pass to [write] so unchanged entries keep their original method instead
+     * of being re-deflated.
+     */
+    fun entryMethods(): Map<String, Int> = methods
+
     companion object {
         fun read(docx: ByteArray): DocxArchive {
             val map = LinkedHashMap<String, ByteArray>()
+            val methods = HashMap<String, Int>()
             ZipInputStream(ByteArrayInputStream(docx)).use { zin ->
                 var entry = zin.nextEntry
                 while (entry != null) {
                     if (!entry.isDirectory) {
                         map[entry.name] = zin.readBytes()
+                        methods[entry.name] = entry.method
                     }
                     zin.closeEntry()
                     entry = zin.nextEntry
                 }
             }
-            return DocxArchive(map)
+            return DocxArchive(map, methods)
         }
 
-        /** Writes entries to a ZIP, preserving order. */
-        fun write(entries: Map<String, ByteArray>): ByteArray {
+        /**
+         * Writes entries to a ZIP, preserving order. [sourceMethods] should be
+         * the result of [entryMethods] from the source archive; entries whose
+         * original method was STORED are written uncompressed (avoids wasting CPU
+         * re-deflating already-compressed content like PNGs). New or modified
+         * entries not present in [sourceMethods] default to DEFLATED.
+         */
+        fun write(entries: Map<String, ByteArray>, sourceMethods: Map<String, Int> = emptyMap()): ByteArray {
             val bos = ByteArrayOutputStream()
             ZipOutputStream(bos).use { zos ->
                 for ((name, data) in entries) {
-                    zos.putNextEntry(ZipEntry(name))
+                    val ze = ZipEntry(name)
+                    if (sourceMethods[name] == ZipEntry.STORED) {
+                        // STORED entries require size, compressedSize, and CRC set
+                        // before putNextEntry; ZipOutputStream won't compute them.
+                        ze.method = ZipEntry.STORED
+                        ze.size = data.size.toLong()
+                        ze.compressedSize = data.size.toLong()
+                        val crc = CRC32().also { it.update(data) }
+                        ze.crc = crc.value
+                    }
+                    zos.putNextEntry(ze)
                     zos.write(data)
                     zos.closeEntry()
                 }

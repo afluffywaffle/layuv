@@ -620,8 +620,8 @@ class ReaderView(context: Context) : View(context) {
     private fun drawMarginIcons(canvas: Canvas, pl: PageLayout) {
         for (resolved in annotations) {
             val hasNote = !resolved.annotation.note.isNullOrEmpty()
-            val isInk = resolved.annotation.tool == AnnotationTool.inkAnnotation
-            if (!hasNote && !isInk) continue
+            val hasInk = resolved.annotation.hasInk
+            if (!hasNote && !hasInk) continue
             val span = resolved.span ?: continue
             val colInPage = columnOfChar(span.start) ?: continue // not on this page
             val top = charPointInView(span.start, bottom = false) ?: continue
@@ -630,10 +630,11 @@ class ReaderView(context: Context) : View(context) {
             val colLeft = leftPad() + colInPage * (pl.columnWidthPx + pl.columnGapPx).toFloat()
             val gap = if (colInPage == 0) hPadding else columnGap
             val cx = colLeft - gap / 2f
-            // Any annotation with a note shows the chat-bubble icon — the note is the
-            // primary indicator regardless of the underlying tool (e.g. a highlight
-            // with a comment stays tool=highlight in storage).
-            toolIcons.draw(canvas, AnnotationTool.comment, cx, cy, marginIconSize)
+            when {
+                hasNote && hasInk -> toolIcons.drawComboNoteInk(canvas, cx, cy, marginIconSize)
+                hasNote           -> toolIcons.draw(canvas, AnnotationTool.comment, cx, cy, marginIconSize)
+                else              -> toolIcons.draw(canvas, AnnotationTool.inkAnnotation, cx, cy, marginIconSize)
+            }
         }
     }
 

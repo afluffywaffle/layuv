@@ -64,6 +64,15 @@ object DocxWriteQueue {
     }
 
     /**
+     * Serialize a read operation behind any pending writes. [block] runs on the
+     * same single thread used for writes, so it sees the latest committed bytes.
+     * Error handling is the caller's responsibility — wrap in try/catch inside [block].
+     */
+    fun enqueueRead(block: () -> Unit) {
+        executor.execute(block)
+    }
+
+    /**
      * Write [bytes] to [file] atomically and durably:
      *   1. write to a UNIQUE sibling temp (`<name>.<nanos>.tmp`) so two writers
      *      can never collide on the temp path,

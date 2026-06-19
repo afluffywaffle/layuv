@@ -125,8 +125,39 @@ object DocxStore {
     // layer writes them back to the user's file/URI).
     // -------------------------------------------------------------------------
 
+    /**
+     * Single-pass write: embeds [inkPng] and [inkStrokes] into the archive in the
+     * same ZIP pass as the annotation write, avoiding the 3× read+decompress+write
+     * cost of calling [saveInkPng] + [saveInkStrokes] + [write] separately.
+     * Callers should always prefer this over the three-call chain when ink is present.
+     */
+    fun writeWithInk(
+        docxBytes: ByteArray,
+        annotations: List<Annotation>,
+        inkPng: Pair<String, ByteArray>? = null,
+        inkStrokes: Pair<String, String>? = null,
+    ): ByteArray {
+        val archive = DocxArchive.read(docxBytes)
+        val entries = archive.toMutableEntries()
+        if (inkPng != null) {
+            entries["word/media/ink_${inkPng.first}.png"] = inkPng.second
+        }
+        if (inkStrokes != null) {
+            entries["word/media/ink_${inkStrokes.first}_strokes.json"] =
+                inkStrokes.second.toByteArray(Charsets.UTF_8)
+        }
+        writeIntoEntries(entries, annotations)
+        return DocxArchive.write(entries, archive.entryMethods())
+    }
+
     fun write(docxBytes: ByteArray, annotations: List<Annotation>): ByteArray {
-        val entries = DocxArchive.read(docxBytes).toMutableEntries()
+        val archive = DocxArchive.read(docxBytes)
+        val entries = archive.toMutableEntries()
+        writeIntoEntries(entries, annotations)
+        return DocxArchive.write(entries, archive.entryMethods())
+    }
+
+    private fun writeIntoEntries(entries: MutableMap<String, ByteArray>, annotations: List<Annotation>) {
 
         // Save the original document.xml as a clean snapshot on first write.
         if (!entries.containsKey(CLEAN)) {
@@ -167,8 +198,6 @@ object DocxStore {
             val injected = RunPropertyInjector.inject(it.toString(Charsets.UTF_8), annotations, commentAnnotations)
             entries[DOCUMENT] = injected.toByteArray(Charsets.UTF_8)
         }
-
-        return DocxArchive.write(entries)
     }
 
     /**
@@ -177,9 +206,10 @@ object DocxStore {
      * bytes; does not touch the filesystem.
      */
     fun saveInkPng(docxBytes: ByteArray, annotationId: String, pngBytes: ByteArray): ByteArray {
-        val entries = DocxArchive.read(docxBytes).toMutableEntries()
+        val archive = DocxArchive.read(docxBytes)
+        val entries = archive.toMutableEntries()
         entries["word/media/ink_$annotationId.png"] = pngBytes
-        return DocxArchive.write(entries)
+        return DocxArchive.write(entries, archive.entryMethods())
     }
 
     /**
@@ -195,9 +225,10 @@ object DocxStore {
      * strokes are restored into InkCanvasView.committed on load).
      */
     fun saveInkStrokes(docxBytes: ByteArray, annotationId: String, json: String): ByteArray {
-        val entries = DocxArchive.read(docxBytes).toMutableEntries()
+        val archive = DocxArchive.read(docxBytes)
+        val entries = archive.toMutableEntries()
         entries["word/media/ink_${annotationId}_strokes.json"] = json.toByteArray(Charsets.UTF_8)
-        return DocxArchive.write(entries)
+        return DocxArchive.write(entries, archive.entryMethods())
     }
 
     /** Reads stored stroke JSON for [annotationId], or null if absent (rasterized note). */
@@ -211,9 +242,10 @@ object DocxStore {
      * (shaped hole in the raster) rather than removing whole strokes.
      */
     fun removeAllInkStrokes(docxBytes: ByteArray): ByteArray {
-        val entries = DocxArchive.read(docxBytes).toMutableEntries()
+        val archive = DocxArchive.read(docxBytes)
+        val entries = archive.toMutableEntries()
         entries.keys.removeAll { it.startsWith("word/media/ink_") && it.endsWith("_strokes.json") }
-        return DocxArchive.write(entries)
+        return DocxArchive.write(entries, archive.entryMethods())
     }
 
     /** Returns true if the archive contains at least one `*_strokes.json` file. */
@@ -224,8 +256,9 @@ object DocxStore {
 
     /** Writes/updates `leamh/position.json`. Mirror of `_savePositionInner`. */
     fun writePosition(docxBytes: ByteArray, position: ReadingPosition): ByteArray {
-        val entries = DocxArchive.read(docxBytes).toMutableEntries()
+        val archive = DocxArchive.read(docxBytes)
+        val entries = archive.toMutableEntries()
         entries[POSITION] = JsonWriter.encode(position.toMap()).toByteArray(Charsets.UTF_8)
-        return DocxArchive.write(entries)
+        return DocxArchive.write(entries, archive.entryMethods())
     }
 }

@@ -126,6 +126,59 @@ object LeamhDialog {
     }
 
     /**
+     * Generic two-button confirmation dialog — paper background, Literata body text,
+     * PenTapListener buttons. Use this anywhere a destructive or irreversible action
+     * needs a confirm/cancel step without the "don't ask again" logic of [confirmDelete].
+     */
+    fun confirm(
+        context: Context,
+        message: String,
+        positiveLabel: String = "OK",
+        negativeLabel: String = "Cancel",
+        onConfirm: () -> Unit,
+    ) {
+        val dialog = Dialog(context)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+        val root = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundResource(R.drawable.picker_bg)
+            val p = dp(context, 20f)
+            setPadding(p, p, p, dp(context, 12f))
+        }
+
+        root.addView(TextView(context).apply {
+            text = message
+            typeface = ReaderTheme.body(context)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTextColor(ReaderTheme.INK_87)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).also { it.bottomMargin = dp(context, 16f) }
+        })
+
+        val btnRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+        }
+        btnRow.addView(labelButton(context, negativeLabel, ReaderTheme.INK_45) { dialog.dismiss() })
+        btnRow.addView(View(context).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(context, 4f), 1)
+        })
+        btnRow.addView(labelButton(context, positiveLabel, ReaderTheme.INK_87) {
+            dialog.dismiss()
+            onConfirm()
+        })
+        root.addView(btnRow)
+
+        dialog.setContentView(root)
+        dialog.window?.setLayout(dp(context, 288f), WindowManager.LayoutParams.WRAP_CONTENT)
+        dialog.show()
+    }
+
+    /**
      * "Go to page" dialog. Shows a number input pre-filled with [currentPage] (1-based).
      * [onConfirm] is called with a 0-based page index.
      */

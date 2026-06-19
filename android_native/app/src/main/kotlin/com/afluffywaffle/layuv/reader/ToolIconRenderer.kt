@@ -184,6 +184,23 @@ class ToolIconRenderer(private val context: Context) {
         drawVecIcon(canvas, R.drawable.ic_lock, cx, cy, badgeR * 1.55f)
     }
 
+    /**
+     * Combo margin icon for annotations that have BOTH a written note and ink.
+     * Draws the chat-bubble at full [size], then overlays the pencil icon at 55%
+     * in the bottom-right corner so both are recognisable at a glance.
+     */
+    fun drawComboNoteInk(canvas: Canvas, cx: Float, cy: Float, size: Float) {
+        // Shift the chat bubble slightly up-left to leave room for the badge.
+        val offset = size * 0.15f
+        drawVecIcon(canvas, R.drawable.ic_chat_outline, cx - offset, cy - offset, size)
+        val badgeSize = size * 0.55f
+        val badgeCx = cx + size * 0.3f
+        val badgeCy = cy + size * 0.3f
+        // Small paper circle behind badge so it doesn't bleed into the chat icon.
+        canvas.drawCircle(badgeCx, badgeCy, badgeSize * 0.56f, paperFill)
+        drawVecIcon(canvas, R.drawable.ic_edit_outline, badgeCx, badgeCy, badgeSize)
+    }
+
     /** Three-dot overflow icon (Icons.more_horiz): three filled circles in a row. */
     fun drawOverflow(canvas: Canvas, cx: Float, cy: Float, size: Float) {
         val dotR = size * 0.085f
