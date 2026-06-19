@@ -14,7 +14,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.TextView
@@ -23,12 +22,11 @@ import java.io.File
 import org.json.JSONArray
 
 /**
- * A paged, folder-navigating DOCX picker. Rooted at the writable user storage
- * (`/storage/emulated/0`) and never goes above it, so the read-only system /
- * media locations the Supernote's SAF exposes never appear (see
- * [[native-android-port]]). NO scrolling — entries are paged like the reader
- * (Prev/Next), since fling scrolling ghosts on e-ink. Returns the chosen file's
- * absolute path, so the reader always opens by path (writable).
+ * A paged, folder-navigating file picker. Opens to the recents list when files
+ * have been opened before; "Browse files…" reveals the folder navigator.
+ * Rooted at the writable user storage (`/storage/emulated/0`).
+ * NO scrolling — entries are paged like the reader (Prev/Next / swipe), since
+ * fling scrolling ghosts on e-ink.
  */
 class FileBrowserActivity : Activity() {
 
@@ -41,16 +39,21 @@ class FileBrowserActivity : Activity() {
     private var page = 0
     private var rowsPerPage = 0
 
+    // Two modes: recents list (default when recents exist) or folder browser.
+    private var browsing = false
+
     private lateinit var crumbBar: LinearLayout
     private lateinit var recentsSection: LinearLayout
+    private lateinit var browserSection: LinearLayout  // crumbBar + body
     private lateinit var pageView: TextView
-    private lateinit var prevButton: Button
-    private lateinit var nextButton: Button
+    private lateinit var prevButton: TextView
+    private lateinit var nextButton: TextView
     private lateinit var body: LinearLayout
 
     private val rowHeight by lazy { dp(68f) }
     private val dividerHeight by lazy { dp(1f).coerceAtLeast(1) }
 
+    // Swipe left = next page, swipe right = prev page (works for both stylus and touch).
     private val swipeDetector by lazy {
         GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
@@ -82,17 +85,21 @@ class FileBrowserActivity : Activity() {
             return
         }
 
-        // rowsPerPage needs the body's measured height; render once it's laid out.
         body.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ ->
             val available = bottom - top
             val rpp = (available / (rowHeight + dividerHeight)).coerceAtLeast(1)
             if (rpp != rowsPerPage) {
                 rowsPerPage = rpp
-                render()
+                if (browsing) render()
             }
         }
-        renderRecents()
-        listDir(root)
+
+        val recents = loadRecents()
+        if (recents.isEmpty()) {
+            enterBrowse()
+        } else {
+            showRecents(recents)
+        }
     }
 
     // --- UI ------------------------------------------------------------------
@@ -103,8 +110,6 @@ class FileBrowserActivity : Activity() {
             setBackgroundColor(ReaderTheme.PAPER)
         }
 
-        // Tappable breadcrumb: "Internal storage › Drafts › Ch04". Tapping an
-        // ancestor jumps straight there; its sub-folders (the sisters) then list.
         crumbBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -112,14 +117,21 @@ class FileBrowserActivity : Activity() {
             setPadding(p, p, p, p)
         }
 
-        recentsSection = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            visibility = View.GONE
-        }
-
         body = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(ReaderTheme.PAPER)
+        }
+
+        browserSection = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        browserSection.addView(crumbBar, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        browserSection.addView(body, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+
+        recentsSection = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
         }
 
         val bottomBar = LinearLayout(this).apply {
@@ -128,53 +140,81 @@ class FileBrowserActivity : Activity() {
             val p = dp(8f)
             setPadding(p, p, p, p)
         }
-        prevButton = chromeButton("‹ Prev") { if (page > 0) { page--; render() } }
-        nextButton = chromeButton("Next ›") { page++; render() }
-        pageView = TextView(this).apply {
-            typeface = ReaderTheme.chrome(this@FileBrowserActivity)
-            setTextColor(ReaderTheme.INK)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            gravity = Gravity.CENTER
-        }
-        val cancelButton = chromeButton("Cancel") { finish() }
+        prevButton = navButton("‹ Prev") { if (page > 0) { page--; render() } }
+        nextButton = navButton("Next ›") { page++; render() }
+        pageView = chromeText(14f).apply { gravity = Gravity.CENTER }
+        val cancelButton = navButton("Cancel") { finish() }
+
         bottomBar.addView(cancelButton)
         bottomBar.addView(prevButton)
         bottomBar.addView(pageView, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         bottomBar.addView(nextButton)
 
-        rootView.addView(crumbBar, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-        rootView.addView(recentsSection, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-        rootView.addView(body, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        // recentsSection grows to fill; browserSection uses a flex weight inside it.
+        rootView.addView(recentsSection, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        rootView.addView(browserSection, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
         rootView.addView(bottomBar, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         return rootView
     }
 
-    private fun chromeButton(label: String, onClick: () -> Unit): Button = Button(this).apply {
+    /** TextView styled like a nav button — Material Button overrides typeface; TextView doesn't. */
+    private fun navButton(label: String, onClick: () -> Unit): TextView = TextView(this).apply {
         text = label
-        isAllCaps = false
         typeface = ReaderTheme.chromeBold(this@FileBrowserActivity)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
         setTextColor(ReaderTheme.INK)
         minHeight = dp(56f)
         minimumHeight = dp(56f)
+        gravity = Gravity.CENTER
+        val h = dp(12f)
+        setPadding(h, 0, h, 0)
+        isClickable = true
+        isFocusable = true
         setOnClickListener { onClick() }
     }
 
-    // --- Recents -------------------------------------------------------------
+    private fun chromeText(sizeSp: Float): TextView = TextView(this).apply {
+        typeface = ReaderTheme.chrome(this@FileBrowserActivity)
+        setTextColor(ReaderTheme.INK)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
+    }
 
-    private fun renderRecents() {
-        recentsSection.removeAllViews()
-        val recents = loadRecents().filter { File(it).exists() }
-        if (recents.isEmpty()) { recentsSection.visibility = View.GONE; return }
+    // --- Recents view --------------------------------------------------------
 
+    private fun showRecents(recents: List<String>) {
+        browsing = false
         recentsSection.visibility = View.VISIBLE
+        browserSection.visibility = View.GONE
+        setNavEnabled(prevButton, false)
+        setNavEnabled(nextButton, false)
+        pageView.text = ""
+
+        recentsSection.removeAllViews()
         recentsSection.addView(sectionHeader("RECENTS"))
         for (path in recents) {
             val file = File(path)
+            if (!file.exists()) continue
             recentsSection.addView(rowFor(Entry(file, false)))
             recentsSection.addView(divider())
         }
-        recentsSection.addView(sectionHeader("BROWSE"))
+        recentsSection.addView(divider())
+        recentsSection.addView(browseRow())
+    }
+
+    private fun browseRow(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        minimumHeight = rowHeight
+        isClickable = true
+        val h = dp(16f); val v = dp(10f)
+        setPadding(h, v, h, v)
+        addView(TextView(context).apply {
+            typeface = ReaderTheme.chromeBold(context)
+            setTextColor(ReaderTheme.INK)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+            text = "Browse files…"
+        })
+        setOnClickListener { enterBrowse() }
     }
 
     private fun loadRecents(): List<String> {
@@ -182,20 +222,18 @@ class FileBrowserActivity : Activity() {
         val raw = prefs.getString("recent_files", null) ?: return emptyList()
         return try {
             val arr = JSONArray(raw)
-            (0 until arr.length()).map { arr.getString(it) }
+            (0 until arr.length()).map { arr.getString(it) }.filter { File(it).exists() }
         } catch (e: Exception) { emptyList() }
     }
 
-    private fun sectionHeader(label: String): TextView = TextView(this).apply {
-        text = label
-        typeface = ReaderTheme.chromeBold(context)
-        setTextColor(MUTED)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-        val h = dp(16f); val v = dp(8f)
-        setPadding(h, v, h, v / 2)
-    }
+    // --- Browser view --------------------------------------------------------
 
-    // --- Navigation ----------------------------------------------------------
+    private fun enterBrowse() {
+        browsing = true
+        recentsSection.visibility = View.GONE
+        browserSection.visibility = View.VISIBLE
+        listDir(root)
+    }
 
     private fun listDir(dir: File) {
         currentDir = dir
@@ -229,8 +267,8 @@ class FileBrowserActivity : Activity() {
                 setPadding(p, p, p, p)
             })
             pageView.text = ""
-            setEnabled(prevButton, false)
-            setEnabled(nextButton, false)
+            setNavEnabled(prevButton, false)
+            setNavEnabled(nextButton, false)
             return
         }
 
@@ -244,9 +282,11 @@ class FileBrowserActivity : Activity() {
         }
 
         pageView.text = "${page + 1} / $pageCount"
-        setEnabled(prevButton, page > 0)
-        setEnabled(nextButton, page < pageCount - 1)
+        setNavEnabled(prevButton, page > 0)
+        setNavEnabled(nextButton, page < pageCount - 1)
     }
+
+    // --- Rows ----------------------------------------------------------------
 
     private fun rowFor(entry: Entry): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
@@ -265,7 +305,6 @@ class FileBrowserActivity : Activity() {
             text = if (entry.isDir) "${entry.file.name}/" else entry.file.name
         })
         addView(TextView(context).apply {
-            // Body font + darker + larger: the metadata line was tiny and faint.
             typeface = ReaderTheme.body(context)
             setTextColor(SUBTITLE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
@@ -294,15 +333,21 @@ class FileBrowserActivity : Activity() {
         setBackgroundColor(DIVIDER)
     }
 
-    private fun setEnabled(button: Button, enabled: Boolean) {
+    private fun sectionHeader(label: String): TextView = TextView(this).apply {
+        text = label
+        typeface = ReaderTheme.chromeBold(context)
+        setTextColor(MUTED)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        val h = dp(16f); val v = dp(10f)
+        setPadding(h, v, h, v / 2)
+    }
+
+    private fun setNavEnabled(button: TextView, enabled: Boolean) {
         button.isEnabled = enabled
         button.alpha = if (enabled) 1f else 0.35f
     }
 
     // --- Breadcrumb ----------------------------------------------------------
-    // Windows-style: tap a crumb label to jump to that folder; tap the "›" arrow
-    // after it to pop that folder's sub-folders and jump to a sibling directly,
-    // without backing out.
 
     private fun renderCrumbs() {
         crumbBar.removeAllViews()
@@ -310,7 +355,6 @@ class FileBrowserActivity : Activity() {
         val shown: List<Crumb> = if (segs.size <= MAX_CRUMBS) {
             segs.map { Crumb(it.first, it.second) }
         } else {
-            // root › … › parent › current  — root and the tail stay reachable.
             listOf(Crumb(segs.first().first, segs.first().second), Crumb("…", null)) +
                 segs.takeLast(MAX_CRUMBS - 2).map { Crumb(it.first, it.second) }
         }
@@ -320,7 +364,6 @@ class FileBrowserActivity : Activity() {
         }
     }
 
-    /** Storage root → [dir] as (label, dir) pairs; root shows as "Internal storage". */
     private fun segmentsFor(dir: File): List<Pair<String, File>> {
         val rootPath = root.absolutePath
         val list = ArrayList<Pair<String, File>>()
@@ -349,7 +392,6 @@ class FileBrowserActivity : Activity() {
         crumb.file?.let { dir -> setOnClickListener { listDir(dir) } }
     }
 
-    /** The "›" after a crumb: tap to pop [dir]'s sub-folders and jump to one. */
     private fun arrowFor(dir: File?): TextView = TextView(this).apply {
         text = "›"
         typeface = ReaderTheme.chromeBold(context)
@@ -386,11 +428,8 @@ class FileBrowserActivity : Activity() {
     companion object {
         const val EXTRA_PATH = "path"
         private const val MUTED = 0xFF6E6A62.toInt()
-        // Dark enough to read on e-ink, still subordinate to the black filename.
         private const val SUBTITLE = 0xFF33302A.toInt()
         private const val DIVIDER = 0xFFDCD7CD.toInt()
-        // Cap visible crumbs (root › … › parent › current) so deep paths don't
-        // overflow the bar; ancestors stay reachable via root + arrow popups.
         private const val MAX_CRUMBS = 4
     }
 }

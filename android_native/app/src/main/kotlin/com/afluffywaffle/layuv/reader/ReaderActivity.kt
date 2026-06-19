@@ -426,6 +426,9 @@ class ReaderActivity : Activity() {
         root.addView(overflowActionRow(getString(R.string.open_document)) {
             popup?.dismiss()
             launchOpen()
+        }.apply {
+            setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_folder, 0, 0, 0)
+            compoundDrawablePadding = dp(10f)
         })
         root.addView(overflowMenuDivider())
         root.addView(overflowCycleRow(
@@ -550,7 +553,7 @@ class ReaderActivity : Activity() {
         }
     }
 
-    private fun overflowActionRow(label: String, onClick: () -> Unit): View =
+    private fun overflowActionRow(label: String, onClick: () -> Unit): android.widget.TextView =
         TextView(this).apply {
             text = label
             typeface = ReaderTheme.bodyBold(this@ReaderActivity)
