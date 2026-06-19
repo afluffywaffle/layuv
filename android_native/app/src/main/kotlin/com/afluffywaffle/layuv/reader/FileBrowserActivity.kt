@@ -1,8 +1,8 @@
 package com.afluffywaffle.layuv.reader
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
-import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Environment
 import android.text.TextUtils
@@ -20,6 +20,7 @@ import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
 import java.io.File
+import org.json.JSONArray
 
 /**
  * A paged, folder-navigating DOCX picker. Rooted at the writable user storage
@@ -41,6 +42,7 @@ class FileBrowserActivity : Activity() {
     private var rowsPerPage = 0
 
     private lateinit var crumbBar: LinearLayout
+    private lateinit var recentsSection: LinearLayout
     private lateinit var pageView: TextView
     private lateinit var prevButton: Button
     private lateinit var nextButton: Button
@@ -70,7 +72,8 @@ class FileBrowserActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        title = "Open a DOCX"
+        val prefs = getSharedPreferences("leamh", Context.MODE_PRIVATE)
+        ReaderTheme.bodyFont = prefs.getString("body_font", "literata") ?: "literata"
         setContentView(buildUi())
 
         if (!Environment.isExternalStorageManager()) {
@@ -88,6 +91,7 @@ class FileBrowserActivity : Activity() {
                 render()
             }
         }
+        renderRecents()
         listDir(root)
     }
 
@@ -108,6 +112,11 @@ class FileBrowserActivity : Activity() {
             setPadding(p, p, p, p)
         }
 
+        recentsSection = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+
         body = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(ReaderTheme.PAPER)
@@ -122,7 +131,7 @@ class FileBrowserActivity : Activity() {
         prevButton = chromeButton("‹ Prev") { if (page > 0) { page--; render() } }
         nextButton = chromeButton("Next ›") { page++; render() }
         pageView = TextView(this).apply {
-            typeface = ReaderTheme.body(this@FileBrowserActivity)
+            typeface = ReaderTheme.chrome(this@FileBrowserActivity)
             setTextColor(ReaderTheme.INK)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             gravity = Gravity.CENTER
@@ -134,6 +143,7 @@ class FileBrowserActivity : Activity() {
         bottomBar.addView(nextButton)
 
         rootView.addView(crumbBar, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        rootView.addView(recentsSection, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         rootView.addView(body, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
         rootView.addView(bottomBar, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         return rootView
@@ -142,12 +152,47 @@ class FileBrowserActivity : Activity() {
     private fun chromeButton(label: String, onClick: () -> Unit): Button = Button(this).apply {
         text = label
         isAllCaps = false
-        typeface = ReaderTheme.bodyBold(this@FileBrowserActivity)
+        typeface = ReaderTheme.chromeBold(this@FileBrowserActivity)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
         setTextColor(ReaderTheme.INK)
         minHeight = dp(56f)
         minimumHeight = dp(56f)
         setOnClickListener { onClick() }
+    }
+
+    // --- Recents -------------------------------------------------------------
+
+    private fun renderRecents() {
+        recentsSection.removeAllViews()
+        val recents = loadRecents().filter { File(it).exists() }
+        if (recents.isEmpty()) { recentsSection.visibility = View.GONE; return }
+
+        recentsSection.visibility = View.VISIBLE
+        recentsSection.addView(sectionHeader("RECENTS"))
+        for (path in recents) {
+            val file = File(path)
+            recentsSection.addView(rowFor(Entry(file, false)))
+            recentsSection.addView(divider())
+        }
+        recentsSection.addView(sectionHeader("BROWSE"))
+    }
+
+    private fun loadRecents(): List<String> {
+        val prefs = getSharedPreferences("leamh", Context.MODE_PRIVATE)
+        val raw = prefs.getString("recent_files", null) ?: return emptyList()
+        return try {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).map { arr.getString(it) }
+        } catch (e: Exception) { emptyList() }
+    }
+
+    private fun sectionHeader(label: String): TextView = TextView(this).apply {
+        text = label
+        typeface = ReaderTheme.chromeBold(context)
+        setTextColor(MUTED)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        val h = dp(16f); val v = dp(8f)
+        setPadding(h, v, h, v / 2)
     }
 
     // --- Navigation ----------------------------------------------------------
@@ -290,13 +335,8 @@ class FileBrowserActivity : Activity() {
 
     private fun crumbLabel(crumb: Crumb): TextView = TextView(this).apply {
         text = crumb.label
-        // Bold + larger so ancestor crumbs read clearly on e-ink — thin regular
-        // weight looked grey/faint. The "…" marker stays muted regular.
-        // Literata (body), not Source Sans: the sans chrome font renders thin and
-        // grey on this EPD panel even when bold/black; Literata sits dark and crisp.
         val isEllipsis = crumb.file == null
-        typeface = if (isEllipsis) ReaderTheme.body(context)
-        else Typeface.create(ReaderTheme.body(context), Typeface.BOLD)
+        typeface = if (isEllipsis) ReaderTheme.chrome(context) else ReaderTheme.chromeBold(context)
         setTextColor(if (isEllipsis) MUTED else ReaderTheme.INK)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
         maxLines = 1
@@ -312,7 +352,7 @@ class FileBrowserActivity : Activity() {
     /** The "›" after a crumb: tap to pop [dir]'s sub-folders and jump to one. */
     private fun arrowFor(dir: File?): TextView = TextView(this).apply {
         text = "›"
-        typeface = Typeface.create(ReaderTheme.body(context), Typeface.BOLD)
+        typeface = ReaderTheme.chromeBold(context)
         setTextColor(if (dir == null) MUTED else ReaderTheme.INK)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
         minHeight = dp(52f)

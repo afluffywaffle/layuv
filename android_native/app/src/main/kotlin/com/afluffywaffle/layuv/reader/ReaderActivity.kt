@@ -40,6 +40,7 @@ import com.afluffywaffle.layuv.docx.model.newId
 import java.io.File
 import java.time.Instant
 import kotlin.math.roundToInt
+import org.json.JSONArray
 
 /**
  * The single reader screen. Classic Views (a thin chrome toolbar) above the
@@ -720,6 +721,7 @@ class ReaderActivity : Activity() {
                 val file = File(path)
                 if (file.canRead()) {
                     prefs.edit().putString(KEY_LAST_PATH, file.absolutePath).apply()
+                    saveRecent(file.absolutePath)
                     loadFromFile(file)
                 } else {
                     readerView.showHint("Couldn’t read $path")
@@ -846,6 +848,18 @@ class ReaderActivity : Activity() {
         } else {
             readerView.showHint(getString(R.string.empty_hint))
         }
+    }
+
+    private fun saveRecent(path: String) {
+        val list = try {
+            val raw = prefs.getString(KEY_RECENTS, null) ?: "[]"
+            val arr = JSONArray(raw)
+            (0 until arr.length()).map { arr.getString(it) }.toMutableList()
+        } catch (e: Exception) { mutableListOf() }
+        list.remove(path)
+        list.add(0, path)
+        while (list.size > MAX_RECENTS) list.removeLast()
+        prefs.edit().putString(KEY_RECENTS, JSONArray(list).toString()).apply()
     }
 
     private fun loadFromFile(file: File) {
@@ -1394,6 +1408,8 @@ class ReaderActivity : Activity() {
         private const val KEY_LINE_SPACING = "line_spacing"
         private const val KEY_RULE_LINES = "ink_rule_lines"
         private const val KEY_BODY_FONT = "body_font"
+        private const val KEY_RECENTS = "recent_files"
+        private const val MAX_RECENTS = 8
         // The Nomad reports smallestScreenWidthDp=1024 and reads best at 1 col,
         // so the auto-2-col threshold sits above it; the larger Manta should land
         // above this and default to 2 col. Confirm the Manta's logged value and
