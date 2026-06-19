@@ -22,11 +22,9 @@ import java.io.File
 import org.json.JSONArray
 
 /**
- * A paged, folder-navigating file picker. Opens to the recents list when files
- * have been opened before; "Browse files…" reveals the folder navigator.
- * Rooted at the writable user storage (`/storage/emulated/0`).
- * NO scrolling — entries are paged like the reader (Prev/Next / swipe), since
- * fling scrolling ghosts on e-ink.
+ * Split-view file picker: recents in the top 1/3, folder browser in the bottom
+ * 2/3. Recents section is hidden when empty. Paged like the reader (Prev/Next +
+ * swipe) — no scrolling on e-ink.
  */
 class FileBrowserActivity : Activity() {
 
@@ -39,12 +37,8 @@ class FileBrowserActivity : Activity() {
     private var page = 0
     private var rowsPerPage = 0
 
-    // Two modes: recents list (default when recents exist) or folder browser.
-    private var browsing = false
-
     private lateinit var crumbBar: LinearLayout
     private lateinit var recentsSection: LinearLayout
-    private lateinit var browserSection: LinearLayout  // crumbBar + body
     private lateinit var pageView: TextView
     private lateinit var prevButton: TextView
     private lateinit var nextButton: TextView
@@ -53,7 +47,7 @@ class FileBrowserActivity : Activity() {
     private val rowHeight by lazy { dp(68f) }
     private val dividerHeight by lazy { dp(1f).coerceAtLeast(1) }
 
-    // Swipe left = next page, swipe right = prev page (works for both stylus and touch).
+    // Swipe left = next page, swipe right = prev page (touch + stylus).
     private val swipeDetector by lazy {
         GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
@@ -90,16 +84,12 @@ class FileBrowserActivity : Activity() {
             val rpp = (available / (rowHeight + dividerHeight)).coerceAtLeast(1)
             if (rpp != rowsPerPage) {
                 rowsPerPage = rpp
-                if (browsing) render()
+                render()
             }
         }
 
-        val recents = loadRecents()
-        if (recents.isEmpty()) {
-            enterBrowse()
-        } else {
-            showRecents(recents)
-        }
+        renderRecents()
+        listDir(root)
     }
 
     // --- UI ------------------------------------------------------------------
@@ -110,30 +100,37 @@ class FileBrowserActivity : Activity() {
             setBackgroundColor(ReaderTheme.PAPER)
         }
 
+        // Top 1/3 — recents (hidden when empty).
+        recentsSection = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+
+        // Divider between recents and browser.
+        val splitDivider = View(this).apply {
+            setBackgroundColor(ReaderTheme.INK_12)
+            visibility = View.GONE
+            tag = "splitDivider"
+        }
+
+        // Bottom 2/3 — folder browser.
         crumbBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             val p = dp(6f)
             setPadding(p, p, p, p)
         }
-
         body = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(ReaderTheme.PAPER)
         }
-
-        browserSection = LinearLayout(this).apply {
+        val browserSection = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            visibility = View.GONE
         }
         browserSection.addView(crumbBar, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         browserSection.addView(body, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
 
-        recentsSection = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            visibility = View.GONE
-        }
-
+        // Bottom bar — Cancel / Prev / page count / Next.
         val bottomBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -142,17 +139,21 @@ class FileBrowserActivity : Activity() {
         }
         prevButton = navButton("‹ Prev") { if (page > 0) { page--; render() } }
         nextButton = navButton("Next ›") { page++; render() }
-        pageView = chromeText(14f).apply { gravity = Gravity.CENTER }
-        val cancelButton = navButton("Cancel") { finish() }
-
-        bottomBar.addView(cancelButton)
+        pageView = TextView(this).apply {
+            typeface = ReaderTheme.body(this@FileBrowserActivity)
+            setTextColor(ReaderTheme.INK)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            gravity = Gravity.CENTER
+        }
+        bottomBar.addView(navButton("Cancel") { finish() })
         bottomBar.addView(prevButton)
         bottomBar.addView(pageView, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         bottomBar.addView(nextButton)
 
-        // recentsSection grows to fill; browserSection uses a flex weight inside it.
+        // Recents gets weight=1 (1/3), browser gets weight=2 (2/3).
         rootView.addView(recentsSection, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
-        rootView.addView(browserSection, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        rootView.addView(splitDivider, LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
+        rootView.addView(browserSection, LinearLayout.LayoutParams(MATCH_PARENT, 0, 2f))
         rootView.addView(bottomBar, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         return rootView
     }
@@ -173,48 +174,27 @@ class FileBrowserActivity : Activity() {
         setOnClickListener { onClick() }
     }
 
-    private fun chromeText(sizeSp: Float): TextView = TextView(this).apply {
-        typeface = ReaderTheme.body(this@FileBrowserActivity)
-        setTextColor(ReaderTheme.INK)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
-    }
+    // --- Recents -------------------------------------------------------------
 
-    // --- Recents view --------------------------------------------------------
-
-    private fun showRecents(recents: List<String>) {
-        browsing = false
-        recentsSection.visibility = View.VISIBLE
-        browserSection.visibility = View.GONE
-        setNavEnabled(prevButton, false)
-        setNavEnabled(nextButton, false)
-        pageView.text = ""
-
+    private fun renderRecents() {
         recentsSection.removeAllViews()
+        val recents = loadRecents().take(MAX_RECENTS_SHOWN)
+        val splitDivider = (recentsSection.parent as? LinearLayout)
+            ?.findViewWithTag<View>("splitDivider")
+
+        if (recents.isEmpty()) {
+            recentsSection.visibility = View.GONE
+            splitDivider?.visibility = View.GONE
+            return
+        }
+
+        recentsSection.visibility = View.VISIBLE
+        splitDivider?.visibility = View.VISIBLE
         recentsSection.addView(sectionHeader("RECENTS"))
         for (path in recents) {
-            val file = File(path)
-            if (!file.exists()) continue
-            recentsSection.addView(rowFor(Entry(file, false)))
+            recentsSection.addView(rowFor(Entry(File(path), false)))
             recentsSection.addView(divider())
         }
-        recentsSection.addView(divider())
-        recentsSection.addView(browseRow())
-    }
-
-    private fun browseRow(): View = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        minimumHeight = rowHeight
-        isClickable = true
-        val h = dp(16f); val v = dp(10f)
-        setPadding(h, v, h, v)
-        addView(TextView(context).apply {
-            typeface = ReaderTheme.bodyBold(context)
-            setTextColor(ReaderTheme.INK)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-            text = "Browse files…"
-        })
-        setOnClickListener { enterBrowse() }
     }
 
     private fun loadRecents(): List<String> {
@@ -226,14 +206,7 @@ class FileBrowserActivity : Activity() {
         } catch (e: Exception) { emptyList() }
     }
 
-    // --- Browser view --------------------------------------------------------
-
-    private fun enterBrowse() {
-        browsing = true
-        recentsSection.visibility = View.GONE
-        browserSection.visibility = View.VISIBLE
-        listDir(root)
-    }
+    // --- Browser -------------------------------------------------------------
 
     private fun listDir(dir: File) {
         currentDir = dir
@@ -286,15 +259,14 @@ class FileBrowserActivity : Activity() {
         setNavEnabled(nextButton, page < pageCount - 1)
     }
 
-    // --- Rows ----------------------------------------------------------------
+    // --- Shared row/divider helpers ------------------------------------------
 
     private fun rowFor(entry: Entry): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_VERTICAL
         minimumHeight = rowHeight
         isClickable = true
-        val h = dp(16f)
-        val v = dp(10f)
+        val h = dp(16f); val v = dp(10f)
         setPadding(h, v, h, v)
         addView(TextView(context).apply {
             typeface = ReaderTheme.body(context)
@@ -338,7 +310,7 @@ class FileBrowserActivity : Activity() {
         typeface = ReaderTheme.bodyBold(context)
         setTextColor(MUTED)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-        val h = dp(16f); val v = dp(10f)
+        val h = dp(16f); val v = dp(8f)
         setPadding(h, v, h, v / 2)
     }
 
@@ -431,5 +403,6 @@ class FileBrowserActivity : Activity() {
         private const val SUBTITLE = 0xFF33302A.toInt()
         private const val DIVIDER = 0xFFDCD7CD.toInt()
         private const val MAX_CRUMBS = 4
+        private const val MAX_RECENTS_SHOWN = 5
     }
 }
