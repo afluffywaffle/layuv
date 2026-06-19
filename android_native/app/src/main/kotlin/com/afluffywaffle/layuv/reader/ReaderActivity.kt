@@ -464,9 +464,9 @@ class ReaderActivity : Activity() {
         })
         root.addView(overflowMenuDivider())
         root.addView(overflowCycleRow(
-            "NAV DIRECTION",
+            "RIGHT TO LEFT",
             if (prefs.getBoolean(KEY_NAV_REVERSED, false)) "true" else "false",
-            listOf("false" to "Normal", "true" to "Reversed"),
+            listOf("false" to "Off", "true" to "On"),
         ) { value -> prefs.edit().putBoolean(KEY_NAV_REVERSED, value == "true").apply() })
         root.addView(overflowMenuDivider())
         root.addView(overflowCycleRow(
