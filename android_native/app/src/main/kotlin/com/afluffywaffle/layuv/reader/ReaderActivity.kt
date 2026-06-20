@@ -103,6 +103,7 @@ class ReaderActivity : Activity() {
         ReaderTheme.bodyFont = prefs.getString(KEY_BODY_FONT, "literata") ?: "literata"
         setContentView(buildUi())
         readerView.setNavSide(prefs.getString(KEY_NAV_SIDE, "both") ?: "both")
+        applyTypographyPrefs()
         Log.i(TAG, "smallestScreenWidthDp=${resources.configuration.smallestScreenWidthDp} (auto 2-col >= $AUTO_TWO_COL_MIN_DP)")
         reopenLastOrPrompt()
     }

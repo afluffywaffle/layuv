@@ -72,8 +72,7 @@ object CommentWriter {
     }
 
     private val INK_REL_PATTERN = Regex("<Relationship[^>]+rId_ink_[^>]*/?>")
-    private val ANY_REL_PATTERN = Regex("<Relationship[^>]*/?>")
-
+    private val ANY_REL_PATTERN = Regex("<Relationship [^>]*/?>")
     /**
      * Rebuilds `word/_rels/comments.xml.rels` for [inkAnnotations].
      *

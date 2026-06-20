@@ -34,7 +34,7 @@ import com.afluffywaffle.layuv.reader.DrawPathClient
 import java.io.ByteArrayOutputStream
 import java.io.File
 
-enum class InkTool { THIN, THICK, ERASER, LASSO }
+enum class InkTool { THIN, THICK, ERASER }
 
 /**
  * Ink canvas for stylus annotation. Mirrors Flutter's InkCanvasScreen:
@@ -51,7 +51,6 @@ class InkNoteActivity : Activity() {
     private lateinit var thinBtn: TextView
     private lateinit var thickBtn: TextView
     private lateinit var eraseBtn: TextView
-    private lateinit var lassoBtn: TextView
     private lateinit var linesBtn: TextView
     private var ruleStyle = "none"
     private var exclusionPx = 0
@@ -104,8 +103,7 @@ class InkNoteActivity : Activity() {
         return when (activeTool) {
             InkTool.THIN   -> DrawPathClient.sendPen(pkg, 10, 150, 0)
             InkTool.THICK  -> DrawPathClient.sendPen(pkg, 10, 450, 0)
-            InkTool.ERASER -> DrawPathClient.sendPen(pkg, 10, 400, 254)
-            InkTool.LASSO  -> DrawPathClient.sendPen(pkg, 4, 120, 0)
+            InkTool.ERASER -> DrawPathClient.sendPen(pkg, 4, 120, 0)
         }
     }
 
@@ -219,8 +217,7 @@ class InkNoteActivity : Activity() {
 
         thinBtn  = toolToggleView("Thin",  activeTool == InkTool.THIN)   { setTool(InkTool.THIN) }
         thickBtn = toolToggleView("Thick", activeTool == InkTool.THICK)  { setTool(InkTool.THICK) }
-        eraseBtn = toolToggleView("Erase", activeTool == InkTool.ERASER) { setTool(InkTool.ERASER) }
-        lassoBtn = toolToggleView("Lasso", activeTool == InkTool.LASSO)  { setTool(InkTool.LASSO) }
+        eraseBtn = toolToggleView("Eraser", activeTool == InkTool.ERASER) { setTool(InkTool.ERASER) }
         linesBtn = toolbarTextBtn(rulesLabel()) { cycleRules() }
         val clearBtn = toolbarTextBtn("Clear") { onClear() }
 
@@ -228,7 +225,6 @@ class InkNoteActivity : Activity() {
         toolbar.addView(thinBtn,  LinearLayout.LayoutParams(btnW, MATCH_PARENT))
         toolbar.addView(thickBtn, LinearLayout.LayoutParams(btnW, MATCH_PARENT))
         toolbar.addView(eraseBtn, LinearLayout.LayoutParams(btnW, MATCH_PARENT))
-        toolbar.addView(lassoBtn, LinearLayout.LayoutParams(btnW, MATCH_PARENT))
         toolbar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         toolbar.addView(linesBtn, LinearLayout.LayoutParams(btnW, MATCH_PARENT))
         toolbar.addView(clearBtn, LinearLayout.LayoutParams(btnW, MATCH_PARENT))
@@ -244,8 +240,8 @@ class InkNoteActivity : Activity() {
         activeTool = tool
         canvas.activeTool = tool
         refreshToolButtons()
-        // Clear eraser/lasso drawPath overlay before switching to a different tool
-        if ((prev == InkTool.ERASER || prev == InkTool.LASSO) && DrawPathClient.available()) {
+        // Clear eraser drawPath overlay before switching to a different tool
+        if (prev == InkTool.ERASER && DrawPathClient.available()) {
             DrawPathClient.clearScreen(pkg)
         }
         if (DrawPathClient.available()) {
@@ -331,7 +327,6 @@ class InkNoteActivity : Activity() {
         boldIf(thinBtn,  activeTool == InkTool.THIN)
         boldIf(thickBtn, activeTool == InkTool.THICK)
         boldIf(eraseBtn, activeTool == InkTool.ERASER)
-        boldIf(lassoBtn, activeTool == InkTool.LASSO)
     }
 
     // -------------------------------------------------------------------------
@@ -436,20 +431,15 @@ class InkCanvasView(context: Context) : View(context) {
     }
     private val thickPaint = Paint().apply {
         color = Color.BLACK; style = Paint.Style.STROKE
-        strokeWidth = 7f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+        strokeWidth = 5f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
     }
     private val eraserPaint = Paint().apply {
-        // Paper-colour stroke so erased region is visible on the software canvas
-        color = 0xFFF5F0E8.toInt(); style = Paint.Style.STROKE
-        strokeWidth = 36f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
-    }
-    private val rulePaint = Paint().apply {
-        color = 0x4D000000.toInt(); style = Paint.Style.STROKE; strokeWidth = 1f
-    }
-    private val lassoPaint = Paint().apply {
         color = Color.BLACK; style = Paint.Style.STROKE
         strokeWidth = 2f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
         pathEffect = DashPathEffect(floatArrayOf(12f, 8f), 0f)
+    }
+    private val rulePaint = Paint().apply {
+        color = 0x4D000000.toInt(); style = Paint.Style.STROKE; strokeWidth = 1f
     }
 
     fun clearStrokes() {
@@ -457,13 +447,11 @@ class InkCanvasView(context: Context) : View(context) {
     }
 
     fun committedCount(): Int = committed.size
-    fun hasMeaningfulInk(): Boolean = committed.any { it.tool != InkTool.ERASER }
+    fun hasMeaningfulInk(): Boolean = committed.isNotEmpty()
 
     /**
-     * Render to a transparent PNG. Eraser strokes punch holes via
-     * PorterDuff.CLEAR; ink drawn after an erase survives correctly.
-     * Existing ink (from a prior edit session) is composited as the base layer.
-     * Returns null when there is no ink at all (no existing bitmap and no new strokes).
+     * Render to a transparent PNG. Existing ink from a prior edit session is
+     * composited as the base layer. Returns null when there is nothing to save.
      */
     fun renderToPng(): ByteArray? {
         val hasNew = hasMeaningfulInk()
@@ -489,12 +477,7 @@ class InkCanvasView(context: Context) : View(context) {
     private fun exportPaint(tool: InkTool): Paint = when (tool) {
         InkTool.THIN  -> Paint(thinPaint).apply  { isAntiAlias = true }
         InkTool.THICK -> Paint(thickPaint).apply { isAntiAlias = true }
-        InkTool.ERASER -> Paint().apply {
-            xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
-            style = Paint.Style.STROKE; strokeWidth = 36f
-            strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
-        }
-        InkTool.LASSO -> Paint() // lasso strokes are never committed, so never exported
+        InkTool.ERASER -> Paint() // eraser strokes are never committed, so never exported
     }
 
     // -------------------------------------------------------------------------
@@ -510,31 +493,40 @@ class InkCanvasView(context: Context) : View(context) {
             }
             MotionEvent.ACTION_MOVE -> {
                 val p = current ?: return true
+                var minX = lastX; var minY = lastY
+                var maxX = lastX; var maxY = lastY
                 for (i in 0 until event.historySize) {
                     val hx = event.getHistoricalX(i); val hy = event.getHistoricalY(i)
                     p.quadTo(lastX, lastY, (hx + lastX) / 2f, (hy + lastY) / 2f)
                     lastX = hx; lastY = hy
                     currentPts.add(hx); currentPts.add(hy)
+                    if (hx < minX) minX = hx; if (hy < minY) minY = hy
+                    if (hx > maxX) maxX = hx; if (hy > maxY) maxY = hy
                 }
                 p.quadTo(lastX, lastY, (event.x + lastX) / 2f, (event.y + lastY) / 2f)
                 lastX = event.x; lastY = event.y
                 currentPts.add(lastX); currentPts.add(lastY)
-                // drawPath provides live display — no per-move invalidate needed
+                if (lastX < minX) minX = lastX; if (lastY < minY) minY = lastY
+                if (lastX > maxX) maxX = lastX; if (lastY > maxY) maxY = lastY
+                // Partial invalidate — only the new segment's bounding box.
+                // Auto-EPD picks a fast waveform for the dirty region so the
+                // software canvas shows the correct stroke thickness in real time.
+                val pad = strokeHalfWidth() + 4f
+                invalidate(
+                    (minX - pad).toInt(), (minY - pad).toInt(),
+                    (maxX + pad).toInt(), (maxY + pad).toInt(),
+                )
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 val action = if (event.actionMasked == MotionEvent.ACTION_UP) "UP" else "CANCEL"
                 val path = current
                 if (path != null) {
                     when (activeTool) {
-                        InkTool.LASSO -> {
+                        InkTool.ERASER -> {
                             path.close()
                             eraseLassoStrokes(path)
                             DrawPathClient.clearScreen(context.packageName)
                             RattaEink.sendOneFullFrame(context)
-                        }
-                        InkTool.ERASER -> {
-                            committed.add(Stroke(path, activeTool, currentPts.toList()))
-                            DrawPathClient.clearScreen(context.packageName)
                         }
                         else -> committed.add(Stroke(path, activeTool, currentPts.toList()))
                     }
@@ -584,7 +576,11 @@ class InkCanvasView(context: Context) : View(context) {
         InkTool.THIN   -> thinPaint
         InkTool.THICK  -> thickPaint
         InkTool.ERASER -> eraserPaint
-        InkTool.LASSO  -> lassoPaint
+    }
+
+    private fun strokeHalfWidth() = when (activeTool) {
+        InkTool.THICK -> thickPaint.strokeWidth / 2f
+        else          -> thinPaint.strokeWidth / 2f
     }
 
     // -------------------------------------------------------------------------
@@ -597,7 +593,7 @@ class InkCanvasView(context: Context) : View(context) {
      * Returns null when there are no ink strokes to save.
      */
     fun getStrokeJson(): String? {
-        val inkStrokes = committed.filter { it.tool != InkTool.ERASER && it.tool != InkTool.LASSO }
+        val inkStrokes = committed
         if (inkStrokes.isEmpty()) return null
         val arr = JSONArray()
         for (s in inkStrokes) {

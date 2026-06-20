@@ -706,37 +706,37 @@ class ReaderView(context: Context) : View(context) {
             }
         }
 
-        // Finger swipe → page turn. Must run before the stylus routing below so that
-        // on Supernote (where DrawPathClient.available() causes an early-return to
-        // handleStylusEvent) finger swipes still turn pages.
-        // Gate on SOURCE_TOUCHSCREEN: the EMR pen arrives from the digitizer source
-        // even though it reports TOOL_TYPE_FINGER on Supernote, so touchscreen-sourced
-        // events are finger-only. On non-Supernote, also gate out TOOL_TYPE_STYLUS.
-        val isTouchFinger = (event.source and android.view.InputDevice.SOURCE_TOUCHSCREEN) != 0 &&
-            event.getToolType(0) != MotionEvent.TOOL_TYPE_STYLUS
-        if (isTouchFinger) {
+        // Finger swipe → page turn. Track raw X/Y delta; require predominantly horizontal
+        // motion. Must run before the stylus routing below so finger swipes aren't
+        // swallowed by handleStylusEvent on devices where DrawPath is available.
+        // MOVE events with clear horizontal dominance are also suppressed here so that
+        // handleStylusEvent never starts a selection scrub during a swipe gesture.
+        if (event.getToolType(0) != MotionEvent.TOOL_TYPE_STYLUS) {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     fingerSwipeDownX = event.x
                     fingerSwipeDownY = event.y
-                    Log.d("LeamhSwipe", "DOWN tool=${event.getToolType(0)} src=${event.source} x=${event.x} y=${event.y}")
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (fingerSwipeDownX >= 0) {
+                        val dx = event.x - fingerSwipeDownX
+                        val dy = event.y - fingerSwipeDownY
+                        if (Math.abs(dx) > Math.abs(dy) * 1.5f) return true
+                    }
                 }
                 MotionEvent.ACTION_UP -> {
                     val dx = event.x - fingerSwipeDownX
                     val dy = event.y - fingerSwipeDownY
                     val swipeMin = ReaderTheme.dp(context, 60f)
-                    Log.d("LeamhSwipe", "UP dx=$dx dy=$dy swipeMin=$swipeMin selStart=$selectionStart")
                     fingerSwipeDownX = -1f
                     fingerSwipeDownY = -1f
                     if (Math.abs(dx) > swipeMin && Math.abs(dx) > Math.abs(dy)) {
-                        Log.d("LeamhSwipe", "TURNING PAGE dx=$dx")
                         cancelSelection()
                         if (dx < 0) next() else prev()
                         return true
                     }
                 }
                 MotionEvent.ACTION_CANCEL -> {
-                    Log.d("LeamhSwipe", "CANCEL")
                     fingerSwipeDownX = -1f
                     fingerSwipeDownY = -1f
                 }

@@ -15,7 +15,7 @@ import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.LinearLayout
-import android.widget.PopupMenu
+import android.widget.PopupWindow
 import android.widget.TextView
 import android.widget.Toast
 import java.io.File
@@ -36,6 +36,7 @@ class FileBrowserActivity : Activity() {
     private var entries: List<Entry> = emptyList()
     private var page = 0
     private var rowsPerPage = 0
+    private var maxRecentsShown = 0
 
     private lateinit var crumbBar: LinearLayout
     private lateinit var recentsSection: LinearLayout
@@ -88,6 +89,9 @@ class FileBrowserActivity : Activity() {
             }
         }
 
+        // Estimate before layout so the first render is close; listener refines it.
+        val screenH = resources.displayMetrics.heightPixels
+        maxRecentsShown = recentsCapFromHeight((screenH - dp(56f)) / 3)
         renderRecents()
         listDir(root)
     }
@@ -100,10 +104,21 @@ class FileBrowserActivity : Activity() {
             setBackgroundColor(ReaderTheme.PAPER)
         }
 
-        // Top 1/3 — recents (hidden when empty).
+        // Top 1/3 — recents (hidden when empty). Layout listener refines the
+        // count once the section's actual pixel height is known after first layout.
         recentsSection = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
+            addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ ->
+                val h = bottom - top
+                if (h > 0) {
+                    val newMax = recentsCapFromHeight(h)
+                    if (newMax != maxRecentsShown) {
+                        maxRecentsShown = newMax
+                        renderRecents()
+                    }
+                }
+            }
         }
 
         // Divider between recents and browser.
@@ -178,7 +193,8 @@ class FileBrowserActivity : Activity() {
 
     private fun renderRecents() {
         recentsSection.removeAllViews()
-        val recents = loadRecents().take(MAX_RECENTS_SHOWN)
+        val cap = if (maxRecentsShown > 0) maxRecentsShown else 4
+        val recents = loadRecents().take(cap)
         val splitDivider = (recentsSection.parent as? LinearLayout)
             ?.findViewWithTag<View>("splitDivider")
 
@@ -190,7 +206,7 @@ class FileBrowserActivity : Activity() {
 
         recentsSection.visibility = View.VISIBLE
         splitDivider?.visibility = View.VISIBLE
-        recentsSection.addView(sectionHeader("RECENTS"))
+        recentsSection.addView(sectionHeader("Last ${recents.size} Recent"))
         for (path in recents) {
             recentsSection.addView(rowFor(Entry(File(path), false)))
             recentsSection.addView(divider())
@@ -377,17 +393,79 @@ class FileBrowserActivity : Activity() {
 
     private fun showSubfolders(anchor: View, dir: File) {
         val subs = subDirs(dir)
-        val popup = PopupMenu(this, anchor)
-        if (subs.isEmpty()) {
-            popup.menu.add("No sub-folders").isEnabled = false
-        } else {
-            subs.forEachIndexed { i, f -> popup.menu.add(0, i, i, f.name) }
-            popup.setOnMenuItemClickListener { item ->
-                subs.getOrNull(item.itemId)?.let { listDir(it) }
-                true
+
+        // Multi-column popup — items flow into a new column rather than scrolling.
+        // Each column has a fixed width so the popup stays compact.
+        val colW   = dp(200f)
+        val itemH  = dp(52f)
+        val screenH = resources.displayMetrics.heightPixels
+        val maxPerCol = ((screenH * 0.55f) / itemH).toInt().coerceAtLeast(3)
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(ReaderTheme.PAPER)
+                setStroke(dp(2f), ReaderTheme.INK_87)
             }
+            elevation = dp(4f).toFloat()
         }
-        popup.show()
+
+        if (subs.isEmpty()) {
+            container.addView(TextView(this).apply {
+                text = "No sub-folders"
+                typeface = ReaderTheme.chrome(this@FileBrowserActivity)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                setTextColor(MUTED)
+                gravity = Gravity.CENTER_VERTICAL
+                layoutParams = LinearLayout.LayoutParams(colW, itemH)
+                val h = dp(16f)
+                setPadding(h, 0, h, 0)
+            })
+        }
+
+        var popup: PopupWindow? = null
+        val colCount = (subs.size + maxPerCol - 1) / maxPerCol
+        for (col in 0 until colCount) {
+            if (col > 0) {
+                container.addView(View(this).apply {
+                    setBackgroundColor(ReaderTheme.INK_12)
+                    layoutParams = LinearLayout.LayoutParams(dp(1f), MATCH_PARENT)
+                })
+            }
+            val colView = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(colW, WRAP_CONTENT)
+            }
+            val start = col * maxPerCol
+            val end = minOf(start + maxPerCol, subs.size)
+            for (i in start until end) {
+                val sub = subs[i]
+                if (i > start) colView.addView(divider())
+                colView.addView(TextView(this).apply {
+                    text = sub.name
+                    typeface = ReaderTheme.chromeBold(this@FileBrowserActivity)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                    setTextColor(ReaderTheme.INK)
+                    gravity = Gravity.CENTER_VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(colW, itemH)
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    maxLines = 1
+                    val h = dp(12f)
+                    setPadding(h, 0, h, 0)
+                    setOnTouchListener(PenTapListener(this@FileBrowserActivity) {
+                        popup?.dismiss()
+                        listDir(sub)
+                    })
+                })
+            }
+            container.addView(colView)
+        }
+
+        val totalW = colW * colCount + dp(1f) * (colCount - 1).coerceAtLeast(0)
+        popup = PopupWindow(container, totalW, WRAP_CONTENT, true).apply {
+            isOutsideTouchable = true
+            showAsDropDown(anchor)
+        }
     }
 
     private fun subDirs(dir: File): List<File> = dir.listFiles()
@@ -397,12 +475,17 @@ class FileBrowserActivity : Activity() {
 
     private fun dp(value: Float): Int = ReaderTheme.dp(this, value).toInt()
 
+    /** How many recent rows fit in [sectionHeight] pixels, accounting for the header. */
+    private fun recentsCapFromHeight(sectionHeight: Int): Int {
+        val headerH = dp(36f)
+        return ((sectionHeight - headerH) / (rowHeight + dividerHeight)).coerceIn(1, 8)
+    }
+
     companion object {
         const val EXTRA_PATH = "path"
         private const val MUTED = 0xFF6E6A62.toInt()
         private const val SUBTITLE = 0xFF33302A.toInt()
         private const val DIVIDER = 0xFFDCD7CD.toInt()
         private const val MAX_CRUMBS = 4
-        private const val MAX_RECENTS_SHOWN = 5
     }
 }
