@@ -345,7 +345,7 @@ class InkNoteActivity : Activity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
             setTextColor(ReaderTheme.INK_87)
             gravity = Gravity.CENTER
-            setOnTouchListener(PenTapListener(this@InkNoteActivity, onClick))
+            setOnTouchListener(PenTapListener(this@InkNoteActivity, onTap = onClick))
         }
 
     private fun toolbarTextBtn(label: String, onClick: () -> Unit): TextView =
@@ -355,7 +355,7 @@ class InkNoteActivity : Activity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
             setTextColor(ReaderTheme.INK_87)
             gravity = Gravity.CENTER
-            setOnTouchListener(PenTapListener(this@InkNoteActivity, onClick))
+            setOnTouchListener(PenTapListener(this@InkNoteActivity, onTap = onClick))
         }
 
     private fun hDivider(): View = View(this).apply { setBackgroundColor(ReaderTheme.INK_12) }

@@ -364,7 +364,7 @@ class PageJumpOverlay(
             setTextColor(color)
             gravity = Gravity.CENTER
             includeFontPadding = false
-            setOnTouchListener(PenTapListener(context, onClick))
+            setOnTouchListener(PenTapListener(context, onTap = onClick))
         }
 
     private fun dp(v: Float) = ReaderTheme.dp(context, v)

@@ -3,6 +3,7 @@ package com.afluffywaffle.layuv.reader
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.MotionEvent
 import android.view.View
 import kotlin.math.hypot
@@ -19,7 +20,12 @@ import kotlin.math.hypot
  * a normal tap-on-release. A new pointer supersedes any still-pending gesture, so
  * a tap is never blocked by a held pen-up. No ripple — e-ink shows none anyway.
  */
-class PenTapListener(context: Context, private val onTap: () -> Unit) : View.OnTouchListener {
+class PenTapListener(
+    context: Context,
+    private val tag: String = "PenTapListener",
+    private val onDrag: (() -> Unit)? = null,
+    private val onTap: () -> Unit,
+) : View.OnTouchListener {
 
     private val dwellMs = ReaderTheme.PEN_DWELL_MS
     private val slopPx = ReaderTheme.dp(context, ReaderTheme.PEN_SLOP_DP)
@@ -42,10 +48,21 @@ class PenTapListener(context: Context, private val onTap: () -> Unit) : View.OnT
                 downX = e.x
                 downY = e.y
                 val tool = e.getToolType(0)
+                val toolName = when (tool) {
+                    MotionEvent.TOOL_TYPE_FINGER  -> "FINGER"
+                    MotionEvent.TOOL_TYPE_STYLUS  -> "STYLUS"
+                    MotionEvent.TOOL_TYPE_ERASER  -> "ERASER"
+                    MotionEvent.TOOL_TYPE_MOUSE   -> "MOUSE"
+                    else -> "UNKNOWN($tool)"
+                }
                 val stylus = tool == MotionEvent.TOOL_TYPE_STYLUS ||
                     tool == MotionEvent.TOOL_TYPE_ERASER
+                Log.d(tag, "DOWN tool=$toolName x=${e.x.toInt()} y=${e.y.toInt()} view=${v.javaClass.simpleName} stylus=$stylus dwellMs=$dwellMs")
                 if (stylus) {
-                    val r = Runnable { if (!moved && !fired) fire() }
+                    val r = Runnable {
+                        Log.d(tag, "DWELL fired moved=$moved fired=$fired")
+                        if (!moved && !fired) fire()
+                    }
                     dwell = r
                     handler.postDelayed(r, dwellMs)
                 }
@@ -53,17 +70,21 @@ class PenTapListener(context: Context, private val onTap: () -> Unit) : View.OnT
             }
             MotionEvent.ACTION_MOVE -> {
                 if (!moved && hypot(e.x - downX, e.y - downY) > slopPx) {
+                    Log.d(tag, "MOVE exceeded slop — cancelling tap")
                     moved = true
                     cancelDwell()
+                    onDrag?.invoke()
                 }
                 return true
             }
             MotionEvent.ACTION_UP -> {
+                Log.d(tag, "UP fired=$fired moved=$moved")
                 if (!fired && !moved) fire()
                 reset()
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
+                Log.d(tag, "CANCEL")
                 reset()
                 return true
             }
@@ -75,6 +96,7 @@ class PenTapListener(context: Context, private val onTap: () -> Unit) : View.OnT
         if (fired) return
         fired = true
         cancelDwell()
+        Log.d(tag, "fire → onTap()")
         onTap()
     }
 

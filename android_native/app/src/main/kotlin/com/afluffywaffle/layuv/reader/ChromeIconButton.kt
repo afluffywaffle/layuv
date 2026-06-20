@@ -44,7 +44,7 @@ class ChromeIconButton(
 
     init {
         icon.setTint(ReaderTheme.INK_87)
-        setOnTouchListener(PenTapListener(context, onTap))
+        setOnTouchListener(PenTapListener(context, onTap = onTap))
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -83,7 +83,7 @@ class LockSlotView(
         }
 
     init {
-        setOnTouchListener(PenTapListener(context, onTap))
+        setOnTouchListener(PenTapListener(context, onTap = onTap))
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {

@@ -55,6 +55,7 @@ class ReaderActivity : Activity() {
     private lateinit var readerView: ReaderView
     private lateinit var pageIndicator: TextView
     private lateinit var prefs: SharedPreferences
+    private lateinit var rootOverlay: FrameLayout
     private var lastPageIndex = 0
     private var lastPageCount = 1
     private var pageJumpOverlay: PageJumpOverlay? = null
@@ -62,7 +63,6 @@ class ReaderActivity : Activity() {
     // AppBarPill — icon pill replacing the old text-button toolbar.
     private lateinit var pillRow: LinearLayout
     private lateinit var annotationsButton: ChromeIconButton
-    private lateinit var undoButton: ChromeIconButton
     private lateinit var moreButton: ChromeIconButton
     private var lockSlot: LockSlotView? = null
 
@@ -90,13 +90,10 @@ class ReaderActivity : Activity() {
     // In-memory cache of the latest stroke JSON per annotation ID. Updated immediately on save
     // so editAnnotationNote can pass current strokes even before the background write completes.
     private val latestStrokes = mutableMapOf<String, String>()
-    // Most recently created annotation — the persistent undo button removes it.
-    private var lastAnnotationId: String? = null
-
-    // Transient undo pill — floats above the annotation's selection anchor.
+    // Transient delete pill — floats above the annotation's selection anchor.
     private var lastAnchorX = 0
     private var lastAnchorY = 0
-    private var undoPillWindow: PopupWindow? = null
+    private var undoPillView: LinearLayout? = null
     private val undoDismissRunnable = Runnable { dismissUndoPill() }
     private val undoRenderer by lazy { ToolIconRenderer(this) }
 
@@ -113,10 +110,13 @@ class ReaderActivity : Activity() {
     // --- UI ------------------------------------------------------------------
 
     private fun buildUi(): View {
+        rootOverlay = FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
+        }
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(ReaderTheme.PAPER)
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
+            layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
         }
 
         // FrameLayout toolbar: pillRow pinned start, page pill truly centred.
@@ -173,7 +173,7 @@ class ReaderActivity : Activity() {
 
         titleLabel = TextView(this).apply {
             typeface = ReaderTheme.body(this@ReaderActivity)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             setTextColor(ReaderTheme.INK_87)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
@@ -191,7 +191,7 @@ class ReaderActivity : Activity() {
         // Fixed-width slot so the title never overlaps the centred page indicator.
         toolbar.addView(
             titleLabel,
-            FrameLayout.LayoutParams(dp(110f), WRAP_CONTENT, Gravity.END or Gravity.CENTER_VERTICAL),
+            FrameLayout.LayoutParams(dp(280f), WRAP_CONTENT, Gravity.END or Gravity.CENTER_VERTICAL),
         )
 
         readerView = ReaderView(this).apply {
@@ -263,26 +263,35 @@ class ReaderActivity : Activity() {
                 )
                 } // end else (no locked tool)
             }
-            onHidePopup = { annotationPopup.dismiss() }
+            onHidePopup = { annotationPopup.dismissQuiet() }
             onAnnotationTapped = { resolved, anchorX, anchorY ->
+                Log.d(TAG, "onAnnotationTapped: id=${resolved.annotation.id} tool=${resolved.annotation.tool} anchorX=$anchorX anchorY=$anchorY")
                 // Faithful to Flutter's AnnotationActionToolbar: Comment | Delete.
                 annotationPopup.showActions(
                     anchor = this,
                     anchorX = anchorX,
                     anchorY = anchorY,
-                    onComment = { editAnnotationNote(resolved) },
-                    onDelete = { deleteAnnotation(resolved) },
+                    onComment = {
+                        Log.d(TAG, "action popup: Comment tapped for ${resolved.annotation.id}")
+                        editAnnotationNote(resolved)
+                    },
+                    onDelete = {
+                        Log.d(TAG, "action popup: Delete tapped for ${resolved.annotation.id}")
+                        deleteAnnotation(resolved)
+                    },
                 )
             }
         }
 
         root.addView(readerView, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
         root.addView(toolbar, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        rootOverlay.addView(root)
         updatePillState()
-        return root
+        annotationPopup.onDismiss = { initDrawPathLasso() }
+        return rootOverlay
     }
 
-    /** The AppBarPill: annotations | undo | bookmark | (lock) | more on a 6%-black rounded pill. */
+    /** The AppBarPill: annotations | bookmark | search | (lock) | more on a 6%-black rounded pill. */
     private fun buildPill(): LinearLayout {
         val pill = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -291,15 +300,12 @@ class ReaderActivity : Activity() {
             setPadding(dp(4f), dp(4f), dp(4f), dp(4f))
         }
         annotationsButton = ChromeIconButton(this, R.drawable.ic_list_alt) { launchAnnotationsPanel() }
-        undoButton = ChromeIconButton(this, R.drawable.ic_undo) { undoLast() }
         bookmarkButton = ChromeIconButton(this, R.drawable.ic_bookmark_outline) { togglePageBookmark() }.also {
             it.dimmed = true
         }
         moreButton = ChromeIconButton(this, R.drawable.ic_more_horiz) { showOverflowMenu() }
         searchButton = ChromeIconButton(this, R.drawable.ic_search) { launchSearch() }
         pill.addView(annotationsButton)
-        pill.addView(divider())
-        pill.addView(undoButton)
         pill.addView(divider())
         pill.addView(bookmarkButton)
         pill.addView(divider())
@@ -333,13 +339,10 @@ class ReaderActivity : Activity() {
         lockSlot = slot
     }
 
-    /** Dim the annotations button when empty and the undo button when nothing to undo. */
+    /** Dim the annotations button when empty. */
     private fun updatePillState() {
         val anns = book?.doc?.annotations
         annotationsButton.dimmed = anns.isNullOrEmpty()
-        val canUndo = lastAnnotationId != null &&
-            anns?.any { it.annotation.id == lastAnnotationId } == true
-        undoButton.dimmed = !canUndo
         updateBookmarkButton()
     }
 
@@ -590,16 +593,15 @@ class ReaderActivity : Activity() {
             return
         }
 
-        android.app.AlertDialog.Builder(this)
-            .setTitle("Flatten ink?")
-            .setMessage(
-                "This removes all saved stroke data from the document. " +
+        LeamhDialog.confirm(
+            this,
+            message = "This removes all saved stroke data from the document. " +
                 "After flattening, ink annotations can't be edited with the lasso eraser — " +
-                "only the freeform eraser will work. This cannot be undone."
-            )
-            .setPositiveButton("Flatten") { _, _ -> flattenInk(opened, file) }
-            .setNegativeButton("Cancel", null)
-            .show()
+                "only the freeform eraser will work. This cannot be undone.",
+            positiveLabel = "Flatten",
+            negativeLabel = "Cancel",
+            onConfirm = { flattenInk(opened, file) },
+        )
     }
 
     private fun flattenInk(opened: OpenBook, file: File) {
@@ -620,15 +622,19 @@ class ReaderActivity : Activity() {
         )
     }
 
-    /** Remove the most recently created annotation (persistent undo). */
-    private fun undoLast() {
+    /** Delete a specific annotation by ID. Called from the transient delete pill. */
+    private fun deleteAnnotation(id: String) {
+        Log.d(TAG, "deleteAnnotation(id=$id) called from undo pill")
         dismissUndoPill()
-        val id = lastAnnotationId ?: return
         val opened = book ?: return
         val file = opened.file ?: return
         val newList = opened.doc.annotations.map { it.annotation }.filter { it.id != id }
-        lastAnnotationId = null
-        saveAnnotations(opened, file, newList)
+        // Optimistic update — remove from view immediately without waiting for the background write.
+        val optimisticAnnotations = opened.doc.annotations.filter { it.annotation.id != id }
+        val optimisticDoc = LoadedDocument(opened.doc.plainMap, optimisticAnnotations, opened.doc.position)
+        book = OpenBook(opened.displayName, opened.bytes, optimisticDoc, opened.file)
+        readerView.updateAnnotations(optimisticAnnotations)
+        saveAnnotations(opened, file, newList, deletedId = id)
     }
 
     // --- Permission ----------------------------------------------------------
@@ -942,8 +948,7 @@ class ReaderActivity : Activity() {
         )
 
         readerView.cancelSelection()
-        lastAnnotationId = annotation.id
-        showUndoPill(lastAnchorX, lastAnchorY)
+        showUndoPill(lastAnchorX, lastAnchorY, annotation.id)
 
         // Optimistic update: show the highlight immediately using the known char offsets.
         // book is updated so rapid locked-tool commits accumulate the full list correctly.
@@ -1012,8 +1017,7 @@ class ReaderActivity : Activity() {
 
         Log.d(TAG, "commitInkAnnotation: creating annotation hasInk=${pngBytes != null} sel='${selectedText.take(40)}'")
         readerView.cancelSelection()
-        lastAnnotationId = inkId
-        showUndoPill(lastAnchorX, lastAnchorY)
+        showUndoPill(lastAnchorX, lastAnchorY, inkId)
 
         // Optimistic update — show the dotted underline immediately without waiting for
         // the background DOCX write (same pattern as commitAnnotation).
@@ -1113,8 +1117,7 @@ class ReaderActivity : Activity() {
         )
 
         readerView.cancelSelection()
-        lastAnnotationId = annotation.id
-        showUndoPill(lastAnchorX, lastAnchorY)
+        showUndoPill(lastAnchorX, lastAnchorY, annotation.id)
 
         val existing   = opened.doc.annotations.map { it.annotation }
         val inkPng     = if (inkBytes != null && inkId != null) Pair(inkId, inkBytes) else null
@@ -1141,6 +1144,7 @@ class ReaderActivity : Activity() {
     }
 
     private fun deleteAnnotation(resolved: ResolvedAnnotation) {
+        Log.d(TAG, "deleteAnnotation(resolved=${resolved.annotation.id} tool=${resolved.annotation.tool}) called from action popup")
         val opened = book ?: return
         val file = opened.file ?: run {
             Toast.makeText(this, "File is read-only — can't delete annotation.", Toast.LENGTH_SHORT).show()
@@ -1171,6 +1175,7 @@ class ReaderActivity : Activity() {
         newList: List<Annotation>,
         inkPng: Pair<String, ByteArray>? = null,
         inkStrokes: Pair<String, String>? = null,
+        deletedId: String? = null,
     ) {
         DocxWriteQueue.submit(
             file,
@@ -1199,6 +1204,9 @@ class ReaderActivity : Activity() {
                         // back to repairing in-memory state from newList + existing spans
                         // so the note/tool change is visible immediately (disk is correct).
                         val loadFailed = newList.isNotEmpty() && freshDoc.annotations.isEmpty()
+                        // An undo delete intentionally removes the deleted ID from savedIds.
+                        // Exclude it before checking whether all current IDs were persisted.
+                        val effectiveCurrentIds = if (deletedId != null) currentIds - deletedId else currentIds
                         if (loadFailed) {
                             Log.w(TAG, "saveAnnotations: DocxStore.load returned 0 annotations after writing ${newList.size} — repairing from newList")
                             val spanById = currentBook.doc.annotations.associate { it.annotation.id to it.span }
@@ -1208,10 +1216,17 @@ class ReaderActivity : Activity() {
                             val repairedDoc = LoadedDocument(currentBook.doc.plainMap, repairedAnnotations, currentBook.doc.position)
                             book = OpenBook(freshBook.displayName, freshBook.bytes, repairedDoc, freshBook.file)
                             readerView.updateAnnotations(repairedAnnotations)
-                        } else if (currentIds.all { it in savedIds }) {
+                        } else if (effectiveCurrentIds.all { it in savedIds } && savedIds.all { it in currentIds }) {
+                            // Exact match (modulo deleted ID): freshDoc reflects current in-memory state. Full sync.
                             book = freshBook
                             readerView.updateAnnotations(freshDoc.annotations)
                         } else {
+                            // Mismatch: either currentBook has IDs not yet in savedIds (rapid adds after this
+                            // write was queued), or savedIds has IDs not in currentBook (stale creation write
+                            // completing after an optimistic delete). In both cases keep currentBook.doc so
+                            // the view stays correct, but update bytes so future writes read the right base.
+                            Log.d(TAG, "saveAnnotations: smart-merge kept currentBook.doc " +
+                                "(savedIds=${savedIds.size} currentIds=${currentIds.size} effectiveCurrentIds=${effectiveCurrentIds.size})")
                             book = OpenBook(freshBook.displayName, freshBook.bytes, currentBook.doc, freshBook.file)
                         }
                     }
@@ -1296,11 +1311,15 @@ class ReaderActivity : Activity() {
     }
 
     /**
-     * Float a small "Undo" pill above [anchorX, anchorY] (ReaderView-relative coords)
-     * for [UNDO_TIMEOUT_MS] ms. Tapping it calls [undoLast]. Dismissed by any new
-     * annotation, book load, explicit undo, or delete.
+     * Float a small "Delete" pill above [anchorX, anchorY] (ReaderView-relative coords)
+     * for [UNDO_TIMEOUT_MS] ms. Tapping it deletes the annotation with [annotationId].
+     * Dismissed by any new annotation, book load, or the tap itself.
+     *
+     * The pill is a regular child of [rootOverlay] (not a PopupWindow) so touch events
+     * are guaranteed to reach it regardless of the Supernote input pipeline.
      */
-    private fun showUndoPill(anchorX: Int, anchorY: Int) {
+    private fun showUndoPill(anchorX: Int, anchorY: Int, annotationId: String) {
+        Log.d(TAG, "showUndoPill: anchorX=$anchorX anchorY=$anchorY annotationId=$annotationId")
         dismissUndoPill()
         val iconExtent = ReaderTheme.dp(this, 26f)
         val hPad = dp(12f)
@@ -1312,13 +1331,16 @@ class ReaderActivity : Activity() {
             setPadding(hPad, vPad, hPad, vPad)
             isClickable = true
             isFocusable = true
-            setOnTouchListener(PenTapListener(this@ReaderActivity) { undoLast() })
+            setOnTouchListener(PenTapListener(this@ReaderActivity, "UndoPill") {
+                Log.d(TAG, "UndoPill tapped — calling deleteAnnotation($annotationId)")
+                deleteAnnotation(annotationId)
+            })
             addView(object : View(this@ReaderActivity) {
                 override fun onDraw(canvas: Canvas) =
-                    undoRenderer.drawVecIcon(canvas, R.drawable.ic_undo, width / 2f, height / 2f, iconExtent)
+                    undoRenderer.drawVecIcon(canvas, R.drawable.ic_delete_outline, width / 2f, height / 2f, iconExtent)
             }, LinearLayout.LayoutParams(dp(26f), dp(26f)))
             addView(TextView(this@ReaderActivity).apply {
-                text = "Undo"
+                text = "Delete"
                 typeface = ReaderTheme.body(this@ReaderActivity)
                 setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 16f)
                 setTextColor(ReaderTheme.INK_87)
@@ -1331,24 +1353,28 @@ class ReaderActivity : Activity() {
         )
         val pillW = pill.measuredWidth
         val pillH = pill.measuredHeight
-        val pw = PopupWindow(pill, WRAP_CONTENT, WRAP_CONTENT, false).apply {
-            setBackgroundDrawable(ColorDrawable(0x00000000))
-            isOutsideTouchable = false
-            setOnDismissListener { undoPillWindow = null }
-        }
-        undoPillWindow = pw
-        val loc = IntArray(2)
-        readerView.getLocationInWindow(loc)
-        val x = (loc[0] + anchorX - pillW / 2).coerceAtLeast(dp(8f))
-        val y = (loc[1] + anchorY - pillH - dp(12f)).coerceAtLeast(dp(8f))
-        pw.showAtLocation(readerView, Gravity.TOP or Gravity.START, x, y)
+        // Position relative to rootOverlay using screen coordinates.
+        val readerLoc = IntArray(2)
+        readerView.getLocationOnScreen(readerLoc)
+        val overlayLoc = IntArray(2)
+        rootOverlay.getLocationOnScreen(overlayLoc)
+        val x = (readerLoc[0] - overlayLoc[0] + anchorX - pillW / 2).coerceAtLeast(dp(8f)).toFloat()
+        val y = (readerLoc[1] - overlayLoc[1] + anchorY - pillH - dp(12f)).coerceAtLeast(dp(8f)).toFloat()
+        Log.d(TAG, "showUndoPill: pillW=$pillW pillH=$pillH " +
+            "readerOnScreen=(${readerLoc[0]},${readerLoc[1]}) " +
+            "overlayOnScreen=(${overlayLoc[0]},${overlayLoc[1]}) " +
+            "finalX=$x finalY=$y")
+        pill.x = x
+        pill.y = y
+        rootOverlay.addView(pill, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
+        undoPillView = pill
         main.postDelayed(undoDismissRunnable, UNDO_TIMEOUT_MS)
     }
 
     private fun dismissUndoPill() {
         main.removeCallbacks(undoDismissRunnable)
-        undoPillWindow?.dismiss()
-        undoPillWindow = null
+        undoPillView?.let { rootOverlay.removeView(it) }
+        undoPillView = null
     }
 
     private fun dp(value: Float): Int = ReaderTheme.dp(this, value).roundToInt()

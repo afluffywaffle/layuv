@@ -706,40 +706,48 @@ class ReaderView(context: Context) : View(context) {
             }
         }
 
-        // Finger swipe → page turn. Track raw X/Y delta; require predominantly horizontal
-        // motion so vertical scrolling content doesn't accidentally turn pages, and so
-        // a clearly horizontal gesture always wins over any vertical interference.
-        if (event.getToolType(0) != MotionEvent.TOOL_TYPE_STYLUS) {
+        // Finger swipe → page turn. Must run before the stylus routing below so that
+        // on Supernote (where DrawPathClient.available() causes an early-return to
+        // handleStylusEvent) finger swipes still turn pages.
+        // Gate on SOURCE_TOUCHSCREEN: the EMR pen arrives from the digitizer source
+        // even though it reports TOOL_TYPE_FINGER on Supernote, so touchscreen-sourced
+        // events are finger-only. On non-Supernote, also gate out TOOL_TYPE_STYLUS.
+        val isTouchFinger = (event.source and android.view.InputDevice.SOURCE_TOUCHSCREEN) != 0 &&
+            event.getToolType(0) != MotionEvent.TOOL_TYPE_STYLUS
+        if (isTouchFinger) {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     fingerSwipeDownX = event.x
                     fingerSwipeDownY = event.y
-                    Log.d("LeamhSwipe", "DOWN tool=${event.getToolType(0)} x=${event.x} y=${event.y}")
+                    Log.d("LeamhSwipe", "DOWN tool=${event.getToolType(0)} src=${event.source} x=${event.x} y=${event.y}")
                 }
                 MotionEvent.ACTION_UP -> {
                     val dx = event.x - fingerSwipeDownX
                     val dy = event.y - fingerSwipeDownY
                     val swipeMin = ReaderTheme.dp(context, 60f)
-                    Log.d("LeamhSwipe", "UP dx=$dx dy=$dy swipeMin=$swipeMin selStart=$selectionStart absDx=${Math.abs(dx)} absDy=${Math.abs(dy)}")
+                    Log.d("LeamhSwipe", "UP dx=$dx dy=$dy swipeMin=$swipeMin selStart=$selectionStart")
                     fingerSwipeDownX = -1f
                     fingerSwipeDownY = -1f
-                    if (selectionStart < 0 && Math.abs(dx) > swipeMin && Math.abs(dx) > Math.abs(dy)) {
+                    if (Math.abs(dx) > swipeMin && Math.abs(dx) > Math.abs(dy)) {
                         Log.d("LeamhSwipe", "TURNING PAGE dx=$dx")
+                        cancelSelection()
                         if (dx < 0) next() else prev()
                         return true
                     }
                 }
                 MotionEvent.ACTION_CANCEL -> {
-                    Log.d("LeamhSwipe", "CANCEL — gesture stolen by parent")
+                    Log.d("LeamhSwipe", "CANCEL")
                     fingerSwipeDownX = -1f
                     fingerSwipeDownY = -1f
                 }
             }
         }
 
-        // Stylus drags to select directly; finger uses long-press (gestures) then
-        // drag-to-extend while isSelecting; a tap falls through to the gesture detector.
-        if (event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
+        // On Supernote (DrawPath available), the EMR pen reports as TOOL_TYPE_FINGER
+        // to Android rather than TOOL_TYPE_STYLUS. Route all events to the stylus
+        // handler so scrub-selection and navTap work correctly. On other devices,
+        // only explicit TOOL_TYPE_STYLUS events go this route.
+        if (DrawPathClient.available() || event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
             return handleStylusEvent(event)
         }
         if (isSelecting) {
@@ -785,7 +793,6 @@ class ReaderView(context: Context) : View(context) {
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
-                if (ptrAnchorChar < 0) return true
                 val dx = event.x - ptrDownX
                 val dy = event.y - ptrDownY
                 if (!ptrMoved && dx * dx + dy * dy > tapSlopPx * tapSlopPx) {

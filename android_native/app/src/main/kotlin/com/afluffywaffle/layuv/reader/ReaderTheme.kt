@@ -92,10 +92,19 @@ object ReaderTheme {
     fun bodyItalic(context: Context): Typeface =
         if (bodyFont == "literata") font(context, LITERATA_ITALIC) else chrome(context)
 
-    /** Bold body: Literata wght=700 or Source Sans wght=700 depending on [bodyFont].
-     *  Uses the variable-font axis in both cases — synthetic bold is unreliable on
-     *  variable fonts. */
-    fun bodyBold(context: Context): Typeface =
+    fun bodyBold(context: Context): Typeface = chromeBold(context)
+
+    /** Regular weight of the active body font (Literata Regular or Source Sans 3 wght=400). */
+    fun chrome(context: Context): Typeface =
+        if (bodyFont == "literata") font(context, LITERATA)
+        else cache.getOrPut("$SOURCE_SANS:wght400") {
+            Typeface.Builder(context.assets, SOURCE_SANS)
+                .setFontVariationSettings("'wght' 400")
+                .build()
+        }
+
+    /** Bold weight of the active body font (Literata wght=700 or Source Sans 3 wght=700). */
+    fun chromeBold(context: Context): Typeface =
         if (bodyFont == "literata") {
             cache.getOrPut("$LITERATA:wght700") {
                 Typeface.Builder(context.assets, LITERATA)
@@ -103,24 +112,11 @@ object ReaderTheme {
                     .build()
             }
         } else {
-            chromeBold(context)
-        }
-
-    /** Source Sans 3 at wght=400. The file defaults to wght=200 (ExtraLight), so we
-     *  must request 400 explicitly or all chrome text renders too thin on e-ink. */
-    fun chrome(context: Context): Typeface =
-        cache.getOrPut("$SOURCE_SANS:wght400") {
-            Typeface.Builder(context.assets, SOURCE_SANS)
-                .setFontVariationSettings("'wght' 400")
-                .build()
-        }
-
-    /** Source Sans 3 at wght=700 via variable-font axis — true bold, not synthetic. */
-    fun chromeBold(context: Context): Typeface =
-        cache.getOrPut("$SOURCE_SANS:wght700") {
-            Typeface.Builder(context.assets, SOURCE_SANS)
-                .setFontVariationSettings("'wght' 700")
-                .build()
+            cache.getOrPut("$SOURCE_SANS:wght700") {
+                Typeface.Builder(context.assets, SOURCE_SANS)
+                    .setFontVariationSettings("'wght' 700")
+                    .build()
+            }
         }
 
     @Synchronized

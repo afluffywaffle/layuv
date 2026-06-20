@@ -69,6 +69,7 @@ class AnnotationsPanelActivity : Activity() {
     private var swipeDownY = 0f
 
     // Root views rebuilt on data changes
+    private lateinit var editHeaderButton: TextView
     private lateinit var filterRow: HorizontalScrollView
     private lateinit var filterChips: LinearLayout
     private lateinit var listContainer: LinearLayout
@@ -115,6 +116,8 @@ class AnnotationsPanelActivity : Activity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
             setTextColor(ReaderTheme.INK_87)
         }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        editHeaderButton = textButton("Edit") { enterEditMode() }
+        headerRow.addView(editHeaderButton, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
         root.addView(headerRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
         root.addView(hDivider(), LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
@@ -541,10 +544,10 @@ class AnnotationsPanelActivity : Activity() {
     // Edit mode
     // -------------------------------------------------------------------------
 
-    private fun enterEditMode(firstSelected: String) {
+    private fun enterEditMode(firstSelected: String? = null) {
         editMode = true
         selectedIds.clear()
-        selectedIds.add(firstSelected)
+        if (firstSelected != null) selectedIds.add(firstSelected)
         rebuildList()
         updateBottomBar()
     }
@@ -608,8 +611,10 @@ class AnnotationsPanelActivity : Activity() {
     private fun updateBottomBar() {
         bottomBar.removeAllViews()
         if (editMode) {
+            editHeaderButton.visibility = View.GONE
             buildEditBar()
         } else {
+            editHeaderButton.visibility = View.VISIBLE
             buildInfoBar()
         }
     }
@@ -617,6 +622,17 @@ class AnnotationsPanelActivity : Activity() {
     private fun buildEditBar() {
         val cancelBtn = textButton("Cancel") { exitEditMode() }
         bottomBar.addView(cancelBtn, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
+
+        bottomBar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+
+        val allIds = visibleAnnotations().map { it.id }.toSet()
+        val allSelected = allIds.isNotEmpty() && selectedIds.containsAll(allIds)
+        val selectAllBtn = textButton(if (allSelected) "Deselect All" else "Select All") {
+            if (allSelected) selectedIds.clear() else selectedIds.addAll(allIds)
+            rebuildList()
+            updateBottomBar()
+        }
+        bottomBar.addView(selectAllBtn, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
 
         bottomBar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
 
@@ -664,7 +680,7 @@ class AnnotationsPanelActivity : Activity() {
             // Rounded border (2dp solid INK_87 when active, 1dp INK_38 when inactive)
             val borderColor = if (active) ReaderTheme.INK_87 else ReaderTheme.INK_38
             background = buildChipDrawable(borderColor, if (active) 2 else 1)
-            setOnTouchListener(PenTapListener(this@AnnotationsPanelActivity, onClick))
+            setOnTouchListener(PenTapListener(this@AnnotationsPanelActivity, onTap = onClick))
         }
     }
 
@@ -693,7 +709,7 @@ class AnnotationsPanelActivity : Activity() {
             gravity = Gravity.CENTER
             setPadding(dp(16f), dp(8f), dp(16f), dp(8f))
             minimumHeight = dp(48f)
-            setOnTouchListener(PenTapListener(this@AnnotationsPanelActivity, onClick))
+            setOnTouchListener(PenTapListener(this@AnnotationsPanelActivity, onTap = onClick))
         }
 
     private fun emptyLabel(): View = TextView(this).apply {

@@ -673,7 +673,7 @@ class SearchActivity : Activity() {
             gravity = Gravity.CENTER
             setPadding(dp(16f), dp(8f), dp(16f), dp(8f))
             minimumHeight = dp(48f)
-            setOnTouchListener(PenTapListener(this@SearchActivity, onClick))
+            setOnTouchListener(PenTapListener(this@SearchActivity, onTap = onClick))
         }
 
     /** Advance past any partial word at [pos] — finds the start of the next complete word. */

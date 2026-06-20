@@ -1,9 +1,11 @@
 package com.afluffywaffle.layuv.reader
 
 import android.app.Activity
+import android.content.Context
 import android.graphics.Canvas
 import android.graphics.drawable.ColorDrawable
 import android.text.TextUtils
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -29,6 +31,8 @@ import com.afluffywaffle.layuv.docx.model.AnnotationTool
  * Second long-press on the same tool toggles the confirm off without locking.
  */
 class AnnotationPopup(private val activity: Activity) {
+
+    var onDismiss: (() -> Unit)? = null
 
     private var popup: PopupWindow? = null
     private var overflowPopup: PopupWindow? = null
@@ -80,7 +84,7 @@ class AnnotationPopup(private val activity: Activity) {
         val btnSize = dp(64f)
         val hPad = dp(8f)
         val vPad = dp(8f)
-        val hasOverflow = onCopy != null || onShare != null
+        val hasOverflow = true // ••• always shows for outside-dismiss toggle
         val toolsBtnW = (tools.size + (if (hasOverflow) 1 else 0)) * btnSize
         // 1dp divider + 1 dismiss-X button appended after all tool/overflow buttons
         val toolStripW = toolsBtnW + dp(1f) + btnSize
@@ -213,7 +217,7 @@ class AnnotationPopup(private val activity: Activity) {
 
         val pw = PopupWindow(popupContent, popupW, WRAP_CONTENT, false).apply {
             setBackgroundDrawable(ColorDrawable(0x00000000))
-            isOutsideTouchable = false
+            isOutsideTouchable = (lockedTool != null) || isOutsideDismissEnabled()
             setOnDismissListener { popup = null }
         }
         popup = pw
@@ -248,7 +252,7 @@ class AnnotationPopup(private val activity: Activity) {
         val popupW = btnSize * 3 + dp(2f) + hPad * 2
         val iconExtent = ReaderTheme.dp(activity, ReaderTheme.ICON_DP)
 
-        fun iconButton(iconRes: Int, onClick: () -> Unit): View =
+        fun iconButton(iconRes: Int, label: String, onClick: () -> Unit): View =
             object : View(activity) {
                 override fun onDraw(canvas: Canvas) =
                     renderer.drawVecIcon(canvas, iconRes, width / 2f, height / 2f, iconExtent)
@@ -256,7 +260,7 @@ class AnnotationPopup(private val activity: Activity) {
                 layoutParams = LinearLayout.LayoutParams(btnSize, btnSize)
                 isClickable = true
                 isFocusable = true
-                setOnTouchListener(PenTapListener(activity, onClick))
+                setOnTouchListener(PenTapListener(activity, tag = "ActionPopup/$label", onTap = onClick))
             }
 
         val pill = LinearLayout(activity).apply {
@@ -264,17 +268,17 @@ class AnnotationPopup(private val activity: Activity) {
             gravity = Gravity.CENTER_VERTICAL
             setBackgroundResource(R.drawable.toolbar_bg)
             setPadding(hPad, vPad, hPad, vPad)
-            addView(iconButton(R.drawable.ic_chat_outline) { dismiss(); onComment() })
+            addView(iconButton(R.drawable.ic_chat_outline, "Comment") { dismiss(); onComment() })
             addView(View(activity).apply {
                 layoutParams = LinearLayout.LayoutParams(dp(1f), dp(44f))
                 setBackgroundColor(ReaderTheme.INK_12)
             })
-            addView(iconButton(R.drawable.ic_delete_outline) { dismiss(); onDelete() })
+            addView(iconButton(R.drawable.ic_delete_outline, "Delete") { dismiss(); onDelete() })
             addView(View(activity).apply {
                 layoutParams = LinearLayout.LayoutParams(dp(1f), dp(44f))
                 setBackgroundColor(ReaderTheme.INK_12)
             })
-            addView(iconButton(R.drawable.ic_close) { dismiss() })
+            addView(iconButton(R.drawable.ic_close, "Close") { dismiss() })
         }
 
         pill.measure(
@@ -285,7 +289,7 @@ class AnnotationPopup(private val activity: Activity) {
 
         val pw = PopupWindow(pill, popupW, WRAP_CONTENT, false).apply {
             setBackgroundDrawable(ColorDrawable(0x00000000))
-            isOutsideTouchable = false
+            isOutsideTouchable = isOutsideDismissEnabled()
             setOnDismissListener { popup = null }
         }
         popup = pw
@@ -294,10 +298,19 @@ class AnnotationPopup(private val activity: Activity) {
         anchor.getLocationInWindow(loc)
         val x = (loc[0] + anchorX - popupW / 2).coerceAtLeast(dp(8f))
         val y = (loc[1] + anchorY - popupH - dp(12f)).coerceAtLeast(dp(8f))
+        Log.d("AnnotationPopup", "showActions: anchorX=$anchorX anchorY=$anchorY " +
+            "anchorWin=(${loc[0]},${loc[1]}) popupW=$popupW popupH=$popupH finalX=$x finalY=$y")
         pw.showAtLocation(anchor, Gravity.TOP or Gravity.START, x, y)
     }
 
+    /** Dismiss and fire [onDismiss] (e.g. explicit ✕ or tool-tap). */
     fun dismiss() {
+        if (popup != null) onDismiss?.invoke()
+        dismissQuiet()
+    }
+
+    /** Dismiss without firing [onDismiss] — use when a gesture is already in flight. */
+    fun dismissQuiet() {
         lockConfirmPopup?.dismiss()
         lockConfirmPopup = null
         pendingLockTool = null
@@ -347,7 +360,7 @@ class AnnotationPopup(private val activity: Activity) {
 
         val lw = PopupWindow(card, cardW, WRAP_CONTENT, false).apply {
             setBackgroundDrawable(ColorDrawable(0x00000000))
-            isOutsideTouchable = false
+            isOutsideTouchable = isOutsideDismissEnabled()
             setOnDismissListener { lockConfirmPopup = null; pendingLockTool = null }
         }
         lockConfirmPopup = lw
@@ -371,7 +384,7 @@ class AnnotationPopup(private val activity: Activity) {
         setPadding(dp(14f), 0, dp(14f), 0)
         isClickable = true
         isFocusable = true
-        setOnTouchListener(PenTapListener(activity, onClick))
+        setOnTouchListener(PenTapListener(activity, onTap = onClick))
         val iconExtent = ReaderTheme.dp(activity, 18f)
         addView(object : View(activity) {
             override fun onDraw(canvas: Canvas) {
@@ -414,7 +427,14 @@ class AnnotationPopup(private val activity: Activity) {
         if (onShare != null) {
             if (addedOne) card.addView(hDivider())
             card.addView(overflowRow("Share") { dismiss(); onShare() })
+            addedOne = true
         }
+        val outsideDismiss = isOutsideDismissEnabled()
+        if (addedOne) card.addView(hDivider())
+        card.addView(overflowRow(if (outsideDismiss) "Tap outside: on" else "Tap outside: off") {
+            setOutsideDismissEnabled(!outsideDismiss)
+            dismiss()
+        })
 
         val w = dp(200f)
         card.measure(
@@ -470,5 +490,15 @@ class AnnotationPopup(private val activity: Activity) {
         setBackgroundColor(ReaderTheme.INK_12)
     }
 
+    private fun isOutsideDismissEnabled(): Boolean =
+        activity.getSharedPreferences("leamh", Context.MODE_PRIVATE)
+            .getBoolean("pref_outside_dismiss", false)
+
+    private fun setOutsideDismissEnabled(enabled: Boolean) {
+        activity.getSharedPreferences("leamh", Context.MODE_PRIVATE)
+            .edit().putBoolean("pref_outside_dismiss", enabled).apply()
+    }
+
     private fun dp(v: Float): Int = ReaderTheme.dp(activity, v).toInt()
+
 }

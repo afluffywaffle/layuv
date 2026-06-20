@@ -52,6 +52,7 @@ object LeamhDialog {
         val dialog = Dialog(context)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
         dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.window?.setElevation(0f)
 
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -140,6 +141,7 @@ object LeamhDialog {
         val dialog = Dialog(context)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
         dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.window?.setElevation(0f)
 
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -186,6 +188,7 @@ object LeamhDialog {
         val dialog = Dialog(context)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
         dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.window?.setElevation(0f)
 
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -263,7 +266,7 @@ object LeamhDialog {
             setPadding(hPad, vPad, hPad, vPad)
             isClickable = true
             isFocusable = true
-            setOnTouchListener(PenTapListener(context, onClick))
+            setOnTouchListener(PenTapListener(context, onTap = onClick))
         }
 
     private fun dp(context: Context, v: Float): Int = ReaderTheme.dp(context, v).toInt()
