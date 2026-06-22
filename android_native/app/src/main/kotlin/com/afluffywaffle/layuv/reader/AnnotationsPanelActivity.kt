@@ -602,9 +602,18 @@ class AnnotationsPanelActivity : Activity() {
         val ids = selectedIds.toSet()
         if (ids.isEmpty()) return
         val file = docxFile ?: return
+        // When deleting a single threaded annotation, spell out how many comments
+        // go with it (it carries a thread, not just a mark).
+        val selected = allAnnotations.filter { it.id in ids }
+        val message = if (selected.size == 1 && selected[0].threadEntries.isNotEmpty()) {
+            val n = selected[0].threadEntries.size
+            "Delete this annotation and its $n comment${if (n == 1) "" else "s"}?"
+        } else {
+            "Delete ${ids.size} annotation${if (ids.size == 1) "" else "s"}?"
+        }
         LeamhDialog.confirmDelete(
             context = this,
-            message = "Delete ${ids.size} annotation${if (ids.size == 1) "" else "s"}?",
+            message = message,
             skipPrefKey = null,
             onConfirm = {
                 // Set result before the async write so navigating back mid-write

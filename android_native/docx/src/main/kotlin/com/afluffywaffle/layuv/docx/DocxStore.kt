@@ -33,6 +33,7 @@ object DocxStore {
     private const val DOCUMENT = "word/document.xml"
     private const val CLEAN = "leamh/document_clean.xml"
     private const val COMMENTS = "word/comments.xml"
+    private const val COMMENTS_EXTENDED = "word/commentsExtended.xml"
     private const val DOC_RELS = "word/_rels/document.xml.rels"
     private const val COMMENTS_RELS = "word/_rels/comments.xml.rels"
     private const val CONTENT_TYPES = "[Content_Types].xml"
@@ -91,7 +92,7 @@ object DocxStore {
                 emptyList()
             }
             val legacy = archive.text(COMMENTS)?.let {
-                LegacyComments.parseComments(it, documentXml, map)
+                LegacyComments.parseComments(it, documentXml, map, archive.text(COMMENTS_EXTENDED))
             } ?: emptyList()
             native + legacy
         }
@@ -173,7 +174,9 @@ object DocxStore {
         entries[ANNOTATIONS] =
             JsonWriter.encode(annotations.map { it.toMap() }).toByteArray(Charsets.UTF_8)
 
-        val commentAnnotations = annotations.filter { it.note != null || it.tag != null || it.hasInk }
+        val commentAnnotations = annotations.filter {
+            it.note != null || it.tag != null || it.hasInk || it.threadEntries.isNotEmpty()
+        }
         val inkAnnotations = commentAnnotations.filter { it.hasInk }
 
         if (commentAnnotations.isNotEmpty()) {
@@ -197,6 +200,15 @@ object DocxStore {
             }
         } else if (entries.containsKey(COMMENTS)) {
             entries[COMMENTS] = CommentWriter.EMPTY_COMMENTS.toByteArray(Charsets.UTF_8)
+        }
+
+        // Clear Word's comment-threading sidecar (only when present) so its paraId
+        // references — which point at the original comment paragraphs we just
+        // rebuilt — can never dangle. We never create one: an absent file has
+        // nothing to clear, and adding an unreferenced part would only risk repair.
+        entries[COMMENTS_EXTENDED]?.let {
+            entries[COMMENTS_EXTENDED] =
+                CommentWriter.emptyCommentsExtended(it.toString(Charsets.UTF_8)).toByteArray(Charsets.UTF_8)
         }
 
         entries[CONTENT_TYPES]?.let {

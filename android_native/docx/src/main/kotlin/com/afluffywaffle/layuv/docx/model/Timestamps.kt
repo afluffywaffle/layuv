@@ -29,6 +29,19 @@ object Timestamps {
         )
     }
 
+    /**
+     * Short, human-readable UTC stamp (`yyyy-MM-dd HH:mm`) used to prefix
+     * thread-reply paragraphs in `word/comments.xml` so Word/Pages readers see
+     * when each reply was written. Display-only — Léamh re-reads thread data
+     * from `leamh/annotations.json`, never by parsing this prefix back.
+     */
+    fun formatThreadPrefix(epochMillis: Long): String {
+        val odt = Instant.ofEpochMilli(epochMillis).atOffset(ZoneOffset.UTC)
+        return "%04d-%02d-%02d %02d:%02d".format(
+            odt.year, odt.monthValue, odt.dayOfMonth, odt.hour, odt.minute,
+        )
+    }
+
     fun parse(s: String): Instant = try {
         Instant.parse(s)
     } catch (_: Exception) {

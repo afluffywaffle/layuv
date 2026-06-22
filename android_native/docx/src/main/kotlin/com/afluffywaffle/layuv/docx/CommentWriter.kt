@@ -11,13 +11,32 @@ import com.afluffywaffle.layuv.docx.model.Timestamps
  */
 object CommentWriter {
 
-    /** A `<w:comment>` whose author is the annotation id; body = note, [tag], ink drawing. */
+    /** A `<w:comment>` whose author is the annotation id; body = note/thread, [tag], ink drawing. */
     fun buildNoteComment(xmlId: Int, a: Annotation, inkRelId: String?): String {
-        val note = a.note
-        val noteXml = if (note != null && note.isNotEmpty()) {
-            "<w:p><w:r><w:t xml:space=\"preserve\">${XmlEntities.escape(note)}</w:t></w:r></w:p>"
+        // When the annotation carries a thread, each entry is its own paragraph:
+        // the first (== note) is plain; later entries (replies / added comments)
+        // are prefixed with their write time so Word/Pages readers see the thread.
+        // With no thread, behaviour is unchanged — a single note paragraph.
+        val noteXml = if (a.threadEntries.isNotEmpty()) {
+            buildString {
+                a.threadEntries.forEachIndexed { i, entry ->
+                    val text = if (i == 0) {
+                        entry.text
+                    } else {
+                        "[${Timestamps.formatThreadPrefix(entry.timestamp)}] ${entry.text}"
+                    }
+                    if (text.isNotEmpty()) {
+                        append("<w:p><w:r><w:t xml:space=\"preserve\">${XmlEntities.escape(text)}</w:t></w:r></w:p>")
+                    }
+                }
+            }
         } else {
-            ""
+            val note = a.note
+            if (note != null && note.isNotEmpty()) {
+                "<w:p><w:r><w:t xml:space=\"preserve\">${XmlEntities.escape(note)}</w:t></w:r></w:p>"
+            } else {
+                ""
+            }
         }
         val tagXml = if (a.tag != null) {
             "<w:p><w:r><w:t xml:space=\"preserve\">[${a.tag.name}]</w:t></w:r></w:p>"
@@ -59,6 +78,21 @@ object CommentWriter {
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
             "<w:comments" +
             " xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"/>"
+
+    private val COMMENT_EX_CHILD = Regex(
+        "<w15:commentEx\\b[^>]*/>|<w15:commentEx\\b[\\s\\S]*?</w15:commentEx>",
+    )
+
+    /**
+     * Strips every `<w15:commentEx>` child from a `word/commentsExtended.xml`
+     * payload, leaving the root element (and its namespaces) intact.
+     *
+     * Word's comment-threading sidecar links replies to parents by `w:paraId`.
+     * Léamh rebuilds `comments.xml` paragraphs without those ids, so any retained
+     * `commentEx` entry would dangle. We empty the part (rather than delete it) so
+     * its existing content-type override and document relationship stay valid.
+     */
+    fun emptyCommentsExtended(raw: String): String = raw.replace(COMMENT_EX_CHILD, "")
 
     /** Adds the document→comments relationship if not already present. */
     fun ensureRelsEntry(raw: String): String {

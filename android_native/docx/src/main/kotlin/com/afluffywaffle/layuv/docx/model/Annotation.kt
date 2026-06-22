@@ -9,6 +9,38 @@ fun newId(): String {
 }
 
 /**
+ * One comment in an annotation's thread. `source` is `"leamh"` (created in
+ * Léamh — editable/deletable) or `"word"` (imported from a Word reply chain —
+ * read-only). `timestamp` is epoch milliseconds.
+ *
+ * The thread, when non-empty, is the canonical comment body; [Annotation.note]
+ * mirrors the first entry's text for backward compatibility (older readers and
+ * the macOS app only know `note`). See [Annotation.threadEntries].
+ */
+data class ThreadEntry(
+    val text: String,
+    val timestamp: Long,
+    val source: String,
+) {
+    fun toMap(): Map<String, Any?> = linkedMapOf(
+        "text" to text,
+        "timestamp" to timestamp,
+        "source" to source,
+    )
+
+    companion object {
+        const val SOURCE_LEAMH = "leamh"
+        const val SOURCE_WORD = "word"
+
+        fun fromMap(map: Map<String, Any?>): ThreadEntry = ThreadEntry(
+            text = (map["text"] as? String) ?: "",
+            timestamp = (map["timestamp"] as? Number)?.toLong() ?: 0L,
+            source = (map["source"] as? String) ?: SOURCE_LEAMH,
+        )
+    }
+}
+
+/**
  * A Léamh annotation. Field-for-field mirror of lib/models/annotation.dart.
  *
  * [toMap]/[fromMap] reproduce Dart's `toJson`/`fromJson` structurally (the
@@ -27,6 +59,13 @@ data class Annotation(
     val timestamp: Instant,
     val position: Double = 0.0,
     val hasInk: Boolean = false,
+    /**
+     * Chronological comment thread. Empty for legacy/single-note annotations
+     * (the [note] field carries those). When non-empty, the first entry's text
+     * equals [note] (backward compatibility) and the thread is the source of
+     * truth for the comment body written to `word/comments.xml`.
+     */
+    val threadEntries: List<ThreadEntry> = emptyList(),
 ) {
     fun toMap(): Map<String, Any?> = linkedMapOf(
         "id" to id,
@@ -39,6 +78,7 @@ data class Annotation(
         "timestamp" to Timestamps.format(timestamp),
         "position" to position,
         "hasInk" to hasInk,
+        "threadEntries" to threadEntries.map { it.toMap() },
     )
 
     companion object {
@@ -59,6 +99,10 @@ data class Annotation(
                 timestamp = Timestamps.parse(timestampStr),
                 position = (map["position"] as? Number)?.toDouble() ?: 0.0,
                 hasInk = (map["hasInk"] as? Boolean) ?: false,
+                threadEntries = (map["threadEntries"] as? List<*>)
+                    ?.filterIsInstance<Map<String, Any?>>()
+                    ?.map { ThreadEntry.fromMap(it) }
+                    ?: emptyList(),
             )
         }
     }

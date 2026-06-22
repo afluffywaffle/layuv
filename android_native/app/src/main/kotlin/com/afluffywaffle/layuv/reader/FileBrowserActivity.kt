@@ -115,7 +115,10 @@ class FileBrowserActivity : Activity() {
                     val newMax = recentsCapFromHeight(h)
                     if (newMax != maxRecentsShown) {
                         maxRecentsShown = newMax
-                        renderRecents()
+                        // post() defers out of the current layout pass; addView() inside a
+                        // layout change listener causes requestLayout() to be ignored, leaving
+                        // all children with h=0.
+                        post { renderRecents() }
                     }
                 }
             }
@@ -218,8 +221,12 @@ class FileBrowserActivity : Activity() {
         val raw = prefs.getString("recent_files", null) ?: return emptyList()
         return try {
             val arr = JSONArray(raw)
-            (0 until arr.length()).map { arr.getString(it) }.filter { File(it).exists() }
-        } catch (e: Exception) { emptyList() }
+            val all = (0 until arr.length()).map { arr.getString(it) }
+            all.filter { File(it).exists() }
+        } catch (e: Exception) {
+            android.util.Log.e("LeamhBrowser", "loadRecents parse failed", e)
+            emptyList()
+        }
     }
 
     // --- Browser -------------------------------------------------------------

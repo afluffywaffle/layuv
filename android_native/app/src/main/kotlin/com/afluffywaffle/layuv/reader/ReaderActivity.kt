@@ -36,6 +36,7 @@ import com.afluffywaffle.layuv.docx.model.AnnotationTag
 import com.afluffywaffle.layuv.docx.model.AnnotationTool
 import com.afluffywaffle.layuv.docx.model.ReadingMode
 import com.afluffywaffle.layuv.docx.model.ReadingPosition
+import com.afluffywaffle.layuv.docx.model.ThreadEntry
 import com.afluffywaffle.layuv.docx.model.newId
 import java.io.File
 import java.time.Instant
@@ -755,10 +756,11 @@ class ReaderActivity : Activity() {
                     val tool = AnnotationTool.fromName(data?.getStringExtra(NoteActivity.EXTRA_RESULT_TOOL))
                     val note = data?.getStringExtra(NoteActivity.EXTRA_NOTE)
                     val tag  = AnnotationTag.fromName(data?.getStringExtra(NoteActivity.EXTRA_RESULT_TAG))
+                    val threads    = ThreadJson.decode(data?.getStringExtra(NoteActivity.EXTRA_THREAD_JSON))
                     val ink        = readTempBytes(NoteActivity.FILE_RESULT_PNG)
                     val inkId      = data?.getStringExtra(NoteActivity.EXTRA_INK_ID)
                     val strokeJson = readTempText(NoteActivity.FILE_RESULT_JSON)
-                    commitAnnotationFromPanel(tool, note, tag, ink, inkId, strokeJson)
+                    commitAnnotationFromPanel(tool, note, tag, ink, inkId, strokeJson, threads)
                 } else {
                     readerView.cancelSelection()
                 }
@@ -790,6 +792,7 @@ class ReaderActivity : Activity() {
                     val tool  = AnnotationTool.fromName(data?.getStringExtra(NoteActivity.EXTRA_RESULT_TOOL))
                     val note  = data?.getStringExtra(NoteActivity.EXTRA_NOTE)?.takeIf { it.isNotEmpty() }
                     val tag   = AnnotationTag.fromName(data?.getStringExtra(NoteActivity.EXTRA_RESULT_TAG))
+                    val threads    = ThreadJson.decode(data?.getStringExtra(NoteActivity.EXTRA_THREAD_JSON))
                     val ink        = readTempBytes(NoteActivity.FILE_RESULT_PNG)
                     val inkId      = data?.getStringExtra(NoteActivity.EXTRA_INK_ID)
                     val strokeJson = readTempText(NoteActivity.FILE_RESULT_JSON)
@@ -806,6 +809,7 @@ class ReaderActivity : Activity() {
                         note    = note,
                         tag     = tag,
                         hasInk  = ink != null || ann.annotation.hasInk,
+                        threadEntries = threads,
                     )
                     val newList = opened.doc.annotations.map { it.annotation }
                         .map { if (it.id == updated.id) updated else it }
@@ -1089,8 +1093,11 @@ class ReaderActivity : Activity() {
         }
         val intent = Intent(this, NoteActivity::class.java)
             .putExtra(NoteActivity.EXTRA_NOTE, resolved.annotation.note ?: "")
+            .putExtra(NoteActivity.EXTRA_THREAD_JSON, ThreadJson.encode(resolved.annotation.threadEntries))
+            .putExtra(NoteActivity.EXTRA_TIMESTAMP, resolved.annotation.timestamp.toEpochMilli())
             .putExtra(NoteActivity.EXTRA_SELECTED_TEXT, resolved.annotation.selectedText)
             .putExtra(NoteActivity.EXTRA_INITIAL_TOOL, resolved.annotation.tool.name)
+            .putExtra(NoteActivity.EXTRA_INITIAL_TAG, resolved.annotation.tag?.name)
             .putExtra(NoteActivity.EXTRA_INITIAL_INK_ID, resolved.annotation.id)
         startActivityForResult(intent, REQ_RETOOL_NOTE)
     }
@@ -1106,6 +1113,7 @@ class ReaderActivity : Activity() {
         inkBytes: ByteArray?,
         inkId: String?,
         strokeJson: String? = null,
+        threadEntries: List<ThreadEntry> = emptyList(),
     ) {
         val opened = book ?: return
         val file = opened.file ?: run {
@@ -1135,6 +1143,7 @@ class ReaderActivity : Activity() {
             timestamp    = java.time.Instant.now(),
             position     = position,
             hasInk       = inkBytes != null,
+            threadEntries = threadEntries,
         )
 
         readerView.cancelSelection()
