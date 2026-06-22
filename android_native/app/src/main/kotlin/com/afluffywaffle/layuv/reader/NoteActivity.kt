@@ -6,6 +6,11 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
+import android.graphics.Canvas
+import android.graphics.ColorFilter
+import android.graphics.Paint
+import android.graphics.PixelFormat
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.TextUtils
@@ -19,6 +24,7 @@ import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.Space
 import android.widget.TextView
 import com.afluffywaffle.layuv.R
 import com.afluffywaffle.layuv.docx.model.AnnotationTag
@@ -350,8 +356,10 @@ class NoteActivity : Activity() {
             ChromeIconButton(this, R.drawable.ic_arrow_back) { handleBack() },
             LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT),
         )
-        // Invisible spacer pushes the Save pill to the right edge.
-        header.addView(View(this), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        // Space (not View) as the flex spacer: View.getDefaultSize returns the full
+        // AT_MOST spec-size for WRAP_CONTENT, inflating the header to screen height.
+        // Space.onMeasure returns 0 for AT_MOST, so the header stays wrap-content.
+        header.addView(Space(this), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
 
         val saveBtn = TextView(this).apply {
             text = "Save"
@@ -449,12 +457,11 @@ class NoteActivity : Activity() {
     }
 
     private fun buildQuoteBox(text: String): View {
-        val frame = FrameLayout(this)
-        frame.addView(
-            View(this).apply { setBackgroundColor(ReaderTheme.INK_38) },
-            FrameLayout.LayoutParams(dp(3f), FrameLayout.LayoutParams.MATCH_PARENT),
-        )
-        frame.addView(TextView(this).apply {
+        // Draw the left-edge accent bar as a background Drawable so no child View
+        // with MATCH_PARENT height inflates the container to screen height.
+        val barWidth = dp(3f).toFloat()
+        val barColor = ReaderTheme.INK_38
+        return TextView(this).apply {
             this.text = text.take(200)
             typeface = ReaderTheme.bodyItalic(this@NoteActivity)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, (bodySizeSp - 1f).coerceAtLeast(14f))
@@ -462,8 +469,14 @@ class NoteActivity : Activity() {
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
             setPadding(dp(14f), dp(4f), 0, dp(4f))
-        }, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-        return frame
+            background = object : Drawable() {
+                private val paint = Paint().apply { color = barColor; style = Paint.Style.FILL }
+                override fun draw(c: Canvas) { c.drawRect(0f, 0f, barWidth, bounds.height().toFloat(), paint) }
+                override fun setAlpha(a: Int) = Unit
+                override fun setColorFilter(f: ColorFilter?) = Unit
+                @Suppress("DEPRECATION") override fun getOpacity() = PixelFormat.TRANSPARENT
+            }
+        }
     }
 
     /** Compose field + Add/Save button — feeds the thread. */

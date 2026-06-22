@@ -36,7 +36,7 @@
             android:name=".reader.NoteActivity"
             android:exported="false"
             android:theme="@style/Theme.Leamh"
-            android:windowSoftInputMode="stateAlwaysVisible|adjustResize" />
+            android:windowSoftInputMode="stateHidden|adjustResize" />
 
         <activity
             android:name=".reader.AnnotationsPanelActivity"
