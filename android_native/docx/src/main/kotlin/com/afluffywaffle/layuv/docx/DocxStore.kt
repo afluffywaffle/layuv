@@ -47,7 +47,9 @@ object DocxStore {
         // run-property injection doesn't change the plain text, so the string is
         // the same either way, but the clean copy is the canonical source.
         val documentXml = archive.text(CLEAN) ?: archive.text(DOCUMENT) ?: ""
-        val map = PlainTextMapper.build(documentXml)
+        val stylesXml = archive.text("word/styles.xml")
+        val styles = if (stylesXml != null) StyleResolver.parse(stylesXml) else null
+        val map = PlainTextMapper.build(documentXml, styles)
         return LoadedDocument(
             plainMap = map,
             annotations = loadAnnotations(archive, map, documentXml, now),
@@ -172,6 +174,7 @@ object DocxStore {
             JsonWriter.encode(annotations.map { it.toMap() }).toByteArray(Charsets.UTF_8)
 
         val commentAnnotations = annotations.filter { it.note != null || it.tag != null || it.hasInk }
+        val inkAnnotations = commentAnnotations.filter { it.hasInk }
 
         if (commentAnnotations.isNotEmpty()) {
             entries[COMMENTS] =
@@ -180,11 +183,17 @@ object DocxStore {
                 entries[DOC_RELS] =
                     CommentWriter.ensureRelsEntry(it.toString(Charsets.UTF_8)).toByteArray(Charsets.UTF_8)
             }
-            val inkAnnotations = commentAnnotations.filter { it.hasInk }
             if (inkAnnotations.isNotEmpty()) {
                 val existingRels = entries[COMMENTS_RELS]?.toString(Charsets.UTF_8)
                 entries[COMMENTS_RELS] =
                     CommentWriter.buildCommentsRels(inkAnnotations, existingRels).toByteArray(Charsets.UTF_8)
+                // Also add image rels to document.xml.rels so the inline drawing paragraph
+                // (injected below) resolves in Pages and Google Docs.
+                entries[DOC_RELS]?.let {
+                    entries[DOC_RELS] =
+                        CommentWriter.ensureDocInkRels(it.toString(Charsets.UTF_8), inkAnnotations)
+                            .toByteArray(Charsets.UTF_8)
+                }
             }
         } else if (entries.containsKey(COMMENTS)) {
             entries[COMMENTS] = CommentWriter.EMPTY_COMMENTS.toByteArray(Charsets.UTF_8)
@@ -195,7 +204,13 @@ object DocxStore {
         }
 
         entries[DOCUMENT]?.let {
-            val injected = RunPropertyInjector.inject(it.toString(Charsets.UTF_8), annotations, commentAnnotations)
+            var injected = RunPropertyInjector.inject(it.toString(Charsets.UTF_8), annotations, commentAnnotations)
+            // Insert an inline drawing paragraph after each ink annotation's paragraph so the
+            // image is visible in Pages and Google Docs (which ignore images in comment bodies).
+            if (inkAnnotations.isNotEmpty()) {
+                val commentIdMap = commentAnnotations.withIndex().associate { (i, a) -> a.id to i }
+                injected = InkAnchorInjector.inject(injected, inkAnnotations, commentIdMap)
+            }
             entries[DOCUMENT] = injected.toByteArray(Charsets.UTF_8)
         }
     }

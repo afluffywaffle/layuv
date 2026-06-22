@@ -9,8 +9,13 @@ object InkDrawing {
     const val CX = 3657600 // 4 inches
     const val CY = 1828800 // 2 inches
 
+    /** Rel ID used in `word/_rels/comments.xml.rels` — references image from comment body. */
     fun relId(annotationId: String): String =
         "rId_ink_" + annotationId.replace(Regex("[^a-zA-Z0-9_]"), "_")
+
+    /** Rel ID used in `word/_rels/document.xml.rels` — references image from document body paragraph. */
+    fun docRelId(annotationId: String): String =
+        "rId_ink_doc_" + annotationId.replace(Regex("[^a-zA-Z0-9_]"), "_")
 
     /**
      * [drawingId] must be unique across all drawings in the document; callers

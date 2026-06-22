@@ -382,6 +382,7 @@ class NoteActivity : Activity() {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, bodySizeSp)
         setTextColor(ReaderTheme.INK_87)
         setHintTextColor(0xFF9E9A92.toInt())
+        setHighlightColor(android.graphics.Color.argb(60, 0, 0, 0)) // e-ink-safe: light grey, not system dark fill
         hint = "Write your note… (optional)"
         minLines = 4
         gravity = Gravity.TOP or Gravity.START

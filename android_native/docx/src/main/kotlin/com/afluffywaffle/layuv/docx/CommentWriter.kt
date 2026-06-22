@@ -72,7 +72,25 @@ object CommentWriter {
     }
 
     private val INK_REL_PATTERN = Regex("<Relationship[^>]+rId_ink_[^>]*/?>")
+    private val INK_DOC_REL_PATTERN = Regex("<Relationship[^>]+rId_ink_doc_[^>]*/?>")
     private val ANY_REL_PATTERN = Regex("<Relationship [^>]*/?>")
+
+    /**
+     * Ensures `word/_rels/document.xml.rels` contains image relationships for
+     * [inkAnnotations] using [InkDrawing.docRelId]. Existing Léamh ink-doc rels
+     * are stripped and rebuilt; all other entries are preserved.
+     */
+    fun ensureDocInkRels(raw: String, inkAnnotations: List<Annotation>): String {
+        val stripped = raw.replace(INK_DOC_REL_PATTERN, "")
+        val newEntries = inkAnnotations.joinToString("\n") { a ->
+            "<Relationship Id=\"${InkDrawing.docRelId(a.id)}\"" +
+                " Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\"" +
+                " Target=\"media/ink_${a.id}.png\"/>"
+        }
+        val expanded = stripped.replace("<Relationships/>", "<Relationships></Relationships>")
+        return expanded.replaceFirst("</Relationships>", "$newEntries\n</Relationships>")
+    }
+
     /**
      * Rebuilds `word/_rels/comments.xml.rels` for [inkAnnotations].
      *

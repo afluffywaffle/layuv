@@ -10,9 +10,9 @@
 
 | Platform | Delivery | Status |
 |---|---|---|
-| macOS | Standalone app | Active — Flutter now, Swift/SwiftUI rewrite planned |
-| iPad / iPhone | Standalone app | Active — Flutter now, Swift/SwiftUI rewrite planned |
-| Supernote Nomad/Manta | Native Kotlin APK (sideload) | Active — native rewrite in `android_native/`; Flutter APK retired for Supernote |
+| macOS | Standalone app | Active — Swift/SwiftUI (`macos_native/`); Flutter archived |
+| iPad / iPhone | Standalone app | Planned — Swift port of macOS app; Flutter archived |
+| Supernote Nomad/Manta | Native Kotlin APK (sideload) | Active — `android_native/`; Flutter retired |
 
 **Native Android port (`android_native/`) — THE active product:** Native Kotlin app for Supernote Nomad/Manta. Flutter codebase archived to `archive/flutter/` 2026-06-17 — Flutter's compositor fought e-ink partial refresh. The pure-JVM `docx/` engine (parse, anchor, read incl. native-format + comment import fallback, full write-back) is complete and golden-tested (`cd android_native && ./gradlew :docx:test`). Engine is the authority — goldens are generated from correct native output, not Dart. Reader uses one clean canonical plain-text string for both render and anchor, drawn by `StaticLayout` over a `LAYER_TYPE_SOFTWARE` `View` owning the EPD waveforms (not Compose). See `android_native/README.md` and CLAUDE.md.
 
@@ -28,21 +28,21 @@
 
 ## In Progress 🔧
 
-### Native Android port (`android_native/`) — reader UI
+### Native Android port (`android_native/`) — reader UI ✅ COMPLETE (2026-06-21)
 - [x] Pure-JVM `docx/` engine — plain-text mapper, anchoring, model, read path, native/comment import fallback, full write-back; all golden + JVM-verified ✅
-- [ ] `:app` Android module (depends on `:docx`; Onyx SDK; minSdk for Nomad/Manta)
-- [ ] DOCX reader — `StaticLayout` over the clean canonical string, line-sliced pagination, newspaper two-column (default by screen size + toggle), Literata body
-- [ ] Software-layer `ReaderView` + `EpdController` page-turn waveforms (no animation)
-- [ ] Large-tap-zone navigation (prev/next), reading-position persistence (`DocxStore.writePosition`)
-- [ ] Text selection → annotation (word-snap, dotted-underline highlight render)
-- [ ] **Device spikes (Supernote, no stylus needed):** EPD waveform availability + page-turn ghosting cadence; whole-book `StaticLayout` timing/memory on Nomad & Manta; dotted-underline on EPD; selection-drag partial refresh
-- [ ] **Ink — investigation COMPLETE, implementation pending.** The correct Supernote ink path is the native **drawPath** low-latency service (NOT the Onyx `InkCanvasView`/`EpdController` POC — that's Boox and likely no-ops on Ratta). Confirmed working live on the Nomad. Full protocol, architecture, and exact next steps in **[Supernote drawPath low-latency ink](#supernote-drawpath-low-latency-ink--investigation-complete-implementation-pending)** below.
+- [x] `:app` Android module (depends on `:docx`; Onyx SDK; minSdk for Nomad/Manta) ✅
+- [x] DOCX reader — `StaticLayout` over the clean canonical string, line-sliced pagination, newspaper two-column (default by screen size + toggle), Literata body ✅
+- [x] Software-layer `ReaderView` + EPD waveforms (no animation) ✅
+- [x] Large-tap-zone navigation (prev/next), reading-position persistence (`DocxStore.writePosition`) ✅
+- [x] Text selection → annotation (word-snap, dotted-underline highlight render) ✅
+- [x] **Device spikes (Supernote):** confirmed on Nomad — page-turn ghosting, StaticLayout memory, dotted-underline, selection-drag partial refresh all resolved ✅
+- [x] **Ink — COMPLETE.** `InkNoteActivity` + `InkCanvasView` using drawPath hardware overlay; 3 tools (THIN/THICK/ERASER with lasso-circle-erase); real-time per-MOVE invalidate; PNG + stroke JSON save; panel thumbnails + tap-to-edit. Full protocol notes retained below. ✅
 
 ---
 
-## Supernote drawPath low-latency ink — investigation COMPLETE, implementation pending
+## Supernote drawPath low-latency ink — COMPLETE
 
-> **Status (2026-06-09):** Reverse-engineering + on-device proof DONE on a real Nomad. Implementation paused. Everything needed to resume is below. This supersedes the old "Flutter canvas vs native SurfaceView" spike plan for Supernote — the native port owns ink now, via drawPath.
+> **Status (2026-06-21):** Reverse-engineering + on-device proof DONE on a real Nomad. Implementation COMPLETE — `InkNoteActivity` + `InkCanvasView` built with drawPath hardware overlay integration, 3 tools (THIN/THICK/ERASER), real-time per-MOVE invalidate, PNG + stroke JSON save, panel thumbnails + tap-to-edit. Protocol notes below remain useful for future maintenance and de-Onyx work.
 
 ### Where the test lives — IMPORTANT
 The ink test is **NOT a separate app**. It is built **into the existing native port `:app`** (`applicationId = com.afluffywaffle.layuv.dev`) as additive, clearly-marked SPIKE files — it reuses that module's build/signing and installs as part of the same dev APK, but is **hidden** (no launcher icon) and launched directly. It does **not** touch any reader code.
@@ -109,10 +109,10 @@ The AssistiveTouch repo itself is just a floating overlay button (Accessibility 
 ### Open items / exact next steps
 - [x] **CONFIRMED 2026-06-09** — disable **FlagRect flag**: `flag 0` = disable/non-writable (blacklist, rest writable) → use for chrome; `flag 1` = writable whitelist (blocks everything else). Harness `fullInit` updated to `flag 0`.
 - [x] **CONFIRMED 2026-06-09** — `clearScreen` (code 6, `app + int 255`) flushes drawPath's buffer; strokes vanish from the EPD. Replaces the no-op `invalidate()` clear.
+- [x] **Build the real ink layer** (capture → preview → commit → persist via `InkDrawing.kt` → redraw); `DrawPathClient` promoted; `InkNoteActivity`/`InkCanvasView` built. ✅ Done 2026-06-21.
 - [ ] **Hidden-API:** find a non-reflection route to the binder, OR accept the policy workaround. The real app **cannot** rely on `adb shell settings put global hidden_api_policy 0` (test-only). (It was set to `0` on the device for testing — restore with `settings put global hidden_api_policy null`.)
-- [ ] **Reader-wide refresh concern (now has a fix):** the native port's `app/.../reader/Epd.kt` uses the **Onyx** `EpdController` (Boox) — likely a no-op on Ratta, so page-turn / selection refreshes in the READER may be broken on Supernote. **Fix = `android.os.EinkManager`** via `getSystemService("eink")` (`sendOneFullFrame()` / `screenRefresh()` / `setScreenMode(CLEAR/SMOOTH/SPEED)`) — see the EinkManager table above. Rework `Epd.kt` onto this. Affects more than ink.
+- [ ] **Reader-wide refresh / de-Onyx:** `app/.../reader/Epd.kt` still uses the **Onyx** `EpdController` (Boox) — likely a no-op on Ratta. **Fix = `android.os.EinkManager`** via `getSystemService("eink")` (`sendOneFullFrame()` / `screenRefresh()` / `setScreenMode(CLEAR/SMOOTH/SPEED)`) — see the EinkManager table above. Rework `Epd.kt` onto this (`RattaEink` wrapper exists, just not wired to reader yet).
 - [ ] **Try `EinkManager.setScreenMode`** waveform modes (`CLEAR/DEFAULT/SMOOTH/SPEED`) for page turns — not yet tested.
-- [ ] Build the real ink layer (capture → preview → commit → persist via `InkDrawing.kt` → redraw); promote `DrawPathClient`, delete the spike harness.
 - [ ] Optional: regional refresh via `hteink`/`eink` for flash-free erase.
 
 ### Device / RE setup notes
@@ -262,6 +262,21 @@ The four Dart tools in `android_native/tools/golden_gen/` import `package:layuv/
 
 **Dart tools in `android_native/tools/golden_gen/` remain for reference** but are no longer the path to regenerate goldens.
 
+### Known bugs — Android native (e-ink)
+
+- [ ] **Pen dragging text selection handles renders dashed lasso lines** — `EinkPen.configureLasso()` sets drawPath to dotted lasso mode at startup; any stylus drag (including handle-drag) renders the lasso visual. Need to switch drawPath pen mode to a non-lasso config when handles are being dragged, and restore lasso mode after drag ends.
+- [ ] **Text selection highlight in annotations panel is unreadable on e-ink** — system selection colour is a dark filled rect; on greyscale e-ink it renders near-black, making selected text invisible. Override the selection colour to a light dotted underline or low-opacity tint that is legible on e-ink.
+- [x] ✅ **Comment tool (toolbar) didn't save annotations** — `commitAnnotationFromPanel` was missing the optimistic update that `commitAnnotation` has; the smart-merge in `saveAnnotations.onSuccess` saw a stale `currentBook.doc` and fell into the mismatch branch, never calling `readerView.updateAnnotations`. Fixed 2026-06-21: added optimistic `book` + `readerView.updateAnnotations` before `saveAnnotations`. `ReaderActivity.kt:1082–1130`.
+- [x] ✅ **Ink annotations displayed in panel with thumbnail + tap-to-edit** — `AnnotationsPanelActivity` now decodes ink PNGs in the IO thread (`loadAnnotations`) and stores them in `inkBitmaps`. `buildRow` shows a 96dp greyscale thumbnail for any annotation with `hasInk=true`. Tapping an ink row returns `EXTRA_OPEN_INK_ID` to `ReaderActivity`, which calls `editAnnotationNote` to open the ink editor. Fixed 2026-06-21.
+
+### Ink image visibility in Pages and Google Docs
+
+Currently ink PNG lives inside `word/comments.xml` via `<w:drawing>` — Word renders it but Pages and Google Docs do not (neither app supports images inside comment bodies). Three options evaluated (demo DOCX verified in Pages + Google Docs, 2026-06-19):
+
+- [ ] **Option 1 — Floating anchor in document.xml (preferred, most work):** write ink PNG as `<wp:anchor>` in `word/document.xml` pinned to the right margin at the annotated paragraph's vertical position. Visually identical to a margin sticky note. Requires: (a) inserting a new `<w:p>` with the anchor after the bookmark, (b) finding and removing the old anchor paragraph on re-edit/delete by scanning for `<wp:docPr name="ink_{id}"/>`, (c) wiring the image relationship into `document.xml.rels` rather than (or in addition to) `comments.xml.rels`. Does NOT currently touch `document.xml` outside bookmark injection — this would be the first write to body content.
+- [ ] **Option 2 — Inline block after annotated paragraph (simplest, universal):** write ink PNG as `<wp:inline>` in a new `<w:p>` immediately after the bookmark's paragraph, indented slightly. Renders as a block image in the text flow — slightly disruptive but visible in all three apps. Same cleanup requirement as option 1 (find + remove paragraph on edit/delete). Simpler XML (no anchor positioning math).
+- [ ] **Option 3 — "Ink Notes" appendix section (least invasive):** append a styled section at the end of the document listing each ink annotation's PNG beside its quoted passage. No changes to existing body paragraphs. Easy to implement cleanly but images are disconnected from their in-text location.
+
 ### E-ink nav — RTL direction support
 - [ ] Add a setting to reverse nav direction (right=prev, left=next) for RTL texts (Japanese light novels, etc.)
 - Currently: left strip = previous, right strip = next (LTR convention)
@@ -353,19 +368,38 @@ The four Dart tools in `android_native/tools/golden_gen/` import `package:layuv/
 - **Circle gesture → toolbar model** (Jun 2026): both linear scrub AND circle over text → text selected → annotation toolbar appears (circle-to-confirm bypass removed). `CircleTappable` (`lib/utils/circle_tappable.dart`) — `Listener`-based widget (below gesture arena); fires `onTap` if pen-up is within 90dp of pen-down AND press < `kLongPressTimeout`; pointer capture means pen-up reaches the widget even when the circle exits its visual bounds mid-stroke. `ToolButton` on e-ink uses `CircleTappable` + `GestureDetector(onLongPressStart only)`; toolbar buttons are 64×64dp, toolbar 80dp tall. `_dismissToolbar` calls `EinkPen.clearInk()` on e-ink to clear any lasso strokes drawn during a circle-over-icon gesture.
 - **RE dead ends confirmed (Jun 2026):** `setWalcomEmrInfo` (drawPath code 9) — probed values 0/1/50/100 on Manta, no pen-up delay difference; pen-up early-commit (pressure < 0.03f) remains the workaround. `EinkPwInternalY.postRectForPw` — operates on the drawPath PW hardware overlay layer only, not the app View layer; `view.invalidate()` / auto-EPD remains the correct path for app UI refreshes.
 
+### Native Android app — full reader + annotation flow ✅ (2026-06-21)
+- `:app` module builds sideloadable APK (`com.afluffywaffle.layuv.dev`)
+- `ReaderView` (`LAYER_TYPE_SOFTWARE`): per-column draw, edge-strip nav (80dp strips, both/left/right/none), bookmark scrubber
+- `Paginator`: whole-book `StaticLayout` sliced into column pages
+- Navigation + position persistence (saves on `onPause` + `onSaveInstanceState`; restores from DOCX `position.json` + SharedPrefs fallback)
+- Text selection → annotation: long-press/stylus drag + word-snap → `AnnotationPopup` (8 tools: highlight, underline, doubleUnderline, strikethrough, wavyUnderline, bookmark, comment, inkAnnotation)
+- `HighlightPainter`: dotted underline (highlight), solid underline/double/strikethrough, margin icons (`ToolIconRenderer`)
+- `AnnotationPopup`: floating tool picker + copy/share + locked-tool mode (`LockSlotView`) + undo pill
+- `AnnotationsPanelActivity`: filter chips, sectioned + paginated list, swipe-to-next-page, edit mode (checkboxes, delete, select-all); ink thumbnail display + tap-to-edit
+- `NoteActivity`: full annotation editor — tool selector, quote box, ink button (launches `InkNoteActivity`), note field, tag chips, save/update
+- `InkNoteActivity` + `InkCanvasView`: drawPath hardware overlay, 3 tools (THIN/THICK/ERASER where ERASER = lasso-circle-erase), rule lines, save PNG + stroke JSON; real-time per-MOVE invalidate; clears drawPath on exit
+- `SearchActivity`: full-text search with page-jump
+- `FileBrowserActivity`: split-view (recents top 1/3, browser bottom 2/3), folder icon, breadcrumb multi-column popup
+- `PageJumpOverlay`: scrub track with preview text, bookmark markers
+- `DrawPathClient`: binder wrapper, lasso (penType=4) for selection feedback, disable chrome band (flag=0), clearScreen (code 6); circle gesture = draw circle over text → text selected → popup appears
+- `LeamhDialog`: confirm dialog with "don't ask again" support
+- Overflow menu: font size, line spacing, columns, nav side, RTL, font family, flatten ink
+- `RattaEink`: `EinkManager` reflection wrapper (`sendOneFullFrame`, `screenRefresh`)
+- App icon: mipmap PNGs from `layuv.icon` SVG
+- Bug fix: comment tool wasn't saving — `commitAnnotationFromPanel` missing optimistic update; fixed 2026-06-21
+- Bug fix: ink annotation thumbnails in panel + tap-to-open-ink-editor; fixed 2026-06-21
+
 ---
 
 ## Device Testing
 
-### Running on macOS
+### Running on macOS (Swift app)
 ```bash
-flutter run -d macos
-```
-
-### Running on iPad / iPhone
-```bash
-flutter devices
-flutter run -d <id>
+DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcodebuild \
+  -project macos_native/LeamhApp/LeamhApp.xcodeproj \
+  -scheme LeamhApp -configuration Debug -sdk macosx build
+# Or open macos_native/LeamhApp/LeamhApp.xcodeproj in Xcode and run
 ```
 
 ### Running on Supernote Nomad/Manta (sideload)
@@ -374,22 +408,22 @@ flutter run -d <id>
 
 **Step 2** — Build debug APK:
 ```bash
-cd ~/Develop/layuv
-flutter build apk --debug
-# Output: build/app/outputs/flutter-apk/app-debug.apk
+cd android_native && ./gradlew :app:assembleDebug
+# Output: app/build/outputs/apk/debug/app-debug.apk
 ```
 
-**Step 3** — Transfer via USB (Finder → Supernote → Document folder) or email/cloud
-
-**Step 4** — Tap APK in Supernote file browser → Install
-
-**Step 5** — Logs via WiFi ADB (if firmware supports it):
+**Step 3** — Install via ADB (USB or WiFi) or copy APK to device and tap to install:
 ```bash
-adb connect 192.168.x.x:5555
-adb logcat | grep flutter
+~/Library/Android/sdk/platform-tools/adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-**Supernote constraints:** `viewPadding` all zeros; greyscale only; no Play Services; 2-col gated to `!isEink`
+**Step 4** — Logs via WiFi ADB:
+```bash
+~/Library/Android/sdk/platform-tools/adb connect <device-ip>:5555
+~/Library/Android/sdk/platform-tools/adb logcat -s LeamhActivity LeamhAnnotPanel InkNoteActivity
+```
+
+**Supernote constraints:** greyscale only; no Play Services; 2-col off on Nomad (auto-2-col threshold ≥ 1200dp); drawPath requires hidden-API policy 0 on test builds
 
 ---
 

@@ -41,6 +41,10 @@ class ReaderView(context: Context) : View(context) {
     var onAnnotationTapped: ((ResolvedAnnotation, anchorX: Int, anchorY: Int) -> Unit)? = null
     /** Asks the host to dismiss the tool popup (selection cleared, or a handle drag began). */
     var onHidePopup: (() -> Unit)? = null
+    /** Fired when a selection handle drag begins — host should suppress DrawPath ink overlay. */
+    var onHandleDragStart: (() -> Unit)? = null
+    /** Fired when a selection handle drag ends — host should restore DrawPath state. */
+    var onHandleDragEnd: (() -> Unit)? = null
 
     private val epd = Epd()
     private val highlights = HighlightPainter(context)
@@ -690,6 +694,7 @@ class ReaderView(context: Context) : View(context) {
                     if (hit != Handle.NONE) {
                         draggingHandle = hit
                         onHidePopup?.invoke() // hide the popup while dragging
+                        onHandleDragStart?.invoke()
                         epd.selection(this)
                         return true
                     }
@@ -698,9 +703,16 @@ class ReaderView(context: Context) : View(context) {
                     adjustHandle(event.x, event.y)
                     return true
                 }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (draggingHandle != Handle.NONE) {
+                MotionEvent.ACTION_UP -> if (draggingHandle != Handle.NONE) {
                     draggingHandle = Handle.NONE
+                    onHandleDragEnd?.invoke()
                     finishHandleAdjust()
+                    return true
+                }
+                MotionEvent.ACTION_CANCEL -> if (draggingHandle != Handle.NONE) {
+                    // Cancelled gesture — restore DrawPath but don't show the popup.
+                    draggingHandle = Handle.NONE
+                    onHandleDragEnd?.invoke()
                     return true
                 }
             }

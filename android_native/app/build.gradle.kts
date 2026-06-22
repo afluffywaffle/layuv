@@ -1,12 +1,12 @@
 // The Android reader for Supernote Nomad/Manta. Classic Views + a software-layer
-// custom ReaderView driven by the Onyx EpdController — NOT Compose (its retained
-// scene graph is the compositor trap this port exists to escape). Depends on the
-// pure-JVM :docx engine for all DOCX parse / anchor / write-back.
+// custom ReaderView — NOT Compose (its retained scene graph is the compositor
+// trap this port exists to escape). Depends on the pure-JVM :docx engine for
+// all DOCX parse / anchor / write-back.
 //
 // Repositories are NOT declared here: the settings.gradle.kts
-// dependencyResolutionManagement block (mavenCentral + google + boox) supplies
-// them. A module-level repositories{} block would, under Gradle's default
-// PREFER_PROJECT mode, REPLACE those for this module and drop google()/boox.
+// dependencyResolutionManagement block (mavenCentral + google) supplies them.
+// A module-level repositories{} block would, under Gradle's default
+// PREFER_PROJECT mode, REPLACE those for this module.
 plugins {
     id("com.android.application")
     kotlin("android")
@@ -54,6 +54,4 @@ kotlin {
 
 dependencies {
     implementation(project(":docx"))
-    // Onyx EpdController waveforms (no Google Play Services anywhere in this app).
-    implementation("com.onyx.android.sdk:onyxsdk-device:1.2.28")
 }

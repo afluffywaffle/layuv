@@ -34,6 +34,11 @@ class AnnotationPopup(private val activity: Activity) {
 
     var onDismiss: (() -> Unit)? = null
 
+    // Set to true during explicit dismissQuiet() so the PopupWindow.OnDismissListener
+    // skips onDismiss (we fire it manually in dismiss()). When the system dismisses
+    // externally, this is false and the listener fires onDismiss correctly.
+    private var suppressDismissCallback = false
+
     private var popup: PopupWindow? = null
     private var overflowPopup: PopupWindow? = null
     private var lockConfirmPopup: PopupWindow? = null
@@ -218,7 +223,7 @@ class AnnotationPopup(private val activity: Activity) {
         val pw = PopupWindow(popupContent, popupW, WRAP_CONTENT, false).apply {
             setBackgroundDrawable(ColorDrawable(0x00000000))
             isOutsideTouchable = (lockedTool != null) || isOutsideDismissEnabled()
-            setOnDismissListener { popup = null }
+            setOnDismissListener { popup = null; if (!suppressDismissCallback) onDismiss?.invoke() }
         }
         popup = pw
 
@@ -290,7 +295,7 @@ class AnnotationPopup(private val activity: Activity) {
         val pw = PopupWindow(pill, popupW, WRAP_CONTENT, false).apply {
             setBackgroundDrawable(ColorDrawable(0x00000000))
             isOutsideTouchable = isOutsideDismissEnabled()
-            setOnDismissListener { popup = null }
+            setOnDismissListener { popup = null; if (!suppressDismissCallback) onDismiss?.invoke() }
         }
         popup = pw
 
@@ -305,8 +310,9 @@ class AnnotationPopup(private val activity: Activity) {
 
     /** Dismiss and fire [onDismiss] (e.g. explicit ✕ or tool-tap). */
     fun dismiss() {
-        if (popup != null) onDismiss?.invoke()
+        val wasShowing = popup != null
         dismissQuiet()
+        if (wasShowing) onDismiss?.invoke()
     }
 
     /** Dismiss without firing [onDismiss] — use when a gesture is already in flight. */
@@ -316,7 +322,11 @@ class AnnotationPopup(private val activity: Activity) {
         pendingLockTool = null
         overflowPopup?.dismiss()
         overflowPopup = null
+        // Suppress the OnDismissListener's onDismiss callback — we only fire it
+        // from dismiss() (explicit) or let the listener fire it for system dismissals.
+        suppressDismissCallback = true
         popup?.dismiss()
+        suppressDismissCallback = false
         popup = null
     }
 

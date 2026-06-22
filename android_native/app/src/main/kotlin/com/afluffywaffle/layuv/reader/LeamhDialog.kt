@@ -212,6 +212,7 @@ object LeamhDialog {
             typeface = ReaderTheme.body(context)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
             setTextColor(ReaderTheme.INK_87)
+            setHighlightColor(android.graphics.Color.argb(60, 0, 0, 0)) // e-ink-safe selection colour
             inputType = InputType.TYPE_CLASS_NUMBER
             imeOptions = EditorInfo.IME_ACTION_GO
             gravity = Gravity.CENTER

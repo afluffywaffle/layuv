@@ -99,6 +99,7 @@ class SearchActivity : Activity() {
                     navigateResultPage(if (dx < 0) +1 else -1)
                 }
             }
+            MotionEvent.ACTION_CANCEL -> { swipeDownX = 0f; swipeDownY = 0f }
         }
         return super.dispatchTouchEvent(ev)
     }
@@ -166,6 +167,7 @@ class SearchActivity : Activity() {
             typeface = ReaderTheme.body(this@SearchActivity)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
             setTextColor(ReaderTheme.INK_87)
+            setHighlightColor(android.graphics.Color.argb(60, 0, 0, 0)) // e-ink-safe selection colour
             gravity = Gravity.CENTER_VERTICAL
             inputType = android.text.InputType.TYPE_CLASS_TEXT or
                         android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS

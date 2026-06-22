@@ -53,16 +53,28 @@ object PlainTextMapper {
         return v != "false" && v != "0" && v != "off" && v != "none"
     }
 
-    fun build(xml: String): PlainMap {
+    /**
+     * [styles] is optional: when provided (from [StyleResolver.parse]), paragraph
+     * styles (`<w:pStyle>`) and run character styles (`<w:rStyle>`) contribute to
+     * the effective bold/italic for each run. When null, only direct `<w:b>`/`<w:i>`
+     * properties are used (same as the previous behaviour).
+     */
+    fun build(xml: String, styles: Map<String, StyleResolver.Props>? = null): PlainMap {
         val sb = StringBuilder()
         val offsets = ArrayList<Int>()
         val formats = ArrayList<FormatSpan>()
-        // Direct run formatting, tracked only inside a <w:r> (so a <w:pPr> paragraph-
-        // mark rPr never leaks onto the text). Style-based bold/italic (rStyle /
-        // heading styles) is NOT resolved here — direct <w:b>/<w:i> only.
+        // Direct run formatting, tracked inside <w:r>.
         var inRun = false
         var runBold = false
         var runItalic = false
+        // Style-based formatting (paragraph level and run character style).
+        var inPPr = false   // inside <w:pPr> (only when NOT inside a run)
+        var inRPr = false   // inside <w:rPr> (only when inside a run)
+        var pStyleBold = false
+        var pStyleItalic = false
+        var rStyleBold = false
+        var rStyleItalic = false
+
         val n = xml.length
         var i = 0
         while (i < n) {
@@ -89,14 +101,29 @@ object PlainTextMapper {
                 val contentStart = gt + 1
                 val close = xml.indexOf(WT_CLOSE, contentStart)
                 val end = if (close < 0) n else close
-                val decoded = XmlEntities.decode(xml.substring(contentStart, end))
                 val spanStart = sb.length
-                for (j in decoded.indices) {
-                    sb.append(decoded[j])
-                    offsets.add(contentStart + j)
+                // Walk raw XML, decoding entities inline and recording each decoded
+                // char's raw start offset. Using decoded-string indices (contentStart+j)
+                // would be wrong after any entity whose raw length differs from 1.
+                var r = contentStart
+                while (r < end) {
+                    if (xml[r] == '&') {
+                        val semi = xml.indexOf(';', r)
+                        if (semi in r + 1 until end + 1) {
+                            val entity = xml.substring(r, semi + 1)
+                            val entityDecoded = XmlEntities.decode(entity)
+                            for (ch in entityDecoded) { sb.append(ch); offsets.add(r) }
+                            r = semi + 1
+                            continue
+                        }
+                    }
+                    sb.append(xml[r]); offsets.add(r)
+                    r++
                 }
-                if ((runBold || runItalic) && sb.length > spanStart) {
-                    formats.add(FormatSpan(spanStart, sb.length, runBold, runItalic))
+                val effBold   = runBold   || rStyleBold   || pStyleBold
+                val effItalic = runItalic || rStyleItalic || pStyleItalic
+                if ((effBold || effItalic) && sb.length > spanStart) {
+                    formats.add(FormatSpan(spanStart, sb.length, effBold, effItalic))
                 }
                 i = if (close < 0) n else close + WT_CLOSE.length
                 continue
@@ -109,16 +136,43 @@ object PlainTextMapper {
                 !isEnd && (name == "w:br" || name == "w:cr") -> {
                     sb.append('\n'); offsets.add(lt)
                 }
+                // New paragraph: reset paragraph-level style state.
+                !isEnd && !isSelfClose && name == "w:p" -> {
+                    pStyleBold = false; pStyleItalic = false; inPPr = false
+                }
                 isEnd && name == "w:p" -> {
                     sb.append('\n'); offsets.add(lt)
                 }
-                // Run formatting (display-only overlay; never touches sb/offsets).
+                // Paragraph properties block (only outside runs).
+                !isEnd && !isSelfClose && name == "w:pPr" && !inRun -> inPPr = true
+                isEnd && name == "w:pPr" -> inPPr = false
+                // Paragraph style reference → resolve bold/italic from the style map.
+                isSelfClose && name == "w:pStyle" && inPPr && styles != null -> {
+                    val sid = VAL_RE.find(tag)?.groupValues?.get(1)
+                    val sp = if (sid != null) styles[sid] else null
+                    pStyleBold   = sp?.bold   ?: false
+                    pStyleItalic = sp?.italic ?: false
+                }
+                // Run open/close.
                 !isEnd && !isSelfClose && name == "w:r" -> {
                     inRun = true; runBold = false; runItalic = false
+                    rStyleBold = false; rStyleItalic = false; inRPr = false
                 }
                 isEnd && name == "w:r" -> {
                     inRun = false; runBold = false; runItalic = false
+                    rStyleBold = false; rStyleItalic = false; inRPr = false
                 }
+                // Run properties block (only inside runs).
+                !isEnd && !isSelfClose && name == "w:rPr" && inRun -> inRPr = true
+                isEnd && name == "w:rPr" && inRun -> inRPr = false
+                // Run character style → resolve bold/italic.
+                isSelfClose && name == "w:rStyle" && inRun && inRPr && styles != null -> {
+                    val sid = VAL_RE.find(tag)?.groupValues?.get(1)
+                    val sp = if (sid != null) styles[sid] else null
+                    rStyleBold   = sp?.bold   ?: false
+                    rStyleItalic = sp?.italic ?: false
+                }
+                // Direct run bold/italic (override style-based; e.g. <w:b w:val="false"/>).
                 !isEnd && inRun && name == "w:b" -> runBold = toggleOn(tag)
                 !isEnd && inRun && name == "w:i" -> runItalic = toggleOn(tag)
             }

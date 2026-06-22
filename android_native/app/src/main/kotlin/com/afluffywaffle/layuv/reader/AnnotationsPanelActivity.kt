@@ -2,6 +2,10 @@ package com.afluffywaffle.layuv.reader
 
 import android.app.Activity
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Handler
@@ -38,8 +42,9 @@ import java.util.concurrent.Executors
 class AnnotationsPanelActivity : Activity() {
 
     companion object {
-        const val EXTRA_DOCX_PATH = "docx_path"
-        const val EXTRA_FRACTION  = "fraction"
+        const val EXTRA_DOCX_PATH    = "docx_path"
+        const val EXTRA_FRACTION     = "fraction"
+        const val EXTRA_OPEN_INK_ID  = "open_ink_id"
         private const val TAG = "LeamhAnnotPanel"
     }
 
@@ -49,6 +54,7 @@ class AnnotationsPanelActivity : Activity() {
     private var allAnnotations: List<Annotation> = emptyList()
     private var docxFile: File? = null
     private var docxBytes: ByteArray? = null
+    private var inkBitmaps: Map<String, Bitmap> = emptyMap()
 
     // Filter chips — set of active tool-type filters (empty = show all)
     private val activeFilters = mutableSetOf<AnnotationTool>()
@@ -203,10 +209,19 @@ class AnnotationsPanelActivity : Activity() {
             try {
                 val bytes = file.readBytes()
                 val doc = DocxStore.load(bytes)
+                val sorted = doc.annotations.map { it.annotation }.sortedBy { it.position }
+                val bitmaps = sorted
+                    .filter { it.hasInk }
+                    .mapNotNull { ann ->
+                        val png = DocxStore.readInkPng(bytes, ann.id) ?: return@mapNotNull null
+                        val bm = BitmapFactory.decodeByteArray(png, 0, png.size)
+                            ?: return@mapNotNull null
+                        ann.id to bm
+                    }.toMap()
                 main.post {
                     docxBytes = bytes
-                    allAnnotations = doc.annotations.map { it.annotation }
-                        .sortedBy { it.position }
+                    allAnnotations = sorted
+                    inkBitmaps = bitmaps
                     refreshAll()
                 }
             } catch (e: Exception) {
@@ -365,6 +380,7 @@ class AnnotationsPanelActivity : Activity() {
                     navigatePage(if (dx < 0) +1 else -1)
                 }
             }
+            MotionEvent.ACTION_CANCEL -> { swipeDownX = 0f; swipeDownY = 0f }
         }
         return super.dispatchTouchEvent(ev)
     }
@@ -517,6 +533,21 @@ class AnnotationsPanelActivity : Activity() {
                 ellipsize = android.text.TextUtils.TruncateAt.END
             })
         }
+        // Ink thumbnail — shown for any annotation that has ink attached.
+        val bm = if (ann.hasInk) inkBitmaps[ann.id] else null
+        if (bm != null) {
+            val imgView = ImageView(this).apply {
+                setImageBitmap(bm)
+                scaleType = ImageView.ScaleType.FIT_START
+                adjustViewBounds = true
+                // Desaturate to greyscale for e-ink display.
+                colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(0f) })
+            }
+            textCol.addView(
+                imgView,
+                LinearLayout.LayoutParams(MATCH_PARENT, dp(96f)).apply { topMargin = dp(6f) },
+            )
+        }
         row.addView(textCol, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
 
         if (editMode) {
@@ -527,10 +558,18 @@ class AnnotationsPanelActivity : Activity() {
                 updateBottomBar()
             })
         } else {
-            row.setOnTouchListener(PenTapListener(this) {
-                setResult(RESULT_OK, Intent().putExtra(EXTRA_FRACTION, ann.position))
-                finish()
-            })
+            if (ann.hasInk) {
+                // Ink annotations open the ink editor instead of jumping in the reader.
+                row.setOnTouchListener(PenTapListener(this) {
+                    setResult(RESULT_OK, Intent().putExtra(EXTRA_OPEN_INK_ID, ann.id))
+                    finish()
+                })
+            } else {
+                row.setOnTouchListener(PenTapListener(this) {
+                    setResult(RESULT_OK, Intent().putExtra(EXTRA_FRACTION, ann.position))
+                    finish()
+                })
+            }
             row.setOnLongClickListener {
                 enterEditMode(ann.id)
                 true

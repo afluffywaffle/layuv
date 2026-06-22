@@ -54,6 +54,7 @@ object DocxWriteQueue {
             try {
                 val base = file.readBytes()
                 val out = transform(base)
+                if (out.isEmpty()) throw IOException("transform returned zero bytes for ${file.name}")
                 writeAtomicDurable(file, out)
                 onSuccess(out)
             } catch (e: Exception) {

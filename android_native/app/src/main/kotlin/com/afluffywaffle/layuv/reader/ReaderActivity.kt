@@ -265,6 +265,18 @@ class ReaderActivity : Activity() {
                 } // end else (no locked tool)
             }
             onHidePopup = { annotationPopup.dismissQuiet() }
+            onHandleDragStart = {
+                if (DrawPathClient.available()) {
+                    val sw = resources.displayMetrics.widthPixels
+                    val sh = resources.displayMetrics.heightPixels
+                    DrawPathClient.setWritableAreas(
+                        packageName,
+                        listOf(intArrayOf(0, 0, sw, sh, 0)), // flag 0 = disable all ink during handle drag
+                        "handle-drag",
+                    )
+                }
+            }
+            onHandleDragEnd = { initDrawPathLasso() }
             onAnnotationTapped = { resolved, anchorX, anchorY ->
                 Log.d(TAG, "onAnnotationTapped: id=${resolved.annotation.id} tool=${resolved.annotation.tool} anchorX=$anchorX anchorY=$anchorY")
                 // Faithful to Flutter's AnnotationActionToolbar: Comment | Delete.
@@ -829,13 +841,21 @@ class ReaderActivity : Activity() {
             REQ_ANNOTATIONS -> {
                 when (resultCode) {
                     RESULT_OK -> {
-                        // User tapped an annotation row — jump to its position.
-                        val fraction = data?.getDoubleExtra(AnnotationsPanelActivity.EXTRA_FRACTION, -1.0) ?: -1.0
-                        if (fraction >= 0.0) {
+                        val inkId = data?.getStringExtra(AnnotationsPanelActivity.EXTRA_OPEN_INK_ID)
+                        if (inkId != null) {
+                            // User tapped an ink annotation row — open the ink editor.
                             val opened = book ?: return
-                            val length = readerView.textLength()
-                            val targetChar = (fraction * length).toInt().coerceIn(0, length)
-                            readerView.jumpToChar(targetChar)
+                            val resolved = opened.doc.annotations.find { it.annotation.id == inkId }
+                            if (resolved != null) editAnnotationNote(resolved)
+                        } else {
+                            // User tapped a text annotation row — jump to its position.
+                            val fraction = data?.getDoubleExtra(AnnotationsPanelActivity.EXTRA_FRACTION, -1.0) ?: -1.0
+                            if (fraction >= 0.0) {
+                                val opened = book ?: return
+                                val length = readerView.textLength()
+                                val targetChar = (fraction * length).toInt().coerceIn(0, length)
+                                readerView.jumpToChar(targetChar)
+                            }
                         }
                     }
                     RESULT_FIRST_USER -> {
@@ -1119,6 +1139,14 @@ class ReaderActivity : Activity() {
 
         readerView.cancelSelection()
         showUndoPill(lastAnchorX, lastAnchorY, annotation.id)
+
+        // Optimistic update — show the annotation immediately so the reader reflects
+        // it without waiting for the background DOCX write (same pattern as commitAnnotation).
+        val optimistic = ResolvedAnnotation(annotation, TextSpan(s, e))
+        val optimisticAnnotations = opened.doc.annotations + optimistic
+        val optimisticDoc = LoadedDocument(opened.doc.plainMap, optimisticAnnotations, opened.doc.position)
+        book = OpenBook(opened.displayName, opened.bytes, optimisticDoc, file)
+        readerView.updateAnnotations(optimisticAnnotations)
 
         val existing   = opened.doc.annotations.map { it.annotation }
         val inkPng     = if (inkBytes != null && inkId != null) Pair(inkId, inkBytes) else null

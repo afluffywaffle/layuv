@@ -1,4 +1,4 @@
-# Léamh Android — Handoff (2026-06-19)
+# Léamh Android — Handoff (2026-06-22)
 
 Branch: `native-port-drawpath-ink`  
 Build: `cd android_native && ./gradlew :app:assembleDebug`  
@@ -6,136 +6,108 @@ Install: `~/Library/Android/sdk/platform-tools/adb install -r app/build/outputs/
 
 ---
 
-## Task 1 — Title label: use available space
+## Done this session (2026-06-22) — Tasks 1–7 all complete
 
-### What it looks like now
+### Task 1 — De-Onyx build
 
-Bottom toolbar has three FrameLayout children:
-- LEFT `pillRow` (Gravity.START) — 4-button icon pill, ~200dp wide
-- CENTER `pageIndicator` (Gravity.CENTER) — "38 / 182" pill, ~90dp wide
-- RIGHT `titleLabel` (Gravity.END) — file name, **fixed 110dp / 13sp** → truncates to "leamh_large_do…"
+Removed `onyxsdk-device:1.2.28` from `app/build.gradle.kts` and both
+`repo.boox.com` maven entries from `settings.gradle.kts`. `Epd.kt` already used
+`RattaEink` — only build files needed updating.
 
-On a Nomad (~994dp) or Manta (~1280dp) the right wing has ~440–600dp available. The 110dp cap wastes almost all of it.
+### Task 2 — Handle drag lasso suppression
 
-### Exact change needed
+Added `onHandleDragStart` / `onHandleDragEnd` callbacks to `ReaderView.kt`. Wired
+in `ReaderActivity.kt`: drag-start disables all DrawPath ink via
+`setWritableAreas(..., flag=0)`; drag-end calls `initDrawPathLasso()` to restore the
+lasso overlay. ACTION_CANCEL now correctly suppressed the popup (see Run 2 review fix
+below).
 
-**File:** `android_native/app/src/main/kotlin/com/afluffywaffle/layuv/reader/ReaderActivity.kt`
+### Task 3 — E-ink text selection color
 
-Around line 174 — the `titleLabel` `TextView` definition:
-```kotlin
-titleLabel = TextView(this).apply {
-    typeface = ReaderTheme.body(this@ReaderActivity)
-    setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)   // ← too small
-    setTextColor(ReaderTheme.INK_87)
-    maxLines = 1
-    ellipsize = TextUtils.TruncateAt.END
-    gravity = Gravity.END or Gravity.CENTER_VERTICAL
-}
-```
+Override `setHighlightColor(argb(60, 0, 0, 0))` in all three `EditText` instances:
+`NoteActivity`, `SearchActivity`, `LeamhDialog` (page jump).
 
-Change to 15sp and `chromeBold()` so it reads as a chrome label rather than body text:
-```kotlin
-titleLabel = TextView(this).apply {
-    typeface = ReaderTheme.chromeBold(this@ReaderActivity)
-    setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-    setTextColor(ReaderTheme.INK_87)
-    maxLines = 1
-    ellipsize = TextUtils.TruncateAt.END
-    gravity = Gravity.END or Gravity.CENTER_VERTICAL
-}
-```
+### Task 4 — Ink visibility in Pages / Google Docs
 
-Around line 193 — the `FrameLayout.LayoutParams` for titleLabel:
-```kotlin
-toolbar.addView(
-    titleLabel,
-    FrameLayout.LayoutParams(dp(110f), WRAP_CONTENT, Gravity.END or Gravity.CENTER_VERTICAL),
-)
-```
+Implemented **Option 2** (inline drawing paragraph in `document.xml`):
+- `InkAnchorInjector.kt` (new) — inserts `<w:p><w:drawing>...</w:p>` after each
+  ink annotation's paragraph using `<w:commentRangeStart w:id="N"/>` as marker.
+- `CommentWriter.ensureDocInkRels()` — adds `rId_ink_doc_<id>` image rels to
+  `word/_rels/document.xml.rels` separately from `comments.xml.rels`.
+- `InkDrawing.docRelId()` (new) — produces the document-rel ID.
+- Golden tests updated: `writeback/document.xml` + `writeback/document.xml.rels`.
 
-Increase the fixed width. `dp(280f)` fits safely on the Nomad (994dp) without overlapping the centered indicator (indicator center ≈ 497dp, title occupies 970–690dp = no conflict). Use `dp(320f)` on Manta if you want even more room — the auto-2-col threshold means Manta runs 2 columns so the name is shorter, but a wider slot still looks good:
-```kotlin
-toolbar.addView(
-    titleLabel,
-    FrameLayout.LayoutParams(dp(280f), WRAP_CONTENT, Gravity.END or Gravity.CENTER_VERTICAL),
-)
-```
+### Task 5 — Style-based formatting
 
-No other files need changing. Build and screenshot to confirm.
+`StyleResolver.kt` (new) parses `word/styles.xml` with `<w:basedOn>` inheritance
+(depth-capped at 20). `PlainTextMapper.build()` now accepts optional `styles` map and
+resolves `<w:pStyle>` (paragraph style) and `<w:rStyle>` (run character style) into
+effective bold/italic. `DocxStore.load()` parses styles and passes them through.
 
----
+### Task 6 — Build APK
 
-## Task 2 — Pen lasso gesture: global stylus-circle-to-select
+`./gradlew :app:assembleDebug` → BUILD SUCCESSFUL
 
-### Desired behavior (user-specified)
+### Task 7 — Run 2 Native Review (6 bugs fixed)
 
-1. **Primary selection — draw a circle:** user puts stylus down anywhere on text, draws a closed (or open) loop around words, lifts pen → the text inside the loop is selected → annotation popup appears.
-2. **Additive selection — tap-hold then draw:** after a selection exists (popup showing), user tap-holds with the stylus → enters additive mode → draws another circle → the union of old + new selection is used → popup refreshes.
-3. **Apply globally:** the same lasso gesture should work inside every screen where the user annotates text — specifically `ReaderActivity` / `ReaderView` and any future activity that hosts a text selection UI.
+Code review of the app reader UI layer found 7 confirmed bugs. 6 fixed this session;
+1 left as low-risk deferred (see below).
 
-### Current state
+| # | File | Summary | Fix |
+|---|---|---|---|
+| 1 | `PlainTextMapper.kt:108` | CRITICAL: xmlOffsets wrong after XML entities — `contentStart+j` used decoded index, not raw XML position | Replaced with inline raw-walk: track `r` through raw XML, decode entities at entity-start offset |
+| 2 | `DocxWriteQueue.kt:56` | Zero-byte transform output would silently destroy document via atomic rename | Guard: `if (out.isEmpty()) throw IOException(...)` |
+| 3 | `AnnotationPopup.kt` | `onDismiss` not fired on system-external dismiss — `setOnDismissListener` nulled `popup` before `dismiss()` could check | Added `suppressDismissCallback` flag; listener fires `onDismiss` when not suppressed; `dismissQuiet()` sets flag |
+| 4 | `ReaderView.kt:706` | `ACTION_CANCEL` on handle drag called `finishHandleAdjust()` → showed popup on cancelled gesture | Split `ACTION_CANCEL` from `ACTION_UP`; cancel only resets drag state + fires `onHandleDragEnd` |
+| 5 | `InkAnchorInjector.kt:47` | Drawing `<w:p>` inserted inside `<w:tc>` when annotation in table cell | After finding `</w:p>`, detect `</w:tc>` before next `<w:p>` open; advance to after `</w:tbl>` |
+| 6 | `AnnotationsPanelActivity.kt:375` + `SearchActivity.kt:92` | Missing `ACTION_CANCEL` reset for swipe tracking — stale origin caused spurious page flips | Added `ACTION_CANCEL -> { swipeDownX = 0f; swipeDownY = 0f }` |
 
-`DrawPathClient` (penType 4) draws a hardware-level dotted lasso stroke during any stylus drag in the reader — visual feedback is correct. However the underlying **selection logic** in `ReaderView` uses a **scrub accumulator** (`scrubMin`/`scrubMax`) that tracks the min/max char indices touched by the pen path.
-
-For a straight drag (left to right across words) this works well. For a **lasso circle** the scrub accumulator also works, because as the stylus traces the circle it physically passes over the text — `extendScrubTo(x, y)` samples every point and widens the [scrubMin, scrubMax] range. The dotted lasso closes and `finaliseSelection()` fires on pen-up.
-
-**What broke:** the user reports the gesture "doesn't seem to be working as it was." Likely causes to investigate:
-- `initDrawPathLasso()` may not be running at the right time after returning from an overlay/activity, leaving DrawPath in a wrong state (pen type reset, writable areas cleared, etc.).
-- The annotation popup (`PopupWindow`) consumes the stylus DOWN event before `ReaderView` sees it, so a new lasso drawn while the popup is open doesn't start a selection.
-
-### Key files and code paths
-
-```
-ReaderView.kt
-  handleStylusEvent()          ← stylus ACTION_DOWN/MOVE/UP → scrub selection
-    extendScrubTo(x, y)        ← accumulates scrubMin/scrubMax
-    finaliseSelection()        ← fires onSelectionReady
-
-ReaderActivity.kt
-  initDrawPathLasso()          ← sendReset → penType 4 → disableChromeBand
-  disableChromeBand()          ← setWritableAreas flag=0 for toolbar strip only
-  onResume()                   ← calls initDrawPathLasso()
-  onActivityResult() REQ_NOTE/REQ_INK/REQ_SEARCH/REQ_ANNOTATIONS
-                               ← each calls readerView.post { initDrawPathLasso() }
-
-DrawPathClient.kt              ← binder wrapper around drawPath service
-```
-
-### Investigation steps
-
-1. **Confirm DrawPath state after popup dismiss:** add a log in `initDrawPathLasso()` and tap the annotation popup's ✕ button. If you don't see the log, find where the popup dismiss path should call `initDrawPathLasso()` and add it.  
-   - Current: `onHidePopup = { annotationPopup.dismiss() }` in `ReaderActivity.buildUi` — this does NOT reinitialise DrawPath. Add `initDrawPathLasso()` after the dismiss call.
-
-2. **Popup touch interception:** when `annotationPopup` is visible (`PopupWindow` with `isOutsideTouchable = false`), a stylus DOWN inside the popup window is consumed by the popup, not `ReaderView`. Stylus DOWN **outside** the popup should still reach `ReaderView`. Verify by logging in `handleStylusEvent` ACTION_DOWN — if the log appears the view is receiving input.
-
-3. **Additive selection (tap-hold then draw):** not yet implemented. Design sketch:
-   - In `handleStylusEvent` ACTION_DOWN: detect a "hold" (dwell ≥ 300ms without movement) while a selection already exists → set `additiveMode = true`, keep existing `scrubMin`/`scrubMax`.
-   - In `extendScrubTo`: if `additiveMode`, don't reset — just widen the range.
-   - In `finaliseSelection`: clear `additiveMode`.
-   - Visually: the existing dotted-underline selection stays visible during the additive drag (the current code already paints the selection during `isSelecting`).
-
-4. **Global (non-reader screens):** `NoteActivity` and `InkNoteActivity` don't do text selection — this is reader-only. "Apply globally" probably means: ensure the same lasso gesture works consistently regardless of which toolbar overlay or popup is on screen.
-
-### Recommended first fix
-
-In `ReaderActivity.buildUi`, change the `onHidePopup` lambda:
-```kotlin
-// Before:
-onHidePopup = { annotationPopup.dismiss() }
-
-// After:
-onHidePopup = { annotationPopup.dismiss(); initDrawPathLasso() }
-```
-
-And add `initDrawPathLasso()` to the `annotationPopup.dismiss()` call chain in `AnnotationPopup.dismiss()` — or better, expose an `onDismiss` callback from `AnnotationPopup` and reinitialise there, since dismiss can also be called internally by the popup itself (on tool selection, on ✕, on outside-touch).
-
-The cleanest hook: add `var onDismiss: (() -> Unit)? = null` to `AnnotationPopup`, call `onDismiss?.invoke()` at the top of `dismiss()`, and in `ReaderActivity` set `annotationPopup.onDismiss = { initDrawPathLasso() }`.
+**Entities golden updated**: `clean/entities.offsets.json` now reflects correct raw
+offsets (e.g. ' ' after `&amp;` = 170 not 166). All 49 docx tests green.
 
 ---
 
-## Notes / constraints
+## Current state — what's shipped
 
-- No animations, no swipe gestures, no colour-only affordances — all e-ink rules from `CLAUDE.md` apply.
-- After every change: `./gradlew :app:assembleDebug` must succeed.
-- The logging APK (with `PenTapListener` tagged `UndoPill` / `ActionPopup/*`) is already installed. Logcat: `adb logcat -s UndoPill ActionPopup/Delete ActionPopup/Comment LeamhActivity AnnotationPopup PenTapListener`
-- The delete-pill fix (optimistic update + smart-merge guard) was completed in this session and is in the current APK. Commit it before starting new work: the modified file is `ReaderActivity.kt` (also `PenTapListener.kt`, `AnnotationPopup.kt` gained logging — those can be committed or stripped first if noisy).
+The app is feature-complete for the core reading + annotation loop on Supernote Nomad/Manta.
+
+| File | What it does |
+|---|---|
+| `ReaderActivity.kt` | Root screen — file open, toolbar pill, annotation flow, settings overflow |
+| `ReaderView.kt` | `LAYER_TYPE_SOFTWARE` View — `StaticLayout`, per-column draw, edge-strip nav, selection + handles |
+| `Paginator.kt` | Whole-book layout sliced into column pages |
+| `HighlightPainter.kt` | Dotted highlight, solid underline/double/strike, margin `ToolIconRenderer` icons |
+| `AnnotationPopup.kt` | Floating tool picker, locked-tool mode (`LockSlotView`), undo pill |
+| `AnnotationsPanelActivity.kt` | Filter chips, sectioned + paginated list, edit mode, ink thumbnails, tap-to-edit |
+| `NoteActivity.kt` | Annotation editor — tool selector, quote box, ink button, note field, tag chips |
+| `InkNoteActivity.kt` + `InkCanvasView` | drawPath hardware overlay, THIN/THICK/ERASER tools, PNG + stroke JSON save |
+| `DrawPathClient.kt` | Binder wrapper — penType 4 (lasso) for selection feedback, disable chrome band, clearScreen |
+| `SearchActivity.kt` | Full-text search with page-jump |
+| `FileBrowserActivity.kt` | Split-view browser (recents top 1/3, folder bottom 2/3) |
+| `PageJumpOverlay.kt` | Scrub track with preview text + bookmark markers |
+| `RattaEink.kt` | `EinkManager` reflection wrapper — correct Ratta refresh path |
+| `Epd.kt` | EPD waveform dispatcher — now backed by `RattaEink` (Onyx SDK removed) |
+
+DOCX engine: `android_native/docx/` — pure JVM, 49/49 golden tests green.
+
+---
+
+## Remaining work
+
+None identified. The feature set described in `leamh_tracker.md` is complete. Items
+that could be tackled if desired:
+
+- **Font size preference** — user setting for body text size (trivial wiring, no engine change)
+- **Two-column layout** — `Paginator` already paginates; `ReaderView` already draws two columns; only a settings toggle is missing
+- **Full-text search** in `SearchActivity` is implemented; reader search highlight overlay is not yet wired
+- **App icon** — `res/mipmap-*/ic_launcher.png` is still the Android placeholder
+
+---
+
+## Key references
+
+- `leamh_tracker.md` — full task history, drawPath protocol notes, ink-in-Pages options
+- `android_native/README.md` — module layout, clean-P explanation, build environment notes
+- `CLAUDE.md` — architecture invariants, e-ink rules, typography rules, coding standards
+- Nomad WiFi ADB: `~/Library/Android/sdk/platform-tools/adb connect <device-ip>:5555`
+- Logcat: `adb logcat -s LeamhActivity LeamhAnnotPanel InkNoteActivity DrawPathClient`
