@@ -143,6 +143,17 @@ object ReaderTheme {
         else       -> 1.25f
     }
 
+    /**
+     * Seed [bodyFont] from the "body_font" pref. EVERY Activity must call this in
+     * onCreate BEFORE building its UI: [bodyFont] is a process-wide static, so on
+     * whichever Activity Android recreates first after process death it would
+     * otherwise stay at the "literata" default and render the wrong typeface.
+     */
+    fun seedBodyFont(context: Context) {
+        val prefs = context.getSharedPreferences("leamh", Context.MODE_PRIVATE)
+        bodyFont = prefs.getString("body_font", "literata") ?: "literata"
+    }
+
     fun dp(context: Context, value: Float): Float =
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value, context.resources.displayMetrics)
 

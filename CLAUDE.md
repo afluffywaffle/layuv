@@ -280,6 +280,12 @@ explicit instruction.
 - `setResult()` must be called BEFORE `finish()`.
 - Never use static `@Volatile` for cross-Activity data handoff — use
   Intent extras or a proper shared store instead.
+- Every Activity MUST call `ReaderTheme.seedBodyFont(this)` in `onCreate`
+  **before building its UI** (`setContentView`/`buildUi`). `ReaderTheme.bodyFont`
+  is a process-wide static; on whichever Activity Android recreates first after
+  process death it would otherwise stay at the `"literata"` default and render the
+  wrong typeface. Literata / Source Sans 3 must apply on every text surface, not
+  just the reader.
 
 ---
 

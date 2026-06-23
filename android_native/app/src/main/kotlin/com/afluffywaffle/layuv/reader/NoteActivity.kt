@@ -176,7 +176,7 @@ class NoteActivity : Activity() {
 
         // Sync font prefs so the panel matches the reader's current typography.
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
-        ReaderTheme.bodyFont = prefs.getString(KEY_BODY_FONT, "literata") ?: "literata"
+        ReaderTheme.seedBodyFont(this)
         bodySizeSp = ReaderTheme.bodySizeSp(prefs.getString(KEY_FONT_SIZE, "medium") ?: "medium")
         chromeSizeSp = (bodySizeSp * 0.82f).coerceIn(14f, 18f)
 
@@ -1845,7 +1845,6 @@ class NoteActivity : Activity() {
         private const val REQ_PANEL_INK  = 1008
         private const val PREFS          = "leamh"
         private const val KEY_FONT_SIZE  = "body_font_size"
-        private const val KEY_BODY_FONT  = "body_font"
         private const val THREAD_ROW_DP  = 76f
 
         // Instance-state keys + ink cache files (survive activity recreation).

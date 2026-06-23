@@ -70,8 +70,7 @@ class FileBrowserActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val prefs = getSharedPreferences("leamh", Context.MODE_PRIVATE)
-        ReaderTheme.bodyFont = prefs.getString("body_font", "literata") ?: "literata"
+        ReaderTheme.seedBodyFont(this)
         setContentView(buildUi())
 
         if (!Environment.isExternalStorageManager()) {

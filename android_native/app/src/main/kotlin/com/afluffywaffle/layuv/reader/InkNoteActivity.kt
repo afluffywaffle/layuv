@@ -62,7 +62,7 @@ class InkNoteActivity : Activity() {
         super.onCreate(savedInstanceState)
         val selectedText = intent.getStringExtra(EXTRA_SELECTED_TEXT) ?: ""
         val prefs = getSharedPreferences("leamh", Context.MODE_PRIVATE)
-        ReaderTheme.bodyFont = prefs.getString("body_font", "literata") ?: "literata"
+        ReaderTheme.seedBodyFont(this)
         bodySizeSp = ReaderTheme.bodySizeSp(prefs.getString("body_font_size", "medium") ?: "medium")
         ruleStyle = try {
             prefs.getString("ink_rule_lines", "none") ?: "none"

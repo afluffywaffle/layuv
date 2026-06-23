@@ -85,6 +85,7 @@ class SearchActivity : Activity() {
         super.onCreate(savedInstanceState)
         docxPath = intent.getStringExtra(EXTRA_DOCX_PATH) ?: run { finish(); return }
         pageStarts = intent.getIntArrayExtra(EXTRA_PAGE_STARTS) ?: IntArray(0)
+        ReaderTheme.seedBodyFont(this)
         setContentView(buildUi())
         loadDocument()
     }

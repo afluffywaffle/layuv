@@ -101,7 +101,7 @@ class ReaderActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
-        ReaderTheme.bodyFont = prefs.getString(KEY_BODY_FONT, "literata") ?: "literata"
+        ReaderTheme.seedBodyFont(this)
         setContentView(buildUi())
         readerView.setNavSide(prefs.getString(KEY_NAV_SIDE, "both") ?: "both")
         applyTypographyPrefs()
