@@ -288,7 +288,7 @@ class HelpActivity : Activity() {
             EdgeNavView(this, diagram = true),
             LinearLayout.LayoutParams(MATCH_PARENT, dp(150f)).also { it.topMargin = dp(20f) },
         )
-        col.addView(para("A tall strip runs down both side edges. Tap the top half of either edge to turn to the next page, the bottom half to turn back. A horizontal swipe turns the page too."))
+        col.addView(para("A tall strip runs down both side edges. Tap the top half of either edge to turn to the next page, the bottom half to turn back. A sideways swipe turns the page too — and is how you turn pages if you set Page turn to None in Settings."))
         col.addView(para("The bar at the bottom of the reader:", topGap = 22f))
         col.addView(
             grid(4, listOf(
@@ -351,7 +351,7 @@ class HelpActivity : Activity() {
     private fun buildSettingsPage(): View {
         val col = pageColumn("Settings")
         col.addView(para("Open the ⋯ menu in the bottom bar to adjust the reader. Tap a row to cycle its options:", 0f))
-        col.addView(definitionRow("Page turn", "Which screen edges turn the page."))
+        col.addView(definitionRow("Page turn", "Which screen edges turn the page — choose None to turn by swipe only."))
         col.addView(definitionRow("Font size · Line spacing", "How large and how airy the text is."))
         col.addView(definitionRow("Columns", "One or two columns per page."))
         col.addView(definitionRow("Font family", "Literata (serif) or Source Sans 3."))
