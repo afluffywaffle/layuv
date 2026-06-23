@@ -762,9 +762,9 @@ class ReaderActivity : Activity() {
                     val note = data?.getStringExtra(NoteActivity.EXTRA_NOTE)
                     val tag  = AnnotationTag.fromName(data?.getStringExtra(NoteActivity.EXTRA_RESULT_TAG))
                     val threads    = ThreadJson.decode(data?.getStringExtra(NoteActivity.EXTRA_THREAD_JSON))
-                    val ink        = readTempBytes(NoteActivity.FILE_RESULT_PNG)
+                    val ink        = TempFiles.readBytes(this, NoteActivity.FILE_RESULT_PNG)
                     val inkId      = data?.getStringExtra(NoteActivity.EXTRA_INK_ID)
-                    val strokeJson = readTempText(NoteActivity.FILE_RESULT_JSON)
+                    val strokeJson = TempFiles.readText(this, NoteActivity.FILE_RESULT_JSON)
                     commitAnnotationFromPanel(tool, note, tag, ink, inkId, strokeJson, threads)
                 } else {
                     readerView.cancelSelection()
@@ -776,8 +776,8 @@ class ReaderActivity : Activity() {
                 pendingInkId = null
                 Log.d(TAG, "REQ_INK: resultCode=$resultCode inkId=$inkId")
                 if (resultCode == RESULT_OK && inkId != null) {
-                    val pngBytes   = readTempBytes(InkNoteActivity.FILE_RESULT_PNG)
-                    val strokeJson = readTempText(InkNoteActivity.FILE_RESULT_JSON)
+                    val pngBytes   = TempFiles.readBytes(this, InkNoteActivity.FILE_RESULT_PNG)
+                    val strokeJson = TempFiles.readText(this, InkNoteActivity.FILE_RESULT_JSON)
                     Log.d(TAG, "REQ_INK: pngBytes=${pngBytes?.size} strokeJsonLen=${strokeJson?.length}")
                     commitInkAnnotation(inkId, pngBytes, strokeJson)
                 } else {
@@ -798,9 +798,9 @@ class ReaderActivity : Activity() {
                     val note  = data?.getStringExtra(NoteActivity.EXTRA_NOTE)?.takeIf { it.isNotEmpty() }
                     val tag   = AnnotationTag.fromName(data?.getStringExtra(NoteActivity.EXTRA_RESULT_TAG))
                     val threads    = ThreadJson.decode(data?.getStringExtra(NoteActivity.EXTRA_THREAD_JSON))
-                    val ink        = readTempBytes(NoteActivity.FILE_RESULT_PNG)
+                    val ink        = TempFiles.readBytes(this, NoteActivity.FILE_RESULT_PNG)
                     val inkId      = data?.getStringExtra(NoteActivity.EXTRA_INK_ID)
-                    val strokeJson = readTempText(NoteActivity.FILE_RESULT_JSON)
+                    val strokeJson = TempFiles.readText(this, NoteActivity.FILE_RESULT_JSON)
                     val opened = book ?: run {
                         Log.e(TAG, "REQ_RETOOL_NOTE: book is null — cannot save")
                         return
@@ -1072,25 +1072,25 @@ class ReaderActivity : Activity() {
         pendingAnnotation = resolved
         Log.d(TAG, "editAnnotationNote: set pendingAnnotation=${resolved.annotation.id} note=${resolved.annotation.note}")
         // Write large ink data to cache files to avoid Binder IPC size limit.
-        writeTempBytes(NoteActivity.FILE_LAUNCH_PNG, null)
-        writeTempText(NoteActivity.FILE_LAUNCH_JSON, null)
+        TempFiles.writeBytes(this, NoteActivity.FILE_LAUNCH_PNG, null)
+        TempFiles.writeText(this, NoteActivity.FILE_LAUNCH_JSON, null)
         if (resolved.annotation.hasInk) {
             val id = resolved.annotation.id
             // Prefer the in-memory cache — it's updated immediately on save, before
             // the background write finishes updating book.bytes.
             val cached = latestStrokes[id]
             if (cached != null) {
-                writeTempText(NoteActivity.FILE_LAUNCH_JSON, cached)
+                TempFiles.writeText(this, NoteActivity.FILE_LAUNCH_JSON, cached)
             } else {
                 val bytes = book?.bytes
                 if (bytes != null) {
                     val strokeJson = DocxStore.readInkStrokes(bytes, id)
                     if (strokeJson != null) {
-                        writeTempText(NoteActivity.FILE_LAUNCH_JSON, strokeJson)
+                        TempFiles.writeText(this, NoteActivity.FILE_LAUNCH_JSON, strokeJson)
                     } else {
                         val inkBytes = DocxStore.readInkPng(bytes, id)
                         if (inkBytes != null) {
-                            writeTempBytes(NoteActivity.FILE_LAUNCH_PNG, inkBytes)
+                            TempFiles.writeBytes(this, NoteActivity.FILE_LAUNCH_PNG, inkBytes)
                         }
                     }
                 }
@@ -1442,26 +1442,6 @@ class ReaderActivity : Activity() {
             "disable-chrome",
         )
     }
-
-    private fun readTempBytes(name: String): ByteArray? = try {
-        val f = File(cacheDir, name)
-        if (!f.exists()) null else f.readBytes().also { f.delete() }
-    } catch (_: Exception) { null }
-
-    private fun readTempText(name: String): String? = try {
-        val f = File(cacheDir, name)
-        if (!f.exists()) null else f.readText().also { f.delete() }
-    } catch (_: Exception) { null }
-
-    private fun writeTempBytes(name: String, bytes: ByteArray?) = try {
-        val f = File(cacheDir, name)
-        if (bytes != null) f.writeBytes(bytes) else f.delete()
-    } catch (_: Exception) {}
-
-    private fun writeTempText(name: String, text: String?) = try {
-        val f = File(cacheDir, name)
-        if (text != null) f.writeText(text) else f.delete()
-    } catch (_: Exception) {}
 
     companion object {
         private const val TAG = "LeamhActivity"

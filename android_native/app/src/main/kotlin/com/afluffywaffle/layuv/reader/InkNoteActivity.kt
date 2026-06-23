@@ -32,7 +32,6 @@ import android.widget.TextView
 import com.afluffywaffle.layuv.R
 import com.afluffywaffle.layuv.reader.DrawPathClient
 import java.io.ByteArrayOutputStream
-import java.io.File
 
 enum class InkTool { THIN, THICK, ERASER }
 
@@ -72,14 +71,14 @@ class InkNoteActivity : Activity() {
             if (wasOn) "wide" else "none"
         }
         setContentView(buildUi(selectedText))
-        val strokeJson = readTempText(FILE_LAUNCH_JSON) ?: intent.getStringExtra(EXTRA_STROKE_JSON)
+        val strokeJson = TempFiles.readText(this, FILE_LAUNCH_JSON) ?: intent.getStringExtra(EXTRA_STROKE_JSON)
         if (strokeJson != null) {
             // Vector strokes available — load into committed list; lasso works on all ink.
             // existingBitmap is intentionally NOT loaded: strokes are the source of truth.
             canvas.loadStrokesFromJson(strokeJson)
         } else {
             // Rasterized / legacy note — load PNG as background; lasso punches pixel holes.
-            val existingInk = readTempBytes(FILE_LAUNCH_PNG) ?: intent.getByteArrayExtra(EXTRA_EXISTING_INK)
+            val existingInk = TempFiles.readBytes(this, FILE_LAUNCH_PNG) ?: intent.getByteArrayExtra(EXTRA_EXISTING_INK)
             existingInk?.let { bytes -> canvas.setExistingInk(bytes) }
         }
     }
@@ -289,8 +288,8 @@ class InkNoteActivity : Activity() {
             val pngBytes   = canvas.renderToPng()
             val strokeJson = canvas.getStrokeJson()
             Log.d(TAG, "onDone: pngBytes=${pngBytes?.size} strokeJsonLen=${strokeJson?.length}")
-            writeTempBytes(FILE_RESULT_PNG, pngBytes)
-            writeTempText(FILE_RESULT_JSON, strokeJson)
+            TempFiles.writeBytes(this@InkNoteActivity, FILE_RESULT_PNG, pngBytes)
+            TempFiles.writeText(this@InkNoteActivity, FILE_RESULT_JSON, strokeJson)
             runOnUiThread {
                 // Flush drawPath's ink buffer before returning to the reader so the
                 // hardware overlay doesn't bleed onto the reader screen while
@@ -352,27 +351,6 @@ class InkNoteActivity : Activity() {
             gravity = Gravity.CENTER
             setOnTouchListener(PenTapListener(this@InkNoteActivity, onTap = onClick))
         }
-
-
-    private fun readTempBytes(name: String): ByteArray? = try {
-        val f = File(cacheDir, name)
-        if (!f.exists()) null else f.readBytes().also { f.delete() }
-    } catch (_: Exception) { null }
-
-    private fun readTempText(name: String): String? = try {
-        val f = File(cacheDir, name)
-        if (!f.exists()) null else f.readText().also { f.delete() }
-    } catch (_: Exception) { null }
-
-    private fun writeTempBytes(name: String, bytes: ByteArray?) = try {
-        val f = File(cacheDir, name)
-        if (bytes != null) f.writeBytes(bytes) else f.delete()
-    } catch (_: Exception) {}
-
-    private fun writeTempText(name: String, text: String?) = try {
-        val f = File(cacheDir, name)
-        if (text != null) f.writeText(text) else f.delete()
-    } catch (_: Exception) {}
 
     companion object {
         private const val TAG = "LeamhInkNote"

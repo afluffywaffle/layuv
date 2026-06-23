@@ -49,14 +49,13 @@ class PageLayout(
         if (columnCount == 0) return 0
         val clamped = charOffset.coerceIn(0, layout.text.length)
         val line = layout.getLineForOffset(clamped)
-        // Find the column whose [start, end) line range covers this line.
-        var col = columnStartLines.size - 2
-        for (c in 0 until columnStartLines.size - 1) {
-            if (line < columnStartLines[c + 1]) {
-                col = c
-                break
-            }
-        }
+        // Find the column c with columnStartLines[c] <= line < columnStartLines[c+1].
+        // columnStartLines is strictly ascending (each column owns ≥1 line), so a
+        // binary search replaces the former linear scan: an exact hit IS the column
+        // start; otherwise -(insertionPoint)-1 gives the first start past [line], so
+        // the owning column is insertionPoint - 1.
+        val hit = columnStartLines.binarySearch(line)
+        val col = (if (hit >= 0) hit else -(hit + 1) - 1).coerceIn(0, columnCount - 1)
         return (col / columns).coerceIn(0, pageCount - 1)
     }
 

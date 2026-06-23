@@ -92,6 +92,11 @@ class ReaderView(context: Context) : View(context) {
     private var annotations: List<ResolvedAnnotation> = emptyList()
     private var rawText: CharSequence? = null
     private var rawFormatSpans: List<FormatSpan> = emptyList()
+    // Plain text as a String, cached once at showContent. Selection drag handlers
+    // need a String (for Anchoring) on every pointer-move; toString() on the spanned
+    // text would copy the whole book each move. updateAnnotations only swaps spans —
+    // it never changes the characters — so this stays valid for the life of the doc.
+    private var cachedPlainText: String? = null
     private var desiredColumns = 1
 
     private var pageLayout: PageLayout? = null
@@ -248,6 +253,7 @@ class ReaderView(context: Context) : View(context) {
         formatSpans: List<FormatSpan> = emptyList(),
     ) {
         this.rawText = text
+        this.cachedPlainText = text.toString()
         this.rawFormatSpans = formatSpans
         this.annotations = annotations
         this.text = buildSpanned(text, formatSpans, annotations)
@@ -285,16 +291,31 @@ class ReaderView(context: Context) : View(context) {
         if (text != null) repaginate(fullClear = true) else invalidate()
     }
 
-    /** Update the annotation list; rebuilds highlight colour spans and redraws. */
+    /** Update the annotation list; refreshes highlight colour spans and redraws. */
     fun updateAnnotations(annotations: List<ResolvedAnnotation>) {
         this.annotations = annotations
+        val t = text as? SpannableString
         val raw = rawText
-        if (raw != null) {
-            // Highlight/comment fill (BackgroundColorSpan) + ink grey text are baked
-            // into the StaticLayout at paginate time — we must rebuild the layout so
-            // new marks appear. Colour spans don't affect line metrics, so page
-            // breaks are unchanged. repaginate calls epd.fullClear itself after.
+        // Fast path is valid only when the live page layout was built from THIS exact
+        // SpannableString instance — only then does mutating its spans change what's
+        // drawn. That always holds at steady state (repaginate rebuilds from this.text),
+        // but the === guard makes it provable: a not-yet-built layout or any future
+        // divergence falls through to a correct (if slower) repaginate.
+        if (t != null && pageLayout?.layout?.text === t) {
+            // The cosmetic annotation spans are NON-METRIC, so line breaks are unchanged.
+            // Swapping them in place and repainting shows the new marks WITHOUT re-running
+            // pagination over the whole book. (The dotted/solid line decorations come from
+            // the annotations list in onDraw, already updated above.)
+            t.getSpans(0, t.length, BackgroundColorSpan::class.java).forEach { t.removeSpan(it) }
+            t.getSpans(0, t.length, ForegroundColorSpan::class.java).forEach { t.removeSpan(it) }
+            applyAnnotationSpans(t, annotations)
+            epd.fullClear(this)
+        } else if (raw != null) {
+            // No layout yet, or it was built from a different instance — rebuild + paginate.
+            // repaginate calls epd.fullClear itself after. Plain text is unchanged, but
+            // refresh the cache anyway so it always tracks the live text object.
             this.text = buildSpanned(raw, rawFormatSpans, annotations)
+            this.cachedPlainText = this.text?.toString()
             repaginate(fullClear = true)
         }
     }
@@ -316,23 +337,19 @@ class ReaderView(context: Context) : View(context) {
     fun fullClear() = epd.fullClear(this)
 
     fun next() {
-        val pl = pageLayout ?: run { Log.d("LeamhSwipe", "next() — pageLayout null, aborting"); return }
-        if (currentPage >= pl.pageCount - 1) { Log.d("LeamhSwipe", "next() — already last page $currentPage/${pl.pageCount}"); return }
-        val before = currentPage
+        val pl = pageLayout ?: return
+        if (currentPage >= pl.pageCount - 1) return
         currentPage++
         pendingCharOffset = pl.charStartOfPage(currentPage)
-        Log.d("LeamhSwipe", "next() page $before → $currentPage / ${pl.pageCount}")
         notifyPage()
         epd.pageTurn(this)
     }
 
     fun prev() {
-        val pl = pageLayout ?: run { Log.d("LeamhSwipe", "prev() — pageLayout null, aborting"); return }
-        if (currentPage <= 0) { Log.d("LeamhSwipe", "prev() — already first page"); return }
-        val before = currentPage
+        val pl = pageLayout ?: return
+        if (currentPage <= 0) return
         currentPage--
         pendingCharOffset = pl.charStartOfPage(currentPage)
-        Log.d("LeamhSwipe", "prev() page $before → $currentPage / ${pl.pageCount}")
         notifyPage()
         epd.pageTurn(this)
     }
@@ -470,8 +487,9 @@ class ReaderView(context: Context) : View(context) {
         plain: CharSequence,
         formats: List<FormatSpan>,
         annotations: List<ResolvedAnnotation> = emptyList(),
-    ): CharSequence {
-        if (formats.isEmpty() && annotations.isEmpty()) return plain
+    ): SpannableString {
+        // Always a SpannableString (even with no spans) so updateAnnotations can
+        // mutate the cosmetic annotation spans in place on the live layout text.
         val sp = SpannableString(plain)
         val len = sp.length
         val regular = ReaderTheme.body(context)
@@ -481,23 +499,34 @@ class ReaderView(context: Context) : View(context) {
             val tf = if (f.italic) italic else regular
             sp.setSpan(RunStyleSpan(tf, f.bold), f.start, f.end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
+        applyAnnotationSpans(sp, annotations)
+        return sp
+    }
+
+    /**
+     * Applies the per-tool cosmetic spans for [annotations] onto [sp]: a light grey
+     * fill (BackgroundColorSpan) behind highlight/comment text — which reads more
+     * easily than grey text on e-ink — and grey text (ForegroundColorSpan) for ink,
+     * whose primary marker is the dotted underline drawn separately. Both are
+     * NON-METRIC spans (line breaks unchanged), so [updateAnnotations] can swap them
+     * on the live layout text without re-paginating. The line decorations themselves
+     * are drawn from the annotations list in onDraw, not from these spans.
+     */
+    private fun applyAnnotationSpans(sp: SpannableString, annotations: List<ResolvedAnnotation>) {
+        val len = sp.length
         for (resolved in annotations) {
             val span = resolved.span ?: continue
             val s = span.start.coerceIn(0, len)
             val e = span.end.coerceIn(0, len)
             if (e <= s) continue
             when (resolved.annotation.tool) {
-                // P2: a light grey fill behind black text reads more easily in a
-                // body of text on e-ink than grey text did.
                 AnnotationTool.highlight, AnnotationTool.comment ->
                     sp.setSpan(BackgroundColorSpan(ReaderTheme.HIGHLIGHT_FILL), s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                // Ink keeps its grey text — its primary marker is the dotted underline.
                 AnnotationTool.inkAnnotation ->
                     sp.setSpan(ForegroundColorSpan(ReaderTheme.HIGHLIGHT_TEXT), s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                 else -> {}
             }
         }
-        return sp
     }
 
     private fun repaginate(fullClear: Boolean) {
@@ -541,7 +570,6 @@ class ReaderView(context: Context) : View(context) {
     // --- Drawing --------------------------------------------------------------
 
     override fun onDraw(canvas: Canvas) {
-        Log.d("LeamhSwipe", "onDraw page=$currentPage pageLayout=${if (pageLayout == null) "null" else "ok"}")
         canvas.drawColor(ReaderTheme.PAPER)
         val pl = pageLayout
         if (pl == null) {
@@ -859,7 +887,7 @@ class ReaderView(context: Context) : View(context) {
      * partial refresh during the drag instead of a full-screen update.
      */
     private fun extendSelectionTo(x: Float, y: Float) {
-        val t = text?.toString() ?: return
+        val t = cachedPlainText ?: return
         val cur = charAtPoint(x, y) ?: return
         val lo = minOf(ptrAnchorChar, cur)
         val hi = (maxOf(ptrAnchorChar, cur) + 1).coerceAtMost(t.length)
@@ -879,7 +907,7 @@ class ReaderView(context: Context) : View(context) {
      * partial-invalidate path as [extendSelectionTo] for fast regional refresh.
      */
     private fun extendScrubTo(x: Float, y: Float) {
-        val t = text?.toString() ?: return
+        val t = cachedPlainText ?: return
         val cur = charAtPoint(x, y) ?: return
         scrubMin = minOf(scrubMin, cur)
         scrubMax = maxOf(scrubMax, cur)
@@ -920,7 +948,7 @@ class ReaderView(context: Context) : View(context) {
 
     /** Snap the current raw selection to word boundaries and fire [onSelectionReady]. */
     private fun finaliseSelection() {
-        val t = text?.toString() ?: run { cancelSelection(); return }
+        val t = cachedPlainText ?: run { cancelSelection(); return }
         if (selectionStart < 0 || selectionEnd <= selectionStart) {
             cancelSelection()
             return

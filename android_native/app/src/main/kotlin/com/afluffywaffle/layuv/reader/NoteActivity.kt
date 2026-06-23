@@ -11,7 +11,6 @@ import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Canvas
 import android.graphics.ColorFilter
-import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
@@ -24,10 +23,7 @@ import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.TextUtils
 import android.util.TypedValue
-import android.view.ActionMode
 import android.view.Gravity
-import android.view.Menu
-import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -45,7 +41,6 @@ import com.afluffywaffle.layuv.docx.model.AnnotationTag
 import com.afluffywaffle.layuv.docx.model.AnnotationTool
 import com.afluffywaffle.layuv.docx.model.ThreadEntry
 import com.afluffywaffle.layuv.docx.model.newId
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -74,6 +69,9 @@ import java.util.Locale
 class NoteActivity : Activity() {
 
     private enum class Tab { INK, THREAD }
+
+    /** Reader-style dotted-underline selection + themed popup for the text fields. */
+    private val selStyle = NoteSelectionStyle(this)
 
     private lateinit var composeField: EditText
     private lateinit var composeButton: TextView
@@ -207,8 +205,8 @@ class NoteActivity : Activity() {
         inkId = intent.getStringExtra(EXTRA_INITIAL_INK_ID)
         // Existing ink arrives via cache files (survives process death; avoids the
         // Binder IPC size limit).
-        capturedInkBytes = readTempBytes(FILE_LAUNCH_PNG)
-        capturedStrokeJson = readTempText(FILE_LAUNCH_JSON)
+        capturedInkBytes = TempFiles.readBytes(this, FILE_LAUNCH_PNG)
+        capturedStrokeJson = TempFiles.readText(this, FILE_LAUNCH_JSON)
         inkDirty = false
 
         // Seed the working thread: prefer the passed thread; otherwise synthesise a
@@ -232,8 +230,8 @@ class NoteActivity : Activity() {
         selectedTool = AnnotationTool.fromName(s.getString(STATE_TOOL))
         selectedTag = AnnotationTag.fromName(s.getString(STATE_TAG))
         inkId = s.getString(STATE_INK_ID)
-        capturedInkBytes = readTempBytes(FILE_STATE_PNG)
-        capturedStrokeJson = readTempText(FILE_STATE_JSON)
+        capturedInkBytes = TempFiles.readBytes(this, FILE_STATE_PNG)
+        capturedStrokeJson = TempFiles.readText(this, FILE_STATE_JSON)
         inkDirty = s.getBoolean(STATE_INK_DIRTY, false)
         threadEntries.clear()
         threadEntries.addAll(ThreadJson.decode(s.getString(STATE_THREAD)))
@@ -263,8 +261,8 @@ class NoteActivity : Activity() {
             if (::composeField.isInitialized) composeField.text.toString() else composePending,
         )
         // Ink bytes are too large for the Bundle — stash in cache files.
-        writeTempBytes(FILE_STATE_PNG, capturedInkBytes)
-        writeTempText(FILE_STATE_JSON, capturedStrokeJson)
+        TempFiles.writeBytes(this, FILE_STATE_PNG, capturedInkBytes)
+        TempFiles.writeText(this, FILE_STATE_JSON, capturedStrokeJson)
     }
 
     // -------------------------------------------------------------------------
@@ -275,8 +273,8 @@ class NoteActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (requestCode == REQ_PANEL_INK) {
             if (resultCode == RESULT_OK) {
-                val bytes = readTempBytes(FILE_RESULT_PNG)
-                val strokeJson = readTempText(FILE_RESULT_JSON)
+                val bytes = TempFiles.readBytes(this, FILE_RESULT_PNG)
+                val strokeJson = TempFiles.readText(this, FILE_RESULT_JSON)
                 if (bytes != null && bytes.isNotEmpty()) {
                     capturedInkBytes = bytes
                     if (inkId == null) inkId = newId()
@@ -369,8 +367,8 @@ class NoteActivity : Activity() {
         val ink = capturedInkBytes
         val id = inkId
         // Write large data to cache files to avoid Binder IPC size limit.
-        writeTempBytes(FILE_RESULT_PNG, ink)
-        writeTempText(FILE_RESULT_JSON, capturedStrokeJson)
+        TempFiles.writeBytes(this, FILE_RESULT_PNG, ink)
+        TempFiles.writeText(this, FILE_RESULT_JSON, capturedStrokeJson)
         val result = Intent()
             .putExtra(EXTRA_NOTE, note ?: "")
             .putExtra(EXTRA_THREAD_JSON, ThreadJson.encode(threadEntries))
@@ -997,8 +995,8 @@ class NoteActivity : Activity() {
         if (inkId == null) inkId = newId()
         val sj = capturedStrokeJson
         // Write large data to cache files to avoid Binder IPC size limit.
-        writeTempBytes(InkNoteActivity.FILE_LAUNCH_PNG, if (sj == null) capturedInkBytes else null)
-        writeTempText(InkNoteActivity.FILE_LAUNCH_JSON, sj)
+        TempFiles.writeBytes(this, InkNoteActivity.FILE_LAUNCH_PNG, if (sj == null) capturedInkBytes else null)
+        TempFiles.writeText(this, InkNoteActivity.FILE_LAUNCH_JSON, sj)
         startActivityForResult(
             Intent(this, InkNoteActivity::class.java)
                 .putExtra(InkNoteActivity.EXTRA_SELECTED_TEXT, selectedText),
@@ -1203,140 +1201,10 @@ class NoteActivity : Activity() {
     private fun formatTimestamp(millis: Long): String =
         if (millis <= 0L) "" else threadDateFormat.format(Date(millis))
 
-    // -------------------------------------------------------------------------
-    // Shared text-selection styling — the reader's dotted underline + a themed
-    // popup, used by BOTH the read-only entry-detail overlay (SelectableBodyText)
-    // and the editable compose fields (ComposeEditText) so selection looks the
-    // same on every surface, instead of Android's blue fill + floating toolbar.
-    // -------------------------------------------------------------------------
-
-    private val selDottedPaint by lazy {
-        Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            color = ReaderTheme.INK
-            strokeWidth = ReaderTheme.dp(this@NoteActivity, ReaderTheme.UNDERLINE_STROKE_DP)
-            pathEffect = DashPathEffect(
-                floatArrayOf(
-                    ReaderTheme.dp(this@NoteActivity, ReaderTheme.UNDERLINE_DASH_ON_DP),
-                    ReaderTheme.dp(this@NoteActivity, ReaderTheme.UNDERLINE_DASH_OFF_DP),
-                ),
-                0f,
-            )
-        }
-    }
-
-    /**
-     * Draws the reader's dotted underline beneath [tv]'s current selection range —
-     * call from [tv]'s onDraw. Accounts for the view's scroll (the editable compose
-     * field can scroll vertically), so the read-only overlay (scroll always 0) is
-     * just the special case scrollX/scrollY == 0.
-     */
-    private fun drawSelectionUnderline(tv: TextView, canvas: Canvas, path: Path) {
-        val l = tv.layout ?: return
-        val lo = minOf(tv.selectionStart, tv.selectionEnd)
-        val hi = maxOf(tv.selectionStart, tv.selectionEnd)
-        if (lo < 0 || lo >= hi) return
-        val underlineOffset = ReaderTheme.dp(this, ReaderTheme.UNDERLINE_OFFSET_DP)
-        canvas.save()
-        canvas.translate(
-            (tv.totalPaddingLeft - tv.scrollX).toFloat(),
-            (tv.totalPaddingTop - tv.scrollY).toFloat(),
-        )
-        val firstLine = l.getLineForOffset(lo)
-        val lastLine = l.getLineForOffset((hi - 1).coerceAtLeast(lo))
-        for (line in firstLine..lastLine) {
-            val ls = maxOf(lo, l.getLineStart(line))
-            val le = minOf(hi, l.getLineEnd(line))
-            if (ls >= le) continue
-            var x0 = l.getPrimaryHorizontal(ls)
-            var x1 = l.getPrimaryHorizontal(le)
-            if (x1 <= x0) x1 = l.getLineRight(line)
-            if (x1 < x0) { val t = x0; x0 = x1; x1 = t }
-            val y = l.getLineBaseline(line).toFloat() + underlineOffset
-            path.rewind()
-            path.moveTo(x0, y)
-            path.lineTo(x1, y)
-            canvas.drawPath(path, selDottedPaint)
-        }
-        canvas.restore()
-    }
-
-    /**
-     * Builds + shows a themed selection popup (paper card, INK_26 border, divided
-     * chrome-bold buttons) positioned ~60dp above [tv]'s selection start. [actions]
-     * are (label, handler) pairs. Returns the PopupWindow so the caller stores +
-     * dismisses it.
-     */
-    private fun showSelectionPopup(tv: TextView, actions: List<Pair<String, () -> Unit>>): PopupWindow {
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = ReaderTheme.dp(this@NoteActivity, ReaderTheme.RADIUS_BTN)
-                setColor(ReaderTheme.PAPER)
-                setStroke(dp(1f), ReaderTheme.INK_26)
-            }
-        }
-        actions.forEachIndexed { i, (label, action) ->
-            if (i > 0) content.addView(View(this).apply {
-                setBackgroundColor(ReaderTheme.INK_26)
-                layoutParams = LinearLayout.LayoutParams(dp(1f), MATCH_PARENT).also {
-                    it.topMargin = dp(10f); it.bottomMargin = dp(10f)
-                }
-            })
-            content.addView(TextView(this).apply {
-                text = label
-                typeface = ReaderTheme.chromeBold(this@NoteActivity)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-                setTextColor(ReaderTheme.INK_87)
-                gravity = Gravity.CENTER
-                setPadding(dp(20f), dp(12f), dp(20f), dp(12f))
-                minimumHeight = dp(48f)
-                setOnTouchListener(PenTapListener(this@NoteActivity) { action() })
-            })
-        }
-        val popup = PopupWindow(content, WRAP_CONTENT, WRAP_CONTENT, true).apply {
-            elevation = ReaderTheme.dp(this@NoteActivity, 4f)
-            isOutsideTouchable = true
-            setBackgroundDrawable(null)
-        }
-        // Position the popup just above the selected text's first line.
-        val l = tv.layout
-        val screenLoc = IntArray(2).also { tv.getLocationInWindow(it) }
-        val xScreen: Int
-        val yScreen: Int
-        if (l != null) {
-            val anchorOff = minOf(tv.selectionStart, tv.selectionEnd).coerceAtLeast(0)
-            val line = l.getLineForOffset(anchorOff)
-            val lineTop = tv.totalPaddingTop + l.getLineTop(line) - tv.scrollY
-            xScreen = (screenLoc[0] + tv.totalPaddingLeft +
-                l.getPrimaryHorizontal(anchorOff).toInt() - tv.scrollX)
-                .coerceIn(screenLoc[0], screenLoc[0] + tv.width - dp(140f))
-            yScreen = screenLoc[1] + lineTop - dp(60f)
-        } else {
-            xScreen = screenLoc[0] + dp(16f)
-            yScreen = screenLoc[1] - dp(60f)
-        }
-        popup.showAtLocation(tv, Gravity.NO_GRAVITY, xScreen, yScreen.coerceAtLeast(0))
-        return popup
-    }
-
-    /** Clears the system floating ActionMode (Copy/Share/…) so our themed popup is
-     *  the only selection toolbar. Returning true from onCreateActionMode lets the
-     *  selection itself proceed (handles stay live); the empty menu hides the bar. */
-    private fun suppressingActionModeCallback() = object : ActionMode.Callback {
-        override fun onCreateActionMode(mode: ActionMode, menu: Menu) = true
-        override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean {
-            menu.clear(); return true
-        }
-        override fun onActionItemClicked(mode: ActionMode, item: MenuItem) = false
-        override fun onDestroyActionMode(mode: ActionMode) {}
-    }
-
     /**
      * Read-only selectable TextView for the entry-detail overlay: suppresses the
      * system fill, draws the shared dotted underline, and shows a themed Copy /
-     * Select-all popup via [showSelectionPopup].
+     * Select-all popup via [NoteSelectionStyle.showSelectionPopup].
      */
     private inner class SelectableBodyText(context: Context) : TextView(context) {
         private val selPath = Path()
@@ -1347,7 +1215,7 @@ class NoteActivity : Activity() {
         init {
             setTextIsSelectable(true)
             highlightColor = 0 // suppress fill; dotted underline drawn in onDraw
-            setCustomSelectionActionModeCallback(suppressingActionModeCallback())
+            setCustomSelectionActionModeCallback(selStyle.suppressingActionModeCallback())
         }
 
         override fun onSelectionChanged(selStart: Int, selEnd: Int) {
@@ -1371,7 +1239,7 @@ class NoteActivity : Activity() {
 
         private fun showPopup() {
             dismissPopup()
-            selectionPopup = showSelectionPopup(this, listOf(
+            selectionPopup = selStyle.showSelectionPopup(this, listOf(
                 "Copy" to {
                     val s = minOf(selectionStart, selectionEnd)
                     val e = maxOf(selectionStart, selectionEnd)
@@ -1394,7 +1262,7 @@ class NoteActivity : Activity() {
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            drawSelectionUnderline(this, canvas, selPath)
+            selStyle.drawSelectionUnderline(this, canvas, selPath)
         }
     }
 
@@ -1414,7 +1282,7 @@ class NoteActivity : Activity() {
 
         init {
             highlightColor = 0 // suppress fill; dotted underline drawn in onDraw
-            setCustomSelectionActionModeCallback(suppressingActionModeCallback())
+            setCustomSelectionActionModeCallback(selStyle.suppressingActionModeCallback())
         }
 
         override fun onTextContextMenuItem(id: Int): Boolean {
@@ -1480,7 +1348,7 @@ class NoteActivity : Activity() {
                 dismissPopup()
             }
             actions += "Select all" to { onTextContextMenuItem(android.R.id.selectAll) }
-            selectionPopup = showSelectionPopup(this, actions)
+            selectionPopup = selStyle.showSelectionPopup(this, actions)
         }
 
         private fun dismissPopup() {
@@ -1490,7 +1358,7 @@ class NoteActivity : Activity() {
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            drawSelectionUnderline(this, canvas, selPath)
+            selStyle.drawSelectionUnderline(this, canvas, selPath)
         }
     }
 
@@ -1797,30 +1665,6 @@ class NoteActivity : Activity() {
         fsTagLabel = null
         fsPasteButton = null
     }
-
-    // -------------------------------------------------------------------------
-    // Widget helpers
-    // -------------------------------------------------------------------------
-
-    private fun readTempBytes(name: String): ByteArray? = try {
-        val f = File(cacheDir, name)
-        if (!f.exists()) null else f.readBytes().also { f.delete() }
-    } catch (_: Exception) { null }
-
-    private fun readTempText(name: String): String? = try {
-        val f = File(cacheDir, name)
-        if (!f.exists()) null else f.readText().also { f.delete() }
-    } catch (_: Exception) { null }
-
-    private fun writeTempBytes(name: String, bytes: ByteArray?) = try {
-        val f = File(cacheDir, name)
-        if (bytes != null) f.writeBytes(bytes) else f.delete()
-    } catch (_: Exception) {}
-
-    private fun writeTempText(name: String, text: String?) = try {
-        val f = File(cacheDir, name)
-        if (text != null) f.writeText(text) else f.delete()
-    } catch (_: Exception) {}
 
     companion object {
         const val EXTRA_NOTE            = "note"
