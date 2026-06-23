@@ -12,9 +12,10 @@ import com.afluffywaffle.layuv.docx.model.AnnotationTool
 /**
  * Draws resolved annotation spans onto the reader canvas.
  *
- * - [AnnotationTool.highlight] / [AnnotationTool.comment]: no line decoration here —
- *   a light grey background fill via [android.text.style.BackgroundColorSpan] is
- *   baked into the layout by [ReaderView.buildSpanned].
+ * - [AnnotationTool.highlight] / [AnnotationTool.comment] / [AnnotationTool.inkAnnotation]:
+ *   no line decoration here — a light grey background fill via
+ *   [android.text.style.BackgroundColorSpan] is baked into the layout by
+ *   [ReaderView.buildSpanned]. (Ink is additionally flagged by its margin icon.)
  * - [AnnotationTool.bookmark]: margin icon only, no text decoration.
  * - [AnnotationTool.underline] / [AnnotationTool.doubleUnderline]: solid line(s).
  * - [AnnotationTool.strikethrough]: solid midline.
@@ -162,8 +163,8 @@ class HighlightPainter(context: Context) {
             }
             AnnotationTool.underline -> line(canvas, xStart, xEnd, baseline + underlineOffset, solid)
             AnnotationTool.highlight,
-            AnnotationTool.comment -> { /* grey background fill via BackgroundColorSpan in buildSpanned — no line */ }
-            AnnotationTool.inkAnnotation -> line(canvas, xStart, xEnd, baseline + underlineOffset, dotted)
+            AnnotationTool.comment,
+            AnnotationTool.inkAnnotation -> { /* grey background fill via BackgroundColorSpan in buildSpanned — no line; ink also shows a margin icon */ }
             AnnotationTool.bookmark -> { /* margin icon only — no line decoration */ }
             else -> { /* unknown tool — no decoration */ }
         }

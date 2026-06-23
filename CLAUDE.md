@@ -195,7 +195,11 @@ These rules apply to all UI added to `android_native/app/`:
 - Show/hide with plain conditionals only
 - All UI must be greyscale-safe — no colour-only affordances
 - Tap targets: 48dp minimum, 64dp preferred
-- Highlights: dotted underline only — no fill (fill forces full refresh)
+- Highlights / comments / ink: light grey fill behind black text (`HIGHLIGHT_FILL`,
+  ~12% black) — greyscale-safe, applied as a non-metric span (ink additionally
+  shows a margin icon). Underline / double underline / strikethrough are solid
+  lines; bookmark is a margin icon. A static fill is fine: annotation changes
+  already trigger a full EPD clear, so the fill does not force continuous refresh.
 - EPD waveform calls must go through the established EPD/EinkClient path;
   call `postRectForPw` for regional partial refresh after ink/annotation
   changes
@@ -207,7 +211,7 @@ These rules apply to all UI added to `android_native/app/`:
 | Property | Value |
 |---|---|
 | Background | `#F5F0E8` warm paper |
-| Highlight | Dotted underline, black at ~15% opacity — greyscale safe |
+| Highlight / comment / ink | Light grey fill behind black text (`HIGHLIGHT_FILL`, ~12% black) — greyscale safe |
 | Body font | Literata (bundled) |
 | UI chrome font | Source Sans 3 (bundled) |
 | Position references | Always 0.0–1.0 fraction — never pixel offsets |
@@ -248,7 +252,7 @@ explicit instruction.
 |---|---|
 | `android_native/app/.../reader/ReaderActivity.kt` | Main reader — page nav, EPD, annotation flow |
 | `android_native/app/.../reader/ReaderView.kt` | Software-layer View — onDraw, StaticLayout |
-| `android_native/app/.../reader/HighlightPainter.kt` | Dotted-underline annotation rendering |
+| `android_native/app/.../reader/HighlightPainter.kt` | Annotation line decorations (underline/double/strikethrough) + dotted selection underline |
 | `android_native/app/.../reader/AnnotationsPanelActivity.kt` | Annotations list panel Activity |
 | `android_native/app/.../reader/NoteActivity.kt` | Single annotation edit Activity |
 | `android_native/app/.../reader/InkNoteActivity.kt` | Ink annotation Activity |
