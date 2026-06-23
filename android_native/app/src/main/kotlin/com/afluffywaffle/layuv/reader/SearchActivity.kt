@@ -666,17 +666,6 @@ class SearchActivity : Activity() {
         return (available / rowH).coerceIn(3, 12)
     }
 
-    private fun textButton(label: String, onClick: () -> Unit): TextView =
-        TextView(this).apply {
-            text = label
-            typeface = ReaderTheme.body(this@SearchActivity)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            setTextColor(ReaderTheme.INK_87)
-            gravity = Gravity.CENTER
-            setPadding(dp(16f), dp(8f), dp(16f), dp(8f))
-            minimumHeight = dp(48f)
-            setOnTouchListener(PenTapListener(this@SearchActivity, onTap = onClick))
-        }
 
     /** Advance past any partial word at [pos] — finds the start of the next complete word. */
     private fun snapWordEnd(text: String, pos: Int): Int {

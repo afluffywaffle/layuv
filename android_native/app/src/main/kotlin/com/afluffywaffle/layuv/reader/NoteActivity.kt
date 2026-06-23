@@ -738,20 +738,6 @@ class NoteActivity : Activity() {
         }
     }
 
-    private fun chipBackground(selected: Boolean): GradientDrawable = GradientDrawable().apply {
-        shape = GradientDrawable.RECTANGLE
-        cornerRadius = ReaderTheme.dp(this@NoteActivity, ReaderTheme.RADIUS_BTN)
-        setColor(if (selected) 0 else ReaderTheme.FILL_06)
-        setStroke(dp(if (selected) 2f else 1f), if (selected) ReaderTheme.INK_87 else ReaderTheme.INK_26)
-    }
-
-    private fun popupBackground(): GradientDrawable = GradientDrawable().apply {
-        shape = GradientDrawable.RECTANGLE
-        cornerRadius = ReaderTheme.dp(this@NoteActivity, ReaderTheme.RADIUS_BTN)
-        setColor(ReaderTheme.PAPER)
-        setStroke(dp(1f), ReaderTheme.INK_26)
-    }
-
     /**
      * The bottom-right "more underneath" triangle (matching the annotation
      * toolbar's lock hint) as a foreground Drawable — reliably painted on top of a
@@ -864,25 +850,6 @@ class NoteActivity : Activity() {
         }
         return composeField
     }
-
-    /** A 48dp themed icon button (paper fill, INK_26 border) for toolbar affordances. */
-    private fun iconButton(iconRes: Int, contentDesc: String, onTap: () -> Unit): ImageView =
-        ImageView(this).apply {
-            setImageResource(iconRes)
-            setColorFilter(ReaderTheme.INK_54)
-            contentDescription = contentDesc
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = ReaderTheme.dp(this@NoteActivity, ReaderTheme.RADIUS_BTN)
-                setColor(ReaderTheme.FILL_04)
-                setStroke(dp(1f), ReaderTheme.INK_26)
-            }
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            setPadding(dp(12f), dp(12f), dp(12f), dp(12f))
-            minimumWidth = dp(48f)
-            minimumHeight = dp(48f)
-            setOnTouchListener(PenTapListener(this@NoteActivity, onTap = onTap))
-        }
 
     /**
      * Pulls clipboard text, wraps it in quotes, and inserts at [target]'s cursor.
@@ -1085,7 +1052,7 @@ class NoteActivity : Activity() {
             minimumHeight = dp(48f)
             visibility = if (totalPages > 1) View.VISIBLE else View.GONE
         }
-        pager.addView(textButton("← Prev") {
+        pager.addView(textButton("← Prev", bold = true) {
             if (threadPage > 0) { threadPage--; renderPane() }
         }, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
         pager.addView(TextView(this).apply {
@@ -1095,7 +1062,7 @@ class NoteActivity : Activity() {
             setTextColor(ReaderTheme.INK_54)
             gravity = Gravity.CENTER
         }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        pager.addView(textButton("Next →") {
+        pager.addView(textButton("Next →", bold = true) {
             if (threadPage < totalPages - 1) { threadPage++; renderPane() }
         }, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
         pane.addView(pager, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
@@ -1588,8 +1555,8 @@ class NoteActivity : Activity() {
             setTextColor(ReaderTheme.INK_54)
             gravity = Gravity.CENTER
         }
-        val prevBtn = textButton("← Prev") {}
-        val nextBtn = textButton("Next →") {}
+        val prevBtn = textButton("← Prev", bold = true) {}
+        val nextBtn = textButton("Next →", bold = true) {}
         val pagerRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -1834,50 +1801,6 @@ class NoteActivity : Activity() {
     // -------------------------------------------------------------------------
     // Widget helpers
     // -------------------------------------------------------------------------
-
-    private fun pillButton(label: String, filled: Boolean, onTap: () -> Unit): TextView =
-        TextView(this).apply {
-            text = label
-            typeface = ReaderTheme.bodyBold(this@NoteActivity)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            setTextColor(if (filled) ReaderTheme.PAPER else ReaderTheme.INK_87)
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = ReaderTheme.dp(this@NoteActivity, ReaderTheme.RADIUS_BTN)
-                setColor(if (filled) ReaderTheme.INK_87 else ReaderTheme.FILL_04)
-                setStroke(dp(1f), ReaderTheme.INK_87)
-            }
-            setPadding(dp(20f), dp(10f), dp(20f), dp(10f))
-            minimumHeight = dp(48f)
-            setOnTouchListener(PenTapListener(this@NoteActivity, onTap = onTap))
-        }
-
-    private fun smallAction(label: String, onTap: () -> Unit): TextView =
-        TextView(this).apply {
-            text = label
-            typeface = ReaderTheme.bodyBold(this@NoteActivity)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(ReaderTheme.INK_87)
-            gravity = Gravity.CENTER
-            setPadding(dp(12f), dp(8f), dp(12f), dp(8f))
-            minimumHeight = dp(48f)
-            setOnTouchListener(PenTapListener(this@NoteActivity, onTap = onTap))
-        }
-
-    private fun textButton(label: String, onTap: () -> Unit): TextView =
-        TextView(this).apply {
-            text = label
-            // Pager Prev/Next are primary navigation — bold for e-ink legibility.
-            typeface = ReaderTheme.bodyBold(this@NoteActivity)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            setTextColor(ReaderTheme.INK_87)
-            gravity = Gravity.CENTER
-            setPadding(dp(16f), dp(8f), dp(16f), dp(8f))
-            minimumHeight = dp(48f)
-            setOnTouchListener(PenTapListener(this@NoteActivity, onTap = onTap))
-        }
-
 
     private fun readTempBytes(name: String): ByteArray? = try {
         val f = File(cacheDir, name)

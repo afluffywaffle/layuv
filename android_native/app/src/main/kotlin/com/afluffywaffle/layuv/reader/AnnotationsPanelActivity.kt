@@ -748,17 +748,6 @@ class AnnotationsPanelActivity : Activity() {
             marginEnd = dp(8f)
         }
 
-    private fun textButton(label: String, onClick: () -> Unit): TextView =
-        TextView(this).apply {
-            text = label
-            typeface = ReaderTheme.body(this@AnnotationsPanelActivity)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            setTextColor(ReaderTheme.INK_87)
-            gravity = Gravity.CENTER
-            setPadding(dp(16f), dp(8f), dp(16f), dp(8f))
-            minimumHeight = dp(48f)
-            setOnTouchListener(PenTapListener(this@AnnotationsPanelActivity, onTap = onClick))
-        }
 
     private fun emptyLabel(): View = TextView(this).apply {
         text = "No marks yet."
