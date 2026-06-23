@@ -89,9 +89,12 @@ class NoteActivity : Activity() {
     // stops repeated dumping of the same chunk). It re-enables when the clipboard
     // changes — i.e. the next time the user copies something.
     private var pasteButton: ImageView? = null
-    // The clipboard text last pasted. Paste stays disabled while the clipboard
-    // still holds it, and re-enables when the clipboard changes (a fresh copy).
+    // The clipboard text last pasted (or seen at open). Paste stays disabled while
+    // the clipboard still holds it, and re-enables when the clipboard changes (a
+    // fresh copy). Seeded on first focus so the button starts quiet (faded) instead
+    // of lit by whatever happened to be on the clipboard already.
     private var lastPastedClip: String? = null
+    private var pasteSeeded = false
 
     // Full-screen compose overlay (P1d) — for writing a long reply while the
     // referenced passage/comment stays visible. Held so it can be synced + torn
@@ -340,10 +343,18 @@ class NoteActivity : Activity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        // The clipboard may have changed while we were away; re-evaluate the paste
-        // button now that we hold window focus (clipboard reads need focus on
-        // Android 10+).
-        if (hasFocus) refreshPasteButton()
+        if (hasFocus) {
+            // On the FIRST focus, treat whatever is already on the clipboard as
+            // "already seen" so the paste button starts faded — it only lights up
+            // once the user copies something new. (Clipboard reads need window focus
+            // on Android 10+, so this can't be seeded earlier in onCreate.)
+            if (!pasteSeeded) {
+                lastPastedClip = clipboardText()
+                pasteSeeded = true
+            }
+            // The clipboard may also have changed while we were away — re-evaluate.
+            refreshPasteButton()
+        }
     }
 
     // -------------------------------------------------------------------------
