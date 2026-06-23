@@ -192,7 +192,6 @@ DOCX comments in `word/comments.xml` inside the file.
 These rules apply to all UI added to `android_native/app/`:
 
 - No animations of any kind
-- No swipe gestures (unreliable on e-ink)
 - Show/hide with plain conditionals only
 - All UI must be greyscale-safe — no colour-only affordances
 - Tap targets: 48dp minimum, 64dp preferred

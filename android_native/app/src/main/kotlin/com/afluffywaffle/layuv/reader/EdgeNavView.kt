@@ -1,0 +1,150 @@
+package com.afluffywaffle.layuv.reader
+
+import android.content.Context
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
+import android.view.MotionEvent
+import android.view.View
+
+/**
+ * The reader's edge-navigation affordance, factored out as a standalone [View] so
+ * Help can present the *same* navigation the reader uses. Tall strips run down the
+ * left and right edges; each strip is split top (= next) / bottom (= prev) by a
+ * midline hairline, with a faint chevron in each half — top points right (forward),
+ * bottom points left (back). All paint specs are copied verbatim from [ReaderView]'s
+ * baked-in nav (`drawNavStrips`/`drawChevron`, strip width [NAV_STRIP_DP]) so the two
+ * surfaces match exactly.
+ *
+ * Two uses:
+ *  - **Interactive overlay** (Help paging): pass [onNext]/[onPrev]; a tap inside a
+ *    strip turns the page. Taps elsewhere fall through (returns false on DOWN), and a
+ *    drag is ignored so a swipe handled by the host isn't double-counted.
+ *  - **Static diagram** (Help "Reading" page): leave the callbacks null and set
+ *    [diagram] = true to also draw a rounded page outline, strip separators, and
+ *    small Next/Prev/page labels.
+ *
+ * E-ink: static vector strokes, no animation. The host invalidates on page change.
+ */
+class EdgeNavView(
+    context: Context,
+    private val diagram: Boolean = false,
+    private val onNext: (() -> Unit)? = null,
+    private val onPrev: (() -> Unit)? = null,
+) : View(context) {
+
+    private val stripWidth = ReaderTheme.dp(context, NAV_STRIP_DP)
+    private val chevronHalfW = ReaderTheme.dp(context, 8f)
+    private val chevronHalfH = ReaderTheme.dp(context, 12f)
+    private val path = Path()
+
+    private val hairlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ReaderTheme.INK
+        alpha = 90 // divider between the top (next) and bottom (prev) zones
+        style = Paint.Style.STROKE
+        strokeWidth = ReaderTheme.dp(context, 1.5f)
+    }
+    private val chevronPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ReaderTheme.INK
+        alpha = 55
+        style = Paint.Style.STROKE
+        strokeWidth = ReaderTheme.dp(context, 2.5f)
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+
+    // Diagram-only paints (page outline, strip separators, labels).
+    private val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ReaderTheme.INK_26
+        style = Paint.Style.STROKE
+        strokeWidth = ReaderTheme.dp(context, 2f)
+    }
+    private val separatorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ReaderTheme.INK_26
+        style = Paint.Style.STROKE
+        strokeWidth = ReaderTheme.dp(context, 1f)
+    }
+    private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ReaderTheme.INK_54
+        textAlign = Paint.Align.CENTER
+        textSize = ReaderTheme.sp(context, 12f)
+        typeface = ReaderTheme.chrome(context)
+    }
+    private val pageLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ReaderTheme.INK_38
+        textAlign = Paint.Align.CENTER
+        textSize = ReaderTheme.sp(context, 16f)
+        typeface = ReaderTheme.bodyItalic(context)
+    }
+
+    private var downX = 0f
+    private var downY = 0f
+    private val tapSlop = ReaderTheme.dp(context, 12f)
+
+    override fun onDraw(canvas: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (diagram) {
+            val r = ReaderTheme.dp(context, ReaderTheme.RADIUS_CARD)
+            val inset = outlinePaint.strokeWidth
+            canvas.drawRoundRect(RectF(inset, inset, w - inset, h - inset), r, r, outlinePaint)
+            canvas.drawLine(stripWidth, inset, stripWidth, h - inset, separatorPaint)
+            canvas.drawLine(w - stripWidth, inset, w - stripWidth, h - inset, separatorPaint)
+            canvas.drawText("page", w / 2f, h / 2f + pageLabelPaint.textSize / 3f, pageLabelPaint)
+        }
+        drawStrip(canvas, 0f, h)
+        drawStrip(canvas, w - stripWidth, h)
+    }
+
+    private fun drawStrip(canvas: Canvas, left: Float, h: Float) {
+        val cx = left + stripWidth / 2f
+        val midY = h / 2f
+        canvas.drawLine(left, midY, left + stripWidth, midY, hairlinePaint)
+        drawChevron(canvas, cx, h / 4f, pointRight = true)       // top = next
+        drawChevron(canvas, cx, h * 3f / 4f, pointRight = false) // bottom = prev
+        if (diagram) {
+            val gap = chevronHalfH + labelPaint.textSize + ReaderTheme.dp(context, 4f)
+            canvas.drawText("Next", cx, h / 4f + gap, labelPaint)
+            canvas.drawText("Prev", cx, h * 3f / 4f + gap, labelPaint)
+        }
+    }
+
+    private fun drawChevron(canvas: Canvas, cx: Float, cy: Float, pointRight: Boolean) {
+        val w = chevronHalfW
+        val h = chevronHalfH
+        path.rewind()
+        if (pointRight) {
+            path.moveTo(cx - w, cy - h); path.lineTo(cx + w, cy); path.lineTo(cx - w, cy + h)
+        } else {
+            path.moveTo(cx + w, cy - h); path.lineTo(cx - w, cy); path.lineTo(cx + w, cy + h)
+        }
+        canvas.drawPath(path, chevronPaint)
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (onNext == null && onPrev == null) return false // diagram: non-interactive
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                val inStrip = event.x < stripWidth || event.x > width - stripWidth
+                if (!inStrip) return false // let center taps/scrolls fall through
+                downX = event.x
+                downY = event.y
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                val dx = event.x - downX
+                val dy = event.y - downY
+                if (dx * dx + dy * dy > tapSlop * tapSlop) return true // a swipe — host handles it
+                if (event.y < height / 2f) onNext?.invoke() else onPrev?.invoke()
+                return true
+            }
+        }
+        return false
+    }
+
+    companion object {
+        /** Strip width, matching [ReaderView]'s `NAV_STRIP_DP`. */
+        const val NAV_STRIP_DP = 80f
+    }
+}

@@ -1,10 +1,10 @@
 package com.afluffywaffle.layuv.reader
 
 import android.app.Activity
-import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
@@ -21,15 +21,21 @@ import com.afluffywaffle.layuv.docx.model.AnnotationTool
  * live components (real tool icons via [ToolIconView], simple diagrams, style
  * samples) with labels — so it stays current when the UI changes and renders crisp
  * on e-ink, with no bundled screenshots to maintain. Reachable from the reader's
- * ⋯ overflow menu. E-ink rules: no animation, no swipe — plain Prev/Next paging.
+ * ⋯ overflow menu.
+ *
+ * Navigation mirrors the reader (see [EdgeNavView]): tap the edge strips — top half =
+ * next, bottom half = prev — or swipe horizontally. No animation; a slim page
+ * indicator sits at the bottom.
  */
 class HelpActivity : Activity() {
 
     private var pageIndex = 0
     private lateinit var pageContainer: FrameLayout
     private lateinit var pageLabel: TextView
-    private lateinit var prevBtn: TextView
-    private lateinit var nextBtn: TextView
+
+    // Swipe tracking for dispatchTouchEvent — mirrors SearchActivity / the reader.
+    private var swipeDownX = 0f
+    private var swipeDownY = 0f
 
     // Topic-per-page. Each builder must fit one screen (no scroll on e-ink).
     private val pages: List<Pair<String, () -> View>> by lazy {
@@ -58,6 +64,27 @@ class HelpActivity : Activity() {
         outState.putInt(STATE_PAGE, pageIndex)
     }
 
+    /**
+     * Horizontal swipe turns the page, matching the reader and [SearchActivity].
+     * Edge taps are handled by the [EdgeNavView] overlay; observed here regardless of
+     * which view consumes them. A swipe that begins in a strip is reconciled in
+     * [EdgeNavView] (its tap handler ignores dragged gestures), so only this fires.
+     */
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { swipeDownX = ev.x; swipeDownY = ev.y }
+            MotionEvent.ACTION_UP -> {
+                val dx = ev.x - swipeDownX
+                val dy = ev.y - swipeDownY
+                if (Math.abs(dx) > dp(60f) && Math.abs(dx) > Math.abs(dy)) {
+                    showPage(if (dx < 0) pageIndex + 1 else pageIndex - 1)
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> { swipeDownX = 0f; swipeDownY = 0f }
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
     // -------------------------------------------------------------------------
     // Scaffold
     // -------------------------------------------------------------------------
@@ -69,10 +96,27 @@ class HelpActivity : Activity() {
         }
         root.addView(buildHeader(), LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         root.addView(hDivider(), LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
-        pageContainer = FrameLayout(this).apply { setPadding(dp(24f), dp(20f), dp(24f), dp(16f)) }
-        root.addView(pageContainer, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+
+        // Content region: padded page content, with the edge-nav overlay full-bleed on
+        // top so its strips sit at the true screen edges (not inside the page padding).
+        // Inset the content horizontally PAST the nav strips so text never slides under
+        // the chevrons (mirrors the reader, whose columns clear the strip width).
+        val content = FrameLayout(this)
+        val sidePad = dp(EdgeNavView.NAV_STRIP_DP)
+        pageContainer = FrameLayout(this).apply { setPadding(sidePad, dp(20f), sidePad, dp(16f)) }
+        content.addView(pageContainer, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        content.addView(
+            EdgeNavView(
+                this,
+                onNext = { showPage(pageIndex + 1) },
+                onPrev = { showPage(pageIndex - 1) },
+            ),
+            FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT),
+        )
+        root.addView(content, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+
         root.addView(hDivider(), LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
-        root.addView(buildPager(), LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        root.addView(buildFooter(), LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         return root
     }
 
@@ -93,38 +137,28 @@ class HelpActivity : Activity() {
         return header
     }
 
-    private fun buildPager(): View {
-        val bar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12f), dp(4f), dp(12f), dp(4f))
-            minimumHeight = dp(56f)
-        }
-        prevBtn = textButton("← Prev", bold = true) { showPage(pageIndex - 1) }
-        nextBtn = textButton("Next →", bold = true) { showPage(pageIndex + 1) }
+    /** Slim centred page indicator — paging is by the edge strips + swipe. */
+    private fun buildFooter(): View {
         pageLabel = TextView(this).apply {
             typeface = ReaderTheme.chrome(this@HelpActivity)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTextColor(ReaderTheme.INK_54)
             gravity = Gravity.CENTER
+            setPadding(0, dp(10f), 0, dp(10f))
         }
-        bar.addView(prevBtn, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
-        bar.addView(pageLabel, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        bar.addView(nextBtn, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
-        return bar
+        return pageLabel
     }
 
     private fun showPage(index: Int) {
-        pageIndex = index.coerceIn(0, pages.size - 1)
+        val clamped = index.coerceIn(0, pages.size - 1)
+        if (clamped == pageIndex && pageContainer.childCount > 0) return // already showing
+        pageIndex = clamped
         pageContainer.removeAllViews()
         pageContainer.addView(
             pages[pageIndex].second(),
             FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT),
         )
         pageLabel.text = "${pageIndex + 1} / ${pages.size}"
-        // Hide the end-stop button rather than dim it (alpha washes out on e-ink).
-        prevBtn.visibility = if (pageIndex == 0) View.INVISIBLE else View.VISIBLE
-        nextBtn.visibility = if (pageIndex == pages.size - 1) View.INVISIBLE else View.VISIBLE
     }
 
     // -------------------------------------------------------------------------
@@ -241,10 +275,10 @@ class HelpActivity : Activity() {
         val col = pageColumn("Reading")
         col.addView(para("Léamh shows your document one page at a time, like a book — nothing scrolls.", 0f))
         col.addView(
-            pageTurnDiagram(),
-            LinearLayout.LayoutParams(MATCH_PARENT, dp(120f)).also { it.topMargin = dp(20f) },
+            EdgeNavView(this, diagram = true),
+            LinearLayout.LayoutParams(MATCH_PARENT, dp(150f)).also { it.topMargin = dp(20f) },
         )
-        col.addView(para("Tap the left or right edge of a page to turn back or forward."))
+        col.addView(para("A tall strip runs down both side edges. Tap the top half of either edge to turn to the next page, the bottom half to turn back. A horizontal swipe turns the page too."))
         col.addView(para("The bar at the bottom of the reader:", topGap = 22f))
         col.addView(
             grid(4, listOf(
@@ -256,46 +290,6 @@ class HelpActivity : Activity() {
             LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).also { it.topMargin = dp(4f) },
         )
         return col
-    }
-
-    /** A framed page with shaded left/right tap zones. */
-    private fun pageTurnDiagram(): View {
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = ReaderTheme.dp(this@HelpActivity, ReaderTheme.RADIUS_CARD)
-                setColor(ReaderTheme.PAPER)
-                setStroke(dp(2f), ReaderTheme.INK_26)
-            }
-        }
-        fun zone(arrow: String, label: String): View = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setBackgroundColor(ReaderTheme.FILL_06)
-            addView(TextView(this@HelpActivity).apply {
-                text = arrow
-                typeface = ReaderTheme.chromeBold(this@HelpActivity)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 30f)
-                setTextColor(ReaderTheme.INK_54)
-            })
-            addView(TextView(this@HelpActivity).apply {
-                text = label
-                typeface = ReaderTheme.chrome(this@HelpActivity)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                setTextColor(ReaderTheme.INK_54)
-            })
-        }
-        box.addView(zone("‹", "Prev"), LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
-        box.addView(TextView(this).apply {
-            text = "page"
-            gravity = Gravity.CENTER
-            typeface = ReaderTheme.bodyItalic(this@HelpActivity)
-            setTextColor(ReaderTheme.INK_38)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-        }, LinearLayout.LayoutParams(0, MATCH_PARENT, 2f))
-        box.addView(zone("›", "Next"), LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
-        return box
     }
 
     private fun buildAnnotatePage(): View {
