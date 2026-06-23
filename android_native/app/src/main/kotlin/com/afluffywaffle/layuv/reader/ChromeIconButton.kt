@@ -2,7 +2,9 @@ package com.afluffywaffle.layuv.reader
 
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.Paint
 import android.view.View
+import com.afluffywaffle.layuv.R
 import com.afluffywaffle.layuv.docx.model.AnnotationTool
 
 /**
@@ -56,6 +58,51 @@ class ChromeIconButton(
         val top = (height - iconPx) / 2
         icon.setBounds(left, top, left + iconPx, top + iconPx)
         icon.draw(canvas)
+    }
+}
+
+/**
+ * The "Ask AI" toolbar button: the chat-bubble icon with "AI" (Source Sans 3 Bold)
+ * drawn centred inside it, so it reads clearly as the AI-agent chat — not the
+ * comment bubble. Same size/touch as [ChromeIconButton].
+ */
+class AiChatButton(
+    context: Context,
+    onTap: () -> Unit,
+) : View(context) {
+
+    private val icon = context.getDrawable(R.drawable.ic_ai_chat)!!.mutate().apply { setTint(ReaderTheme.INK_87) }
+    private val iconPx = ReaderTheme.dp(context, ReaderTheme.ICON_DP).toInt()
+    private val padH = ReaderTheme.dp(context, 16f).toInt()
+    private val padV = ReaderTheme.dp(context, 12f).toInt()
+    private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ReaderTheme.INK_87
+        typeface = ReaderTheme.sourceSansBold(context)
+        textAlign = Paint.Align.CENTER
+    }
+
+    init {
+        setOnTouchListener(PenTapListener(context, onTap = onTap))
+        // Size "AI" to sit inside the bubble (~52% of the icon width).
+        label.textSize = iconPx.toFloat()
+        label.textSize = label.textSize * (iconPx * 0.52f / label.measureText("AI"))
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        setMeasuredDimension(iconPx + padH * 2, iconPx + padV * 2)
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val left = (width - iconPx) / 2
+        val top = (height - iconPx) / 2
+        icon.setBounds(left, top, left + iconPx, top + iconPx)
+        icon.draw(canvas)
+
+        // "AI" centred in the bubble body (the Material bubble's interior centres near y=10/24).
+        val cx = left + iconPx / 2f
+        val cy = top + iconPx * (10f / 24f)
+        val baseline = cy - (label.fontMetrics.ascent + label.fontMetrics.descent) / 2f
+        canvas.drawText("AI", cx, baseline, label)
     }
 }
 

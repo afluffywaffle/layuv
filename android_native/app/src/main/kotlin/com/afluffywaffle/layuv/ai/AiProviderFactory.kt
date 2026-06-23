@@ -30,4 +30,10 @@ object AiProviderFactory {
         PROVIDER_GEMINI -> OpenAiCompatibleProvider(GEMINI_BASE, geminiModel(context))
         else -> ClaudeProvider()
     }
+
+    /** Friendly name of the active provider, for chat labels ("Claude" / "Gemini"). */
+    fun displayName(context: Context): String = when (selected(context)) {
+        PROVIDER_GEMINI -> "Gemini"
+        else -> "Claude"
+    }
 }

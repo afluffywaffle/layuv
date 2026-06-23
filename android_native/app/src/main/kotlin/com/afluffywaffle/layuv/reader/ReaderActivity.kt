@@ -334,7 +334,7 @@ class ReaderActivity : Activity() {
         }
         moreButton = ChromeIconButton(this, R.drawable.ic_more_horiz) { showOverflowMenu() }
         searchButton = ChromeIconButton(this, R.drawable.ic_search) { launchSearch() }
-        val aiChatButton = ChromeIconButton(this, R.drawable.ic_chat_outline) { toggleAiChat() }
+        val aiChatButton = AiChatButton(this) { toggleAiChat() }
         pill.addView(annotationsButton)
         pill.addView(divider())
         pill.addView(bookmarkButton)

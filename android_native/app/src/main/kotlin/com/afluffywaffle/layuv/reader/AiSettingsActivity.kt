@@ -1,6 +1,7 @@
 package com.afluffywaffle.layuv.reader
 
 import android.app.Activity
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -123,6 +124,8 @@ class AiSettingsActivity : Activity() {
         fieldRow.addView(keyField, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         keyToggle = textButton("Show", bold = true) { toggleKeyVisible() }
         fieldRow.addView(keyToggle, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.leftMargin = dp(4f) })
+        fieldRow.addView(textButton("Paste", bold = true) { pasteKey() },
+            LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.leftMargin = dp(4f) })
         body.addView(fieldRow, lp(topMargin = dp(8f)))
 
         // Model (Gemini only — editable in case the default name changes).
@@ -301,6 +304,20 @@ class AiSettingsActivity : Activity() {
     /** The key to test: the just-typed one if present, else the stored one. */
     private fun keyToUse(): String? =
         keyField.text.toString().trim().ifEmpty { SecureKeyStore.read(this) }?.takeIf { it.isNotBlank() }
+
+    /** Paste the clipboard into the key field and reveal it, so the user can verify it landed. */
+    private fun pasteKey() {
+        val cm = getSystemService(CLIPBOARD_SERVICE) as? ClipboardManager
+        val clip = cm?.primaryClip?.takeIf { it.itemCount > 0 }
+            ?.getItemAt(0)?.coerceToText(this)?.toString()?.trim()
+        if (clip.isNullOrEmpty()) {
+            toast("Clipboard is empty.")
+            return
+        }
+        keyField.setText(clip)
+        if (!keyVisible) toggleKeyVisible()
+        keyField.setSelection(keyField.text.length)
+    }
 
     private fun toggleKeyVisible() {
         keyVisible = !keyVisible

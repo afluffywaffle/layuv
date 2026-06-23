@@ -14,15 +14,21 @@ import com.afluffywaffle.layuv.docx.model.AnnotationTool
  */
 object ManuscriptSerializer {
 
-    private const val PREAMBLE =
-        "You are helping an author revise a manuscript chapter. Below is the " +
-        "chapter text, followed by the author's annotations on specific passages. " +
-        "Rewrite the chapter to address every annotation while preserving the " +
-        "author's voice and everything that isn't flagged.\n\n" +
-        "When asked for the rewrite, reply with the full revised chapter as plain " +
-        "prose — paragraphs separated by a blank line, no commentary, headings, or " +
-        "markup around it. If the author replies with questions or further notes, " +
-        "discuss the changes conversationally before producing another rewrite."
+    private val PREAMBLE =
+        "You are helping an author revise a manuscript chapter, in a back-and-forth " +
+        "conversation. Below is the chapter text, followed by the author's " +
+        "annotations on specific passages.\n\n" +
+        "Your default task is to rewrite the chapter to address every annotation " +
+        "while preserving the author's voice and everything that isn't flagged. You " +
+        "may ask a brief clarifying question first if an annotation is genuinely " +
+        "ambiguous, and you can discuss the changes when the author replies.\n\n" +
+        "Format every rewrite exactly like this: put the FULL revised chapter — " +
+        "plain prose, paragraphs separated by a blank line, no headings, markup, or " +
+        "commentary — between a line reading " + RewriteProtocol.BEGIN + " and a " +
+        "line reading " + RewriteProtocol.END + ". Put any remarks to the author " +
+        "BEFORE the " + RewriteProtocol.BEGIN + " line, never inside the markers. " +
+        "When you are only discussing or asking a question (not delivering a " +
+        "rewrite), reply normally with no markers."
 
     fun buildPrompt(plainText: String, annotations: List<Annotation>): String {
         val sb = StringBuilder()

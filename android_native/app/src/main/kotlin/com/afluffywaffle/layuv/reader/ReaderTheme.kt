@@ -127,6 +127,14 @@ object ReaderTheme {
             }
         }
 
+    /** Source Sans 3 Bold regardless of the body font — for fixed chrome glyphs like the AI badge. */
+    fun sourceSansBold(context: Context): Typeface =
+        cache.getOrPut("$SOURCE_SANS:wght700") {
+            Typeface.Builder(context.assets, SOURCE_SANS)
+                .setFontVariationSettings("'wght' 700")
+                .build()
+        }
+
     @Synchronized
     private fun font(context: Context, path: String): Typeface =
         cache.getOrPut(path) { Typeface.createFromAsset(context.assets, path) }

@@ -3,6 +3,7 @@ package com.afluffywaffle.layuv.reader
 import android.app.Activity
 import android.app.Dialog
 import android.content.Context
+import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.ColorFilter
 import android.graphics.Paint
@@ -21,6 +22,7 @@ import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Space
@@ -34,6 +36,7 @@ import com.afluffywaffle.layuv.ai.SecureKeyStore
 import com.afluffywaffle.layuv.docx.DocxFromText
 import com.afluffywaffle.layuv.docx.DocxStore
 import com.afluffywaffle.layuv.docx.ManuscriptSerializer
+import com.afluffywaffle.layuv.docx.RewriteProtocol
 import com.afluffywaffle.layuv.docx.model.AiTurn
 import java.io.File
 
@@ -69,6 +72,8 @@ class AskAiPanel(
     private val input: EditText
     private val sendButton: TextView
     private val banner: LinearLayout
+    private lateinit var leftFlipStrip: LinearLayout
+    private lateinit var rightFlipStrip: LinearLayout
 
     val isOpen: Boolean get() = visibility == View.VISIBLE
 
@@ -85,7 +90,15 @@ class AskAiPanel(
             isFillViewport = true
             addView(transcript, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         }
-        addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        // Transcript flanked by ▲/▼ flip strips; only the user's chosen side shows (handedness).
+        leftFlipStrip = buildFlipStrip()
+        rightFlipStrip = buildFlipStrip()
+        val transcriptRow = LinearLayout(activity).apply { orientation = HORIZONTAL }
+        transcriptRow.addView(leftFlipStrip)
+        transcriptRow.addView(scroll, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
+        transcriptRow.addView(rightFlipStrip)
+        addView(transcriptRow, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        applyFlipSide()
 
         banner = LinearLayout(activity).apply {
             orientation = HORIZONTAL
@@ -268,27 +281,23 @@ class AskAiPanel(
 
     // ---- Save as draft ------------------------------------------------------
 
-    private fun saveAsDraft(assistantIndex: Int) {
+    private fun saveRewrite(rewriteText: String, fileName: String) {
         val b = book ?: return
         val file = b.file ?: return
-        val text = stitchedAnswer(assistantIndex)
-        val base = file.nameWithoutExtension
-        promptFilename("$base (AI draft).docx") { name ->
-            val safe = if (name.endsWith(".docx", ignoreCase = true)) name else "$name.docx"
-            val outFile = File(file.parentFile, safe)
-            io.execute {
-                try {
-                    val src = file.readBytes() // freshest on-disk structure
-                    val bytes = DocxFromText.build(src, text)
-                    DocxWriteQueue.writeAtomicDurable(outFile, bytes)
-                    main.post {
-                        toast("Saved ${outFile.name}")
-                        close()
-                        onOpenDraft(outFile)
-                    }
-                } catch (e: Exception) {
-                    main.post { toast("Couldn't save the draft.") }
+        val safe = if (fileName.endsWith(".docx", ignoreCase = true)) fileName else "$fileName.docx"
+        val outFile = File(file.parentFile, safe)
+        io.execute {
+            try {
+                val src = file.readBytes() // freshest on-disk structure
+                val bytes = DocxFromText.build(src, rewriteText)
+                DocxWriteQueue.writeAtomicDurable(outFile, bytes)
+                main.post {
+                    toast("Saved ${outFile.name}")
+                    close()
+                    onOpenDraft(outFile)
                 }
+            } catch (e: Exception) {
+                main.post { toast("Couldn't save the draft.") }
             }
         }
     }
@@ -319,15 +328,25 @@ class AskAiPanel(
         transcript.removeAllViews()
         banner.visibility = View.GONE
 
-        if (messages.isEmpty()) {
+        val firstTurn = messages.isEmpty()
+        // Make the send/receive model obvious: first turn auto-includes the whole chapter.
+        input.hint = if (firstTurn) "Add optional instructions, or just tap Send…" else "Reply to ${providerName()}…"
+        if (!sending) sendButton.text = if (firstTurn) "Send chapter" else "Send"
+
+        if (firstTurn) {
+            val name = book?.displayName ?: "this chapter"
+            val n = book?.doc?.annotations?.size ?: 0
+            val annPart = if (n > 0) " and your $n annotation" + (if (n == 1) "" else "s") else ""
             transcript.addView(centeredHint(
-                "Tap Send to ask Claude to rewrite this chapter addressing your annotations.\n" +
-                    "Then discuss, and save any reply as a new draft.",
+                "Tap \"Send chapter\" to send the full text of \"$name\"$annPart to ${providerName()} " +
+                    "for a rewrite.\n\nYou don't attach anything — the whole chapter is included " +
+                    "automatically. Add optional instructions below first if you like.",
             ))
             return
         }
 
         messages.forEachIndexed { i, turn ->
+            if (turn.role == AiTurn.ROLE_USER && turn.text == CONTINUE_PROMPT) return@forEachIndexed
             if (i > 0) transcript.addView(activity.rowDivider())
             when (turn.role) {
                 AiTurn.ROLE_ASSISTANT -> transcript.addView(assistantTurn(turn, i))
@@ -344,7 +363,7 @@ class AskAiPanel(
     private fun userTurn(turn: AiTurn, index: Int): View {
         val col = turnColumn("You")
         val body = if (index == 0) {
-            "Asked Claude to rewrite this chapter addressing your annotations."
+            "Sent the full chapter and your annotations to ${providerName()} for a rewrite."
         } else {
             turn.text
         }
@@ -358,24 +377,107 @@ class AskAiPanel(
     }
 
     private fun assistantTurn(turn: AiTurn, index: Int): View {
-        val col = turnColumn("Claude")
-        // Grey left bar marks assistant turns (greyscale, never colour).
-        col.addView(TextView(activity).apply {
-            text = turn.text
-            typeface = ReaderTheme.body(activity)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, ReaderTheme.BODY_TEXT_SP)
-            setTextColor(ReaderTheme.INK_87)
-            setPadding(dp(12f), dp(2f), 0, dp(2f))
-            background = leftBar()
-        }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        val col = turnColumn(providerName())
 
-        val actions = LinearLayout(activity).apply { orientation = HORIZONTAL }
-        actions.addView(activity.textButton("Save as draft", bold = true) { saveAsDraft(index) })
-        if (turn.truncated) {
-            actions.addView(activity.textButton("Continue", bold = true) { book?.let { continueTurn(it) } })
+        val isContinuation = index >= 2 &&
+            messages[index - 1].role == AiTurn.ROLE_USER && messages[index - 1].text == CONTINUE_PROMPT &&
+            messages[index - 2].role == AiTurn.ROLE_ASSISTANT
+
+        // Split the reply: discussion shows inline; a rewrite becomes a save-as-draft card
+        // (the chapter is never dumped into the chat).
+        val convo: String
+        val rewrite: String?
+        if (isContinuation) {
+            convo = ""
+            val stitched = stitchedAnswer(index)
+            rewrite = RewriteProtocol.parse(stitched).rewrite ?: stitched
+        } else {
+            val p = RewriteProtocol.parse(turn.text)
+            when {
+                p.rewrite != null -> { convo = p.conversation; rewrite = p.rewrite }
+                // Safety net: an unmarked but chapter-length reply is almost certainly a rewrite.
+                p.conversation.length >= REWRITE_FALLBACK_CHARS -> { convo = ""; rewrite = p.conversation }
+                else -> { convo = p.conversation; rewrite = null }
+            }
         }
-        col.addView(actions, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
+
+        if (convo.isNotEmpty()) col.addView(messageBody(convo))
+
+        if (rewrite != null) {
+            if (convo.isNotEmpty()) {
+                col.addView(activity.rowDivider().also { (it.layoutParams as LinearLayout.LayoutParams).topMargin = dp(10f) })
+            }
+            if (turn.truncated) {
+                col.addView(noteLine("The rewrite was cut off — tap Continue to get the rest."))
+                col.addView(pillRow(activity.pillButton("Continue", filled = false) { book?.let { continueTurn(it) } }))
+            } else {
+                col.addView(rewriteCard(rewrite))
+            }
+        } else if (convo.isEmpty()) {
+            col.addView(messageBody(turn.text)) // fallback: render the raw reply
+        }
         return col
+    }
+
+    private fun messageBody(text: String): View = TextView(activity).apply {
+        this.text = text
+        typeface = ReaderTheme.body(activity)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, ReaderTheme.BODY_TEXT_SP)
+        setTextColor(ReaderTheme.INK_87)
+        setPadding(dp(12f), dp(2f), 0, dp(2f))
+        background = leftBar()
+        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+    }
+
+    private fun noteLine(text: String): View = TextView(activity).apply {
+        this.text = text
+        typeface = ReaderTheme.body(activity)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        setTextColor(ReaderTheme.INK_54)
+        setPadding(0, dp(2f), 0, dp(2f))
+    }
+
+    private fun pillRow(vararg pills: View): View = LinearLayout(activity).apply {
+        orientation = HORIZONTAL
+        setPadding(0, dp(8f), 0, 0)
+        pills.forEachIndexed { i, v ->
+            addView(v, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { if (i > 0) it.leftMargin = dp(8f) })
+        }
+    }
+
+    /** A rewrite is offered as a draft (file name shown) — never rendered into the chat. */
+    private fun rewriteCard(rewrite: String): View {
+        val name = proposeDraftName()
+        return LinearLayout(activity).apply {
+            orientation = VERTICAL
+            setPadding(0, dp(6f), 0, 0)
+            addView(noteLine("Rewrite ready — save it as a new draft:"))
+            addView(TextView(activity).apply {
+                text = name
+                typeface = ReaderTheme.chromeBold(activity)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                setTextColor(ReaderTheme.INK_87)
+                setPadding(0, dp(2f), 0, dp(4f))
+            })
+            addView(pillRow(
+                activity.pillButton("Save & Open", filled = true) { saveRewrite(rewrite, name) },
+                activity.textButton("Change name…", bold = true) { promptFilename(name) { saveRewrite(rewrite, it) } },
+            ))
+        }
+    }
+
+    /** "<root>_draft_v<N>.docx" beside the source; the original counts as v1, so the first draft is v2. */
+    private fun proposeDraftName(): String {
+        val file = book?.file ?: return "draft_v2.docx"
+        val root = file.nameWithoutExtension
+            .replace(Regex("_draft_v\\d+$", RegexOption.IGNORE_CASE), "")
+            .lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_').ifEmpty { "chapter" }
+        val existing = file.parentFile?.listFiles()?.mapNotNull { f ->
+            Regex("^${Regex.escape(root)}_draft_v(\\d+)\\.docx$", RegexOption.IGNORE_CASE)
+                .find(f.name)?.groupValues?.get(1)?.toIntOrNull()
+        } ?: emptyList()
+        val next = (existing.maxOrNull() ?: 1) + 1
+        return "${root}_draft_v$next.docx"
     }
 
     private fun turnColumn(role: String): LinearLayout {
@@ -445,8 +547,9 @@ class AskAiPanel(
             setTextColor(ReaderTheme.INK_87)
         })
         header.addView(Space(activity), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-        header.addView(flipButton("▲") { flip(-1) })
-        header.addView(flipButton("▼") { flip(+1) })
+        header.addView(activity.textButton("⇆", bold = true) { toggleFlipSide() }.also {
+            it.contentDescription = "Move the scroll buttons to the other side"
+        })
         header.addView(activity.textButton("New", bold = true) { newConversation() })
         header.addView(activity.textButton("Hide", bold = true) { onHide() })
         return header
@@ -470,6 +573,63 @@ class AskAiPanel(
         scroll.scrollBy(0, dir * step)
         cleanRedraw()
     }
+
+    /** Vertical ▲/▼ flip strip + an Expand button, grouped at the bottom of the chosen side. */
+    private fun buildFlipStrip(): LinearLayout = LinearLayout(activity).apply {
+        orientation = VERTICAL
+        gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        setPadding(dp(2f), 0, dp(2f), dp(8f))
+        addView(flipButton("▲") { flip(-1) })
+        addView(flipButton("▼") { flip(+1) })
+        addView(expandButton())
+    }
+
+    /** Expand: open the latest reply full screen (read-only) — sits below the flip controls. */
+    private fun expandButton(): View = ImageView(activity).apply {
+        setImageResource(R.drawable.ic_fullscreen)
+        setColorFilter(ReaderTheme.INK_87)
+        scaleType = ImageView.ScaleType.CENTER_INSIDE
+        minimumWidth = dp(48f)
+        minimumHeight = dp(48f)
+        setPadding(dp(12f), dp(8f), dp(12f), dp(8f))
+        contentDescription = "Open the latest reply full screen"
+        setOnTouchListener(PenTapListener(activity, onTap = ::expandLatest))
+    }
+
+    private fun expandLatest() {
+        val last = messages.lastOrNull { it.role == AiTurn.ROLE_ASSISTANT }
+        if (last == null) {
+            toast("No reply yet.")
+            return
+        }
+        val p = RewriteProtocol.parse(last.text)
+        val text = when {
+            p.rewrite != null && p.conversation.isNotEmpty() -> p.conversation + "\n\n" + p.rewrite
+            p.rewrite != null -> p.rewrite
+            else -> p.conversation.ifEmpty { last.text }
+        }
+        activity.startActivity(
+            Intent(activity, AiReplyActivity::class.java)
+                .putExtra(AiReplyActivity.EXTRA_TITLE, "${providerName()} — latest reply")
+                .putExtra(AiReplyActivity.EXTRA_TEXT, text),
+        )
+    }
+
+    private fun flipPrefs() = activity.getSharedPreferences("leamh", Context.MODE_PRIVATE)
+
+    private fun applyFlipSide() {
+        val left = flipPrefs().getString(KEY_FLIP_SIDE, "right") == "left"
+        leftFlipStrip.visibility = if (left) View.VISIBLE else View.GONE
+        rightFlipStrip.visibility = if (left) View.GONE else View.VISIBLE
+    }
+
+    private fun toggleFlipSide() {
+        val left = flipPrefs().getString(KEY_FLIP_SIDE, "right") == "left"
+        flipPrefs().edit().putString(KEY_FLIP_SIDE, if (left) "right" else "left").apply()
+        applyFlipSide()
+    }
+
+    private fun providerName() = AiProviderFactory.displayName(activity)
 
     private fun scrollToBottom() {
         scroll.post {
@@ -508,7 +668,7 @@ class AskAiPanel(
         sendButton.text = if (value) "Working…" else "Send"
         styleSendButton()
         // Static working notice (no spinner — e-ink rule).
-        if (value) showBanner("Contacting Claude… this can take up to a minute.", null, null)
+        if (value) showBanner("Contacting ${providerName()}… this can take up to a minute.", null, null)
     }
 
     private fun styleSendButton() {
@@ -599,6 +759,9 @@ class AskAiPanel(
     private fun toast(msg: String) = Toast.makeText(activity, msg, Toast.LENGTH_SHORT).show()
 
     companion object {
+        private const val KEY_FLIP_SIDE = "ai_flip_side"
+        // An unmarked reply at least this long is treated as a rewrite (model-omitted markers).
+        private const val REWRITE_FALLBACK_CHARS = 1200
         private const val MAX_CONTINUATIONS = 3
         private const val CONTINUE_PROMPT =
             "Continue the rewrite from exactly where the previous message was cut off. " +
