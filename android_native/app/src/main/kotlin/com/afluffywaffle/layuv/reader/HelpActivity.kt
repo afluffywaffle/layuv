@@ -308,6 +308,7 @@ class HelpActivity : Activity() {
             LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).also { it.topMargin = dp(8f) },
         )
         col.addView(para("Highlights and comments show a light grey fill behind the text; underline, double-underline and strikethrough draw a line. A bookmark adds a margin marker.", topGap = 22f))
+        col.addView(para("To mark up quickly, long-press a tool: a small card offers “Apply once” or “Lock tool”. Locking keeps that tool active, so every new selection is annotated with it automatically — no need to reopen the picker. The locked tool shows in the bottom bar; tap it to unlock.", topGap = 18f))
         return col
     }
 

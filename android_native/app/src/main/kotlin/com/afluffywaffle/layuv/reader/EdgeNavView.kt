@@ -71,11 +71,11 @@ class EdgeNavView(
         textSize = ReaderTheme.sp(context, 12f)
         typeface = ReaderTheme.chrome(context)
     }
-    private val pageLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val textLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = ReaderTheme.INK_38
-        textAlign = Paint.Align.CENTER
-        textSize = ReaderTheme.sp(context, 16f)
-        typeface = ReaderTheme.bodyItalic(context)
+        style = Paint.Style.STROKE
+        strokeWidth = ReaderTheme.dp(context, 3.5f)
+        strokeCap = Paint.Cap.ROUND
     }
 
     private var downX = 0f
@@ -91,7 +91,7 @@ class EdgeNavView(
             canvas.drawRoundRect(RectF(inset, inset, w - inset, h - inset), r, r, outlinePaint)
             canvas.drawLine(stripWidth, inset, stripWidth, h - inset, separatorPaint)
             canvas.drawLine(w - stripWidth, inset, w - stripWidth, h - inset, separatorPaint)
-            canvas.drawText("page", w / 2f, h / 2f + pageLabelPaint.textSize / 3f, pageLabelPaint)
+            drawTextLines(canvas, w, h)
         }
         drawStrip(canvas, 0f, h)
         drawStrip(canvas, w - stripWidth, h)
@@ -107,6 +107,23 @@ class EdgeNavView(
             val gap = chevronHalfH + labelPaint.textSize + ReaderTheme.dp(context, 4f)
             canvas.drawText("Next", cx, h / 4f + gap, labelPaint)
             canvas.drawText("Prev", cx, h * 3f / 4f + gap, labelPaint)
+        }
+    }
+
+    /** A few faint lines in the page body to symbolise text (diagram only). */
+    private fun drawTextLines(canvas: Canvas, w: Float, h: Float) {
+        val sidePad = ReaderTheme.dp(context, 22f)
+        val left = stripWidth + sidePad
+        val right = w - stripWidth - sidePad
+        if (right <= left) return
+        val count = 5
+        val gap = ReaderTheme.dp(context, 16f)
+        var y = h / 2f - gap * (count - 1) / 2f
+        for (i in 0 until count) {
+            // Ragged last line, like the end of a paragraph.
+            val lineRight = if (i == count - 1) left + (right - left) * 0.55f else right
+            canvas.drawLine(left, y, lineRight, y, textLinePaint)
+            y += gap
         }
     }
 
