@@ -758,50 +758,18 @@ class ReaderView(context: Context) : View(context) {
             }
         }
 
-        // Finger swipe → page turn. Track raw X/Y delta; require predominantly horizontal
-        // motion. Must run before the stylus routing below so finger swipes aren't
-        // swallowed by handleStylusEvent on devices where DrawPath is available.
-        // MOVE events with clear horizontal dominance are also suppressed here so that
-        // handleStylusEvent never starts a selection scrub during a swipe gesture.
-        if (event.getToolType(0) != MotionEvent.TOOL_TYPE_STYLUS) {
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    fingerSwipeDownX = event.x
-                    fingerSwipeDownY = event.y
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    if (fingerSwipeDownX >= 0) {
-                        val dx = event.x - fingerSwipeDownX
-                        val dy = event.y - fingerSwipeDownY
-                        if (Math.abs(dx) > Math.abs(dy) * 1.5f) return true
-                    }
-                }
-                MotionEvent.ACTION_UP -> {
-                    val dx = event.x - fingerSwipeDownX
-                    val dy = event.y - fingerSwipeDownY
-                    val swipeMin = ReaderTheme.dp(context, 60f)
-                    fingerSwipeDownX = -1f
-                    fingerSwipeDownY = -1f
-                    if (Math.abs(dx) > swipeMin && Math.abs(dx) > Math.abs(dy)) {
-                        cancelSelection()
-                        if (dx < 0) next() else prev()
-                        return true
-                    }
-                }
-                MotionEvent.ACTION_CANCEL -> {
-                    fingerSwipeDownX = -1f
-                    fingerSwipeDownY = -1f
-                }
-            }
-        }
-
-        // On Supernote (DrawPath available), the EMR pen reports as TOOL_TYPE_FINGER
-        // to Android rather than TOOL_TYPE_STYLUS. Route all events to the stylus
-        // handler so scrub-selection and navTap work correctly. On other devices,
-        // only explicit TOOL_TYPE_STYLUS events go this route.
-        if (DrawPathClient.available() || event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
+        // Real stylus (the Supernote EMR pen reports TOOL_TYPE_STYLUS with its own
+        // source/device, confirmed on-device) → scrub-select: a drag selects, a tap
+        // navigates or dismisses. Finger never takes this path.
+        if (event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
             return handleStylusEvent(event)
         }
+
+        // --- Finger ---------------------------------------------------------------
+        // A long-press selection (started by the GestureDetector below) OWNS all
+        // subsequent movement: once selecting, a horizontal drag EXTENDS the selection
+        // and must never be read as a page swipe. Keeping this ahead of the swipe check
+        // is what fixes "long-press, then drag horizontally → page turn".
         if (isSelecting) {
             when (event.actionMasked) {
                 MotionEvent.ACTION_MOVE -> { extendSelectionTo(event.x, event.y); return true }
@@ -809,6 +777,36 @@ class ReaderView(context: Context) : View(context) {
                 MotionEvent.ACTION_CANCEL -> { cancelSelection(); return true }
             }
         }
+
+        // Finger swipe → page turn (only when NOT selecting). Decided on lift from the
+        // net horizontal delta — MOVE events are NOT consumed, so the GestureDetector
+        // still sees them and can cancel its long-press timer once the finger travels
+        // (a moving finger is a swipe; a still finger that dwells starts a selection).
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                fingerSwipeDownX = event.x
+                fingerSwipeDownY = event.y
+            }
+            MotionEvent.ACTION_UP -> {
+                val dx = event.x - fingerSwipeDownX
+                val dy = event.y - fingerSwipeDownY
+                val swipeMin = ReaderTheme.dp(context, 60f)
+                val hadDown = fingerSwipeDownX >= 0
+                fingerSwipeDownX = -1f
+                fingerSwipeDownY = -1f
+                if (hadDown && Math.abs(dx) > swipeMin && Math.abs(dx) > Math.abs(dy)) {
+                    cancelSelection()
+                    if (dx < 0) next() else prev()
+                    return true
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                fingerSwipeDownX = -1f
+                fingerSwipeDownY = -1f
+            }
+        }
+
+        // Finger taps (nav / annotation / dismiss) and long-press (start selection).
         return gestures.onTouchEvent(event) || super.onTouchEvent(event)
     }
 
