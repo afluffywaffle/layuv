@@ -1,6 +1,9 @@
 package com.afluffywaffle.layuv.reader
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -8,20 +11,29 @@ import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Canvas
 import android.graphics.ColorFilter
+import android.graphics.DashPathEffect
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.text.StaticLayout
+import android.text.TextPaint
 import android.text.TextUtils
 import android.util.TypedValue
+import android.view.ActionMode
 import android.view.Gravity
+import android.view.Menu
+import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.EditText
 import android.widget.FrameLayout
-import android.widget.HorizontalScrollView
+import android.widget.PopupWindow
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.Space
@@ -66,6 +78,9 @@ class NoteActivity : Activity() {
     private lateinit var paneContainer: LinearLayout
     private lateinit var inkTab: LinearLayout
     private lateinit var threadTab: LinearLayout
+    private lateinit var bottomFrame: FrameLayout
+    private var entryDetailOverlay: View? = null
+    private var entryDetailLayoutListener: android.view.ViewTreeObserver.OnGlobalLayoutListener? = null
 
     private var selectedTool = AnnotationTool.highlight
     private var selectedTag: AnnotationTag? = null
@@ -94,8 +109,14 @@ class NoteActivity : Activity() {
     private var bodySizeSp = ReaderTheme.BODY_TEXT_SP
     private var chromeSizeSp = 15f
 
-    private val toolContainers = mutableMapOf<AnnotationTool, FrameLayout>()
-    private val tagViews = mutableMapOf<AnnotationTag, Pair<FrameLayout, TextView>>()
+    // Tool + tag controls live in the top toolbar (header) to maximise the
+    // compose + comments space. The tool button shows the current tool; the tag
+    // button shows '#' or the active tag's label. Both open a picker popup.
+    private var toolButton: View? = null
+    private var tagButton: FrameLayout? = null   // wrapper carries the corner-hint foreground
+    private lateinit var tagLabel: TextView      // the '#' / tag-label text inside the wrapper
+    private var toolPickerPopup: PopupWindow? = null
+    private var tagPickerPopup: PopupWindow? = null
 
     private val selectorTools = listOf(
         AnnotationTool.highlight,
@@ -139,7 +160,7 @@ class NoteActivity : Activity() {
         if (composePending.isNotEmpty()) {
             composeField.setText(composePending)
             composeField.setSelection(composeField.text.length)
-            if (composeEditIndex in threadEntries.indices) composeButton.text = "Save"
+            if (composeEditIndex in threadEntries.indices) composeButton.text = "Update"
         }
         refreshToolSelection()
         refreshTagSelection()
@@ -268,6 +289,15 @@ class NoteActivity : Activity() {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() = handleBack()
 
+    override fun onPause() {
+        super.onPause()
+        // Proactively tear down transient UI so nothing leaks a window/listener on
+        // finish: the toolbar pickers and the entry-detail overlay.
+        toolPickerPopup?.dismiss(); toolPickerPopup = null
+        tagPickerPopup?.dismiss(); tagPickerPopup = null
+        dismissEntryDetail()
+    }
+
     // -------------------------------------------------------------------------
     // Save
     // -------------------------------------------------------------------------
@@ -307,22 +337,24 @@ class NoteActivity : Activity() {
         root.addView(buildHeader(), LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         root.addView(hDivider(), LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
 
+        // The tool + tag selectors now live in the header, and the annotated
+        // passage is the pinned root of the Comments tab — so the top section is
+        // just the compose field, freeing the rest for compose + comments.
         val top = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20f), dp(12f), dp(20f), dp(12f))
         }
-        top.addView(buildSelectorRow(), LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-        top.addView(space(10f), LinearLayout.LayoutParams(MATCH_PARENT, dp(10f)))
-        if (selectedText.isNotEmpty()) {
-            top.addView(buildQuoteBox(selectedText), LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-            top.addView(space(10f), LinearLayout.LayoutParams(MATCH_PARENT, dp(10f)))
-        }
         top.addView(buildComposeRow(), LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         root.addView(top, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
-        root.addView(hDivider(), LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
-        root.addView(buildTabBar(), LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-        root.addView(hDivider(), LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
+        // FrameLayout wraps the tab bar + pane so showEntryDetail can layer an
+        // overlay over just this region without blocking the compose field above.
+        bottomFrame = FrameLayout(this)
+        val bottomStack = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        bottomStack.addView(hDivider(), LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
+        bottomStack.addView(buildTabBar(), LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        bottomStack.addView(hDivider(), LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
 
         paneContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         // Capture the pane's real height once it's laid out (with the soft keyboard
@@ -340,31 +372,83 @@ class NoteActivity : Activity() {
                 }
             },
         )
-        root.addView(paneContainer, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        bottomStack.addView(paneContainer, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+
+        bottomFrame.addView(bottomStack, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        root.addView(bottomFrame, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
 
         return root
     }
 
-    /** Top bar: back arrow on the left, Save pill on the right (no title). */
+    /**
+     * Top bar: Dismiss + Save paired on the left (so reaching to exit surfaces
+     * Save), then a right cluster of tool · tag · paste · add. The compose field
+     * below gets the full width because paste + add moved up here.
+     */
     private fun buildHeader(): View {
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(4f), dp(8f), dp(12f), dp(4f))
+            setPadding(dp(12f), dp(8f), dp(12f), dp(4f))
         }
+
+        // Left: exit + commit pair. Dismiss keeps the unsaved-changes confirmation.
         header.addView(
-            ChromeIconButton(this, R.drawable.ic_arrow_back) { handleBack() },
+            pillButton("Dismiss", filled = false) { handleBack() },
             LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT),
         )
+        header.addView(
+            pillButton("Save", filled = true) { onSave() },
+            LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.leftMargin = dp(8f) },
+        )
+
         // Space (not View) as the flex spacer: View.getDefaultSize returns the full
         // AT_MOST spec-size for WRAP_CONTENT, inflating the header to screen height.
         // Space.onMeasure returns 0 for AT_MOST, so the header stays wrap-content.
         header.addView(Space(this), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
 
-        val saveBtn = TextView(this).apply {
-            text = "Save"
+        // Right cluster: tool · tag · paste. Tool + tag carry the corner-hint
+        // triangle (a picker drops down beneath them). Add lives beside the field.
+        val toolBtn = buildToolButton()
+        toolButton = toolBtn
+        header.addView(toolBtn, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
+        header.addView(
+            buildTagButton(),
+            LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.leftMargin = dp(8f) },
+        )
+        header.addView(
+            buildPasteButton(),
+            LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.leftMargin = dp(8f) },
+        )
+        return header
+    }
+
+    /** Clipboard paste icon button (toolbar) — wraps pasted text in quotes. */
+    private fun buildPasteButton(): View {
+        val btn = ImageView(this).apply {
+            setImageResource(R.drawable.ic_paste)
+            setColorFilter(ReaderTheme.INK_54)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = ReaderTheme.dp(this@NoteActivity, ReaderTheme.RADIUS_BTN)
+                setColor(ReaderTheme.FILL_04)
+                setStroke(dp(1f), ReaderTheme.INK_26)
+            }
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(dp(11f), dp(11f), dp(11f), dp(11f))
+            minimumWidth = dp(48f)
+            minimumHeight = dp(48f)
+        }
+        btn.setOnTouchListener(PenTapListener(this) { pasteClipboardWithQuotes() })
+        return btn
+    }
+
+    /** The compose commit button (toolbar) — "Add" normally, "Update" when editing. */
+    private fun buildAddButton(): TextView {
+        val btn = TextView(this).apply {
+            text = "Add"
             typeface = ReaderTheme.bodyBold(this@NoteActivity)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             setTextColor(ReaderTheme.PAPER)
             gravity = Gravity.CENTER
             background = GradientDrawable().apply {
@@ -372,64 +456,151 @@ class NoteActivity : Activity() {
                 cornerRadius = ReaderTheme.dp(this@NoteActivity, ReaderTheme.RADIUS_BTN)
                 setColor(ReaderTheme.INK_87)
             }
-            setPadding(dp(20f), dp(10f), dp(20f), dp(10f))
+            setPadding(dp(18f), dp(10f), dp(18f), dp(10f))
             minimumHeight = dp(48f)
         }
-        saveBtn.setOnTouchListener(PenTapListener(this) { onSave() })
-        header.addView(saveBtn, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
-        return header
+        btn.setOnTouchListener(PenTapListener(this) { commitCompose() })
+        return btn
     }
 
-    /** Tool icon chips and tag pills share one scrollable row to save vertical space. */
-    private fun buildSelectorRow(): View {
-        val inner = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        for (tool in selectorTools) {
-            val frame = FrameLayout(this).apply { background = chipBackground(false) }
-            frame.addView(ToolIconView(this, tool), FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-            frame.setOnTouchListener(PenTapListener(this) {
-                selectedTool = tool
-                refreshToolSelection()
-            })
-            toolContainers[tool] = frame
-            inner.addView(frame, LinearLayout.LayoutParams(dp(48f), dp(48f)).also { it.rightMargin = dp(8f) })
-        }
-        refreshToolSelection()
-
-        // Thin divider between tools and tags.
-        inner.addView(
-            View(this).apply { setBackgroundColor(ReaderTheme.INK_12) },
-            LinearLayout.LayoutParams(dp(1f), dp(40f)).also { it.rightMargin = dp(8f); it.leftMargin = dp(4f) },
-        )
-
-        for (tag in AnnotationTag.entries) {
-            val label = TextView(this).apply {
-                text = tagLabels[tag]
-                typeface = ReaderTheme.bodyBold(this@NoteActivity)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, chromeSizeSp)
-                setPadding(dp(14f), dp(7f), dp(14f), dp(7f))
-                setTextColor(ReaderTheme.INK_87)
+    /** Toolbar tool selector — draws the current tool; corner hint signals a picker. */
+    private fun buildToolButton(): View {
+        val btn = object : View(this) {
+            private val renderer = ToolIconRenderer(this@NoteActivity)
+            private val iconPx = ReaderTheme.dp(this@NoteActivity, ReaderTheme.ICON_DP)
+            override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+                setMeasuredDimension(iconPx.toInt() + dp(14f) * 2, iconPx.toInt() + dp(10f) * 2)
             }
-            val frame = FrameLayout(this).apply { background = tagBackground(false) }
-            frame.addView(label, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
-            tagViews[tag] = Pair(frame, label)
-            frame.setOnTouchListener(PenTapListener(this) { onTagTapped(tag) })
-            inner.addView(frame, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.rightMargin = dp(8f) })
+            override fun onDraw(canvas: Canvas) {
+                renderer.draw(canvas, selectedTool, width / 2f, height / 2f, iconPx)
+            }
         }
+        btn.background = chipBackground(false)
+        btn.foreground = cornerHintDrawable()
+        btn.setOnTouchListener(PenTapListener(this) { showToolPicker(btn) })
+        return btn
+    }
 
-        val scroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false }
-        scroll.addView(inner, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
-        return scroll
+    /**
+     * Toolbar tag selector — a FrameLayout wrapper (carries the corner-hint
+     * foreground reliably) around a '#'/tag-label TextView. Single-line + ellipsize
+     * + a max width so a long label ("Continuity") can't crowd the Save button.
+     */
+    private fun buildTagButton(): View {
+        tagLabel = TextView(this).apply {
+            typeface = ReaderTheme.bodyBold(this@NoteActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, chromeSizeSp)
+            setTextColor(ReaderTheme.INK_87)
+            gravity = Gravity.CENTER
+            isSingleLine = true
+            ellipsize = TextUtils.TruncateAt.END
+            maxWidth = dp(150f)
+            // Extra right padding leaves room for the corner-hint triangle.
+            setPadding(dp(16f), dp(9f), dp(20f), dp(9f))
+        }
+        val wrap = FrameLayout(this).apply {
+            minimumHeight = dp(48f)
+            foreground = cornerHintDrawable()
+            addView(tagLabel, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.CENTER))
+        }
+        tagButton = wrap
+        wrap.setOnTouchListener(PenTapListener(this) { showTagPicker(wrap) })
+        return wrap
     }
 
     private fun refreshToolSelection() {
-        for ((tool, frame) in toolContainers) frame.background = chipBackground(tool == selectedTool)
+        toolButton?.invalidate()
     }
 
     private fun refreshTagSelection() {
-        for ((tag, pair) in tagViews) pair.first.background = tagBackground(tag == selectedTag)
+        val wrap = tagButton ?: return
+        val tag = selectedTag
+        tagLabel.text = if (tag != null) tagLabels[tag] else "#"
+        wrap.background = chipBackground(tag != null)
+    }
+
+    /** Drop the tool picker below the toolbar's tool button. */
+    private fun showToolPicker(anchor: View) {
+        toolPickerPopup?.dismiss()
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = popupBackground()
+            setPadding(dp(8f), dp(8f), dp(8f), dp(8f))
+        }
+        for (tool in selectorTools) {
+            val cell = FrameLayout(this).apply { background = chipBackground(tool == selectedTool) }
+            cell.addView(ToolIconView(this, tool), FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+            cell.setOnTouchListener(PenTapListener(this) {
+                selectedTool = tool
+                refreshToolSelection()
+                toolPickerPopup?.dismiss()
+            })
+            row.addView(cell, LinearLayout.LayoutParams(dp(52f), dp(52f)).also { it.rightMargin = dp(8f) })
+        }
+        val popup = PopupWindow(row, WRAP_CONTENT, WRAP_CONTENT, true).apply {
+            elevation = ReaderTheme.dp(this@NoteActivity, 4f)
+            isOutsideTouchable = true
+            setBackgroundDrawable(null)
+        }
+        toolPickerPopup = popup
+        // Gravity.END right-aligns the popup under the button so a wide picker on a
+        // right-side anchor extends leftward and stays on-screen.
+        popup.showAsDropDown(anchor, 0, dp(4f), Gravity.END)
+    }
+
+    /** Drop the tag picker below the toolbar's tag button (incl. a clear option). */
+    private fun showTagPicker(anchor: View) {
+        tagPickerPopup?.dismiss()
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = popupBackground()
+            setPadding(dp(6f), dp(6f), dp(6f), dp(6f))
+        }
+        fun row(label: String, tag: AnnotationTag?): View = TextView(this).apply {
+            text = label
+            typeface = ReaderTheme.bodyBold(this@NoteActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTextColor(if (tag == null) ReaderTheme.INK_54 else ReaderTheme.INK_87)
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16f), dp(11f), dp(28f), dp(11f))
+            minimumHeight = dp(48f)
+            if (selectedTag == tag) background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = ReaderTheme.dp(this@NoteActivity, ReaderTheme.RADIUS_BTN)
+                setColor(ReaderTheme.FILL_06)
+            }
+            setOnTouchListener(PenTapListener(this@NoteActivity) {
+                selectTag(tag)
+                tagPickerPopup?.dismiss()
+            })
+        }
+        col.addView(row("None", null), LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        for (tag in AnnotationTag.entries) {
+            col.addView(row(tagLabels[tag] ?: tag.name, tag), LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        }
+        val popup = PopupWindow(col, dp(200f), WRAP_CONTENT, true).apply {
+            elevation = ReaderTheme.dp(this@NoteActivity, 4f)
+            isOutsideTouchable = true
+            setBackgroundDrawable(null)
+        }
+        tagPickerPopup = popup
+        // Gravity.END keeps the 200dp popup on-screen when the tag button sits near
+        // the right edge of the toolbar.
+        popup.showAsDropDown(anchor, 0, dp(4f), Gravity.END)
+    }
+
+    /** Set, toggle off, or clear the tag and refresh the toolbar button. */
+    private fun selectTag(tag: AnnotationTag?) {
+        val prev = selectedTag
+        // Re-tapping the active tag in the picker clears it (restores toggle).
+        val next = if (tag != null && tag == prev) null else tag
+        selectedTag = next
+        refreshTagSelection()
+        if (next != null && next != prev && composeField.text.isEmpty()) {
+            composeField.setText(tagPrompts[next])
+            composeField.setSelection(composeField.text.length)
+        }
     }
 
     private fun chipBackground(selected: Boolean): GradientDrawable = GradientDrawable().apply {
@@ -439,36 +610,71 @@ class NoteActivity : Activity() {
         setStroke(dp(if (selected) 2f else 1f), if (selected) ReaderTheme.INK_87 else ReaderTheme.INK_26)
     }
 
-    private fun onTagTapped(tag: AnnotationTag) {
-        val wasSelected = selectedTag == tag
-        selectedTag = if (wasSelected) null else tag
-        for ((t, pair) in tagViews) pair.first.background = tagBackground(selectedTag == t)
-        if (!wasSelected && composeField.text.isEmpty()) {
-            composeField.setText(tagPrompts[tag])
-            composeField.setSelection(composeField.text.length)
-        }
-    }
-
-    private fun tagBackground(selected: Boolean): GradientDrawable = GradientDrawable().apply {
+    private fun popupBackground(): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
-        cornerRadius = ReaderTheme.dp(this@NoteActivity, ReaderTheme.RADIUS_TAG)
-        setColor(if (selected) 0 else ReaderTheme.FILL_08)
-        if (selected) setStroke(dp(2f), ReaderTheme.INK_87)
+        cornerRadius = ReaderTheme.dp(this@NoteActivity, ReaderTheme.RADIUS_BTN)
+        setColor(ReaderTheme.PAPER)
+        setStroke(dp(1f), ReaderTheme.INK_26)
     }
 
-    private fun buildQuoteBox(text: String): View {
-        // Draw the left-edge accent bar as a background Drawable so no child View
-        // with MATCH_PARENT height inflates the container to screen height.
+    /**
+     * The bottom-right "more underneath" triangle (matching the annotation
+     * toolbar's lock hint) as a foreground Drawable — reliably painted on top of a
+     * view's content + background, including TextViews where an onDraw/draw
+     * override did not. Signals a tap reveals a picker.
+     */
+    private fun cornerHintDrawable(): Drawable = object : Drawable() {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = ReaderTheme.INK_54
+            style = Paint.Style.FILL
+        }
+        private val path = Path()
+        override fun draw(canvas: Canvas) {
+            val m = ReaderTheme.dp(this@NoteActivity, 4f)
+            val s = ReaderTheme.dp(this@NoteActivity, 6f)
+            val right = bounds.right - m
+            val bottom = bounds.bottom - m
+            val left = right - s
+            val top = bottom - s
+            path.reset()
+            path.moveTo(right, top)
+            path.lineTo(right, bottom)
+            path.lineTo(left, bottom)
+            path.close()
+            canvas.drawPath(path, paint)
+        }
+        override fun setAlpha(a: Int) = Unit
+        override fun setColorFilter(f: ColorFilter?) = Unit
+        @Suppress("DEPRECATION") override fun getOpacity() = PixelFormat.TRANSLUCENT
+    }
+
+    /**
+     * The annotated passage, pinned as the root of the Comments thread: grey left
+     * margin bar + italic, 2-line truncation, tap to read it in full via the
+     * detail overlay. No action buttons — it is source text, not a comment.
+     */
+    private fun buildPinnedQuoteRow(text: String): View {
         val barWidth = dp(3f).toFloat()
         val barColor = ReaderTheme.INK_38
-        return TextView(this).apply {
-            this.text = text.take(200)
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12f), dp(10f), dp(12f), dp(10f))
+            minimumHeight = dp(56f)
+        }
+        row.setOnTouchListener(PenTapListener(this) {
+            showEntryDetail(
+                ThreadEntry(text, annotationTimestamp, ThreadEntry.SOURCE_LEAMH),
+                metaOverride = "Highlighted passage",
+            )
+        })
+        row.addView(TextView(this).apply {
+            this.text = text
             typeface = ReaderTheme.bodyItalic(this@NoteActivity)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, (bodySizeSp - 1f).coerceAtLeast(14f))
             setTextColor(ReaderTheme.INK_87)
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
-            setPadding(dp(14f), dp(4f), 0, dp(4f))
+            setPadding(dp(14f), dp(2f), 0, dp(2f))
             background = object : Drawable() {
                 private val paint = Paint().apply { color = barColor; style = Paint.Style.FILL }
                 override fun draw(c: Canvas) { c.drawRect(0f, 0f, barWidth, bounds.height().toFloat(), paint) }
@@ -476,21 +682,39 @@ class NoteActivity : Activity() {
                 override fun setColorFilter(f: ColorFilter?) = Unit
                 @Suppress("DEPRECATION") override fun getOpacity() = PixelFormat.TRANSPARENT
             }
-        }
+        }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        row.addView(TextView(this).apply {
+            this.text = "Highlighted passage"
+            typeface = ReaderTheme.chrome(this@NoteActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(ReaderTheme.INK_38)
+            setPadding(dp(14f), dp(4f), 0, 0)
+        }, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
+        return row
     }
 
-    /** Compose field + Add/Save button — feeds the thread. */
+    /** Compose field with the Add/Update button beside it (paste lives in the toolbar). */
     private fun buildComposeRow(): View {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.BOTTOM
         }
-        composeField = EditText(this).apply {
+        // Anonymous subclass so the system context-menu paste also goes through
+        // pasteClipboardWithQuotes(), keeping both paths in sync.
+        composeField = object : EditText(this) {
+            override fun onTextContextMenuItem(id: Int): Boolean {
+                if (id == android.R.id.paste || id == android.R.id.pasteAsPlainText) {
+                    pasteClipboardWithQuotes()
+                    return true
+                }
+                return super.onTextContextMenuItem(id)
+            }
+        }.apply {
             typeface = ReaderTheme.body(this@NoteActivity)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, bodySizeSp)
             setTextColor(ReaderTheme.INK_87)
             setHintTextColor(0xFF9E9A92.toInt())
-            setHighlightColor(android.graphics.Color.argb(60, 0, 0, 0)) // e-ink-safe light grey
+            setHighlightColor(android.graphics.Color.argb(60, 0, 0, 0))
             hint = "Write a comment…"
             minLines = 2
             maxLines = 4
@@ -506,26 +730,24 @@ class NoteActivity : Activity() {
         }
         row.addView(composeField, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
 
-        composeButton = TextView(this).apply {
-            text = "Add"
-            typeface = ReaderTheme.bodyBold(this@NoteActivity)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            setTextColor(ReaderTheme.PAPER)
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = ReaderTheme.dp(this@NoteActivity, ReaderTheme.RADIUS_BTN)
-                setColor(ReaderTheme.INK_87)
-            }
-            setPadding(dp(18f), dp(10f), dp(18f), dp(10f))
-            minimumHeight = dp(48f)
-        }
-        composeButton.setOnTouchListener(PenTapListener(this) { commitCompose() })
+        // Add/Update sits to the right of the field — the commit action stays next
+        // to where the user is typing.
+        composeButton = buildAddButton()
         row.addView(
             composeButton,
             LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.leftMargin = dp(10f) },
         )
         return row
+    }
+
+    /** Pulls clipboard text, wraps it in quotes, and inserts at the compose cursor. */
+    private fun pasteClipboardWithQuotes() {
+        val clip = (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+            .primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()
+            ?: return
+        val start = composeField.selectionStart.coerceIn(0, composeField.text.length)
+        val end   = composeField.selectionEnd.coerceIn(start, composeField.text.length)
+        composeField.text.replace(start, end, "\"${clip.trim()}\" ")
     }
 
     /** Add the compose field's text as a new entry, or save the entry being edited. */
@@ -561,7 +783,7 @@ class NoteActivity : Activity() {
             setPadding(dp(8f), dp(2f), dp(8f), dp(2f))
         }
         inkTab = tabButton("Ink") { selectTab(Tab.INK) }
-        threadTab = tabButton("Thread") { selectTab(Tab.THREAD) }
+        threadTab = tabButton("Comments") { selectTab(Tab.THREAD) }
         bar.addView(inkTab, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         bar.addView(threadTab, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         return bar
@@ -667,6 +889,13 @@ class NoteActivity : Activity() {
     private fun renderThreadPane() {
         val pane = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
+        // Pin the annotated passage as the root of the thread — source first,
+        // discussion below, both readable in one pane. Stays visible on every page.
+        if (selectedText.isNotEmpty()) {
+            pane.addView(buildPinnedQuoteRow(selectedText))
+            pane.addView(rowDivider())
+        }
+
         if (threadEntries.isEmpty()) {
             pane.addView(TextView(this).apply {
                 text = "No comments yet.\nWrite one above and tap Add."
@@ -729,13 +958,14 @@ class NoteActivity : Activity() {
             minimumHeight = dp(64f)
             if (beingEdited) setBackgroundColor(ReaderTheme.FILL_06)
         }
+        // Tap anywhere on the row body to read the full entry in a popup.
+        row.setOnTouchListener(PenTapListener(this) { showEntryDetail(entry) })
 
         val textCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         textCol.addView(TextView(this).apply {
             text = entry.text
             typeface = ReaderTheme.body(this@NoteActivity)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            // Imported Word comments are read-only: render a touch lighter as a hint.
             setTextColor(if (isWord) ReaderTheme.INK_54 else ReaderTheme.INK_87)
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
@@ -750,16 +980,13 @@ class NoteActivity : Activity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             setTextColor(ReaderTheme.INK_38)
         }, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.topMargin = dp(2f) })
-        if (!isWord) {
-            // Leamh entries: tap the text to edit it in the compose field.
-            textCol.isClickable = true
-            textCol.setOnTouchListener(PenTapListener(this) { startEditEntry(index) })
-        }
         row.addView(textCol, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
 
         row.addView(smallAction("Reply") { startReply(entry) },
             LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
         if (!isWord) {
+            row.addView(smallAction("Edit") { startEditEntry(index) },
+                LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.leftMargin = dp(4f) })
             row.addView(smallAction("Delete") { confirmDeleteEntry(index) },
                 LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.leftMargin = dp(4f) })
         }
@@ -771,7 +998,8 @@ class NoteActivity : Activity() {
         composeEditIndex = index
         composeField.setText(threadEntries[index].text)
         composeField.setSelection(composeField.text.length)
-        composeButton.text = "Save"
+        // "Update" (not "Save") so it never collides with the toolbar's Save button.
+        composeButton.text = "Update"
         renderPane() // re-highlight the edited row
     }
 
@@ -824,13 +1052,18 @@ class NoteActivity : Activity() {
      */
     private fun threadRowsPerPage(): Int {
         val rowH = dp(THREAD_ROW_DP)
+        // The pinned quote + its divider sit above the paginated rows (always
+        // visible), so subtract their height. Use the MAX likely height (2 lines of
+        // italic + label + paddings + divider, ~92dp) so we never squeeze in an
+        // extra row that overflows — wasted space is safer than overflow on e-ink.
+        val pinnedH = if (selectedText.isNotEmpty()) dp(96f) else 0
         val available = if (availablePaneHeight > 0) {
             // Measured pane height (post soft-keyboard inset) minus the pager row.
-            availablePaneHeight - dp(56f)
+            availablePaneHeight - dp(56f) - pinnedH
         } else {
             // Pre-measure fallback: full screen minus the fixed chrome above/below
-            // (header, tool+tag row, quote, compose, dividers, tab bar, pagination).
-            resources.displayMetrics.heightPixels - dp(56f + 64f + 76f + 92f + 52f + 56f)
+            // (header, compose, dividers, tab bar, pagination) and the pinned quote.
+            resources.displayMetrics.heightPixels - dp(56f + 92f + 52f + 56f) - pinnedH
         }
         return (available / rowH).coerceIn(1, 8)
     }
@@ -843,6 +1076,346 @@ class NoteActivity : Activity() {
 
     private fun formatTimestamp(millis: Long): String =
         if (millis <= 0L) "" else threadDateFormat.format(Date(millis))
+
+    /**
+     * Selectable TextView that draws a dotted underline for the selected range
+     * instead of Android's default fill highlight. Matches the reader's active
+     * selection style so the two surfaces feel consistent on e-ink.
+     */
+    private inner class SelectableBodyText(context: android.content.Context) : TextView(context) {
+        private val dottedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            color = ReaderTheme.INK
+            strokeWidth = ReaderTheme.dp(context, ReaderTheme.UNDERLINE_STROKE_DP)
+            pathEffect = DashPathEffect(
+                floatArrayOf(
+                    ReaderTheme.dp(context, ReaderTheme.UNDERLINE_DASH_ON_DP),
+                    ReaderTheme.dp(context, ReaderTheme.UNDERLINE_DASH_OFF_DP),
+                ),
+                0f,
+            )
+        }
+        private val selPath = Path()
+
+        private var selectionPopup: PopupWindow? = null
+        private val popupHandler = Handler(Looper.getMainLooper())
+        private var pendingPopup: Runnable? = null
+
+        init {
+            setTextIsSelectable(true)
+            highlightColor = 0 // suppress fill; dotted underline drawn in onDraw
+            // Replace the system floating ActionMode (Copy/Share/Select all) with our
+            // own themed popup shown via onSelectionChanged. Returning true from
+            // onCreateActionMode lets selection proceed; clearing the menu in
+            // onPrepareActionMode suppresses the floating toolbar.
+            setCustomSelectionActionModeCallback(object : ActionMode.Callback {
+                override fun onCreateActionMode(mode: ActionMode, menu: Menu) = true
+                override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean {
+                    menu.clear(); return true
+                }
+                override fun onActionItemClicked(mode: ActionMode, item: MenuItem) = false
+                override fun onDestroyActionMode(mode: ActionMode) {}
+            })
+        }
+
+        override fun onSelectionChanged(selStart: Int, selEnd: Int) {
+            super.onSelectionChanged(selStart, selEnd)
+            pendingPopup?.let { popupHandler.removeCallbacks(it) }
+            pendingPopup = null
+            if (selStart < selEnd) {
+                val r = Runnable { if (isAttachedToWindow) showSelectionPopup() }
+                pendingPopup = r
+                popupHandler.postDelayed(r, 150L)
+            } else {
+                dismissSelectionPopup()
+            }
+        }
+
+        override fun onDetachedFromWindow() {
+            super.onDetachedFromWindow()
+            pendingPopup?.let { popupHandler.removeCallbacks(it) }
+            dismissSelectionPopup()
+        }
+
+        private fun idp(v: Float) = ReaderTheme.dp(context, v).toInt()
+
+        private fun showSelectionPopup() {
+            dismissSelectionPopup()
+            val ctx = context
+
+            val content = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = ReaderTheme.dp(ctx, ReaderTheme.RADIUS_BTN)
+                    setColor(ReaderTheme.PAPER)
+                    setStroke(idp(1f), ReaderTheme.INK_26)
+                }
+            }
+
+            fun popBtn(label: String, action: () -> Unit) = TextView(ctx).apply {
+                text = label
+                typeface = ReaderTheme.chromeBold(ctx)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                setTextColor(ReaderTheme.INK_87)
+                gravity = Gravity.CENTER
+                setPadding(idp(20f), idp(12f), idp(20f), idp(12f))
+                minimumHeight = idp(48f)
+                setOnTouchListener(PenTapListener(ctx) { action() })
+            }
+
+            content.addView(popBtn("Copy") {
+                val s = selectionStart; val e = selectionEnd
+                if (s < e) {
+                    val copied = this.text.subSequence(s, e).toString()
+                    (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                        .setPrimaryClip(ClipData.newPlainText("", copied))
+                }
+                dismissSelectionPopup()
+            })
+
+            // Vertical divider between Copy and Select all.
+            content.addView(View(ctx).apply {
+                setBackgroundColor(ReaderTheme.INK_26)
+                layoutParams = LinearLayout.LayoutParams(idp(1f), MATCH_PARENT).also { lp ->
+                    lp.topMargin = idp(10f); lp.bottomMargin = idp(10f)
+                }
+            })
+
+            content.addView(popBtn("Select all") {
+                // onTextContextMenuItem casts mText to Spannable (not Editable),
+                // which works correctly when setTextIsSelectable buffers as SPANNABLE.
+                this@SelectableBodyText.onTextContextMenuItem(android.R.id.selectAll)
+            })
+
+            val popup = PopupWindow(content, WRAP_CONTENT, WRAP_CONTENT, true).apply {
+                elevation = ReaderTheme.dp(ctx, 4f)
+                isOutsideTouchable = true
+                setBackgroundDrawable(null)
+            }
+
+            // Position the popup just above the selected text's first line.
+            val l = layout
+            val screenLoc = IntArray(2).also { getLocationInWindow(it) }
+            val xScreen: Int
+            val yScreen: Int
+            if (l != null) {
+                val anchorOff = minOf(selectionStart, selectionEnd).coerceAtLeast(0)
+                val line = l.getLineForOffset(anchorOff)
+                val lineTop = totalPaddingTop + l.getLineTop(line)
+                xScreen = (screenLoc[0] + totalPaddingLeft +
+                    l.getPrimaryHorizontal(anchorOff).toInt())
+                    .coerceIn(screenLoc[0], screenLoc[0] + width - idp(140f))
+                yScreen = screenLoc[1] + lineTop - idp(60f) // ~60dp above the line
+            } else {
+                xScreen = screenLoc[0] + idp(16f)
+                yScreen = screenLoc[1] - idp(60f)
+            }
+
+            selectionPopup = popup
+            popup.showAtLocation(this, Gravity.NO_GRAVITY, xScreen, yScreen.coerceAtLeast(0))
+        }
+
+        private fun dismissSelectionPopup() {
+            selectionPopup?.let { if (it.isShowing) it.dismiss() }
+            selectionPopup = null
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val start = selectionStart
+            val end = selectionEnd
+            val l = layout ?: return
+            if (start >= end) return
+            val underlineOffset = ReaderTheme.dp(context, ReaderTheme.UNDERLINE_OFFSET_DP)
+            canvas.save()
+            canvas.translate(totalPaddingLeft.toFloat(), totalPaddingTop.toFloat())
+            val firstLine = l.getLineForOffset(start)
+            val lastLine = l.getLineForOffset((end - 1).coerceAtLeast(start))
+            for (line in firstLine..lastLine) {
+                val ls = maxOf(start, l.getLineStart(line))
+                val le = minOf(end, l.getLineEnd(line))
+                if (ls >= le) continue
+                var x0 = l.getPrimaryHorizontal(ls)
+                var x1 = l.getPrimaryHorizontal(le)
+                if (x1 <= x0) x1 = l.getLineRight(line)
+                if (x1 < x0) { val t = x0; x0 = x1; x1 = t }
+                val y = l.getLineBaseline(line).toFloat() + underlineOffset
+                selPath.rewind()
+                selPath.moveTo(x0, y)
+                selPath.lineTo(x1, y)
+                canvas.drawPath(selPath, dottedPaint)
+            }
+            canvas.restore()
+        }
+    }
+
+    /**
+     * Overlays a full-entry reader on top of the bottom pane (tab bar + thread
+     * list). The compose field above remains fully interactive so the user can
+     * read a long comment and compose a reply at the same time.
+     *
+     * The overlay is only dismissed by the Dismiss button, by Save, or by the
+     * user leaving NoteActivity (back). No touch event leaks through to the
+     * underlying pane while it is shown.
+     */
+    private fun showEntryDetail(entry: ThreadEntry, metaOverride: String? = null) {
+        dismissEntryDetail() // remove any existing overlay first
+
+        val dm = resources.displayMetrics
+        val overlay = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(ReaderTheme.PAPER)
+            // Consume all touches so nothing bleeds through to the pane below.
+            isClickable = true
+            isFocusable = true
+        }
+
+        // Top edge accent — visually separates overlay from the compose area above.
+        overlay.addView(View(this).apply { setBackgroundColor(ReaderTheme.INK_12) },
+            LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
+
+        // Meta: timestamp · source, or an override label (e.g. the pinned quote).
+        overlay.addView(TextView(this).apply {
+            text = metaOverride ?: buildString {
+                append(formatTimestamp(entry.timestamp))
+                append("  ·  ")
+                append(if (entry.source == ThreadEntry.SOURCE_WORD) "Word" else "Leamh")
+            }
+            typeface = ReaderTheme.chrome(this@NoteActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextColor(ReaderTheme.INK_38)
+            setPadding(dp(20f), dp(12f), dp(20f), dp(8f))
+        })
+        overlay.addView(hDivider(), LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
+
+        // Body text area — fills all remaining space; content replaced per page.
+        // SelectableBodyText suppresses the system fill and draws a dotted underline
+        // for the selection, matching the reader's active-selection style.
+        val textView = SelectableBodyText(this).apply {
+            typeface = ReaderTheme.body(this@NoteActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTextColor(ReaderTheme.INK_87)
+            setPadding(dp(20f), dp(14f), dp(20f), dp(14f))
+            setLineSpacing(0f, 1.4f)
+            gravity = Gravity.TOP or Gravity.START
+        }
+        overlay.addView(textView, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+
+        overlay.addView(hDivider(), LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
+
+        // Pager row — hidden until pagination is needed.
+        val pageLabel = TextView(this).apply {
+            typeface = ReaderTheme.chrome(this@NoteActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(ReaderTheme.INK_54)
+            gravity = Gravity.CENTER
+        }
+        val prevBtn = textButton("← Prev") {}
+        val nextBtn = textButton("Next →") {}
+        val pagerRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12f), dp(4f), dp(12f), dp(4f))
+            minimumHeight = dp(48f)
+            visibility = View.GONE
+        }
+        pagerRow.addView(prevBtn, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
+        pagerRow.addView(pageLabel, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        pagerRow.addView(nextBtn, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
+        overlay.addView(pagerRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+
+        // Dismiss button — centred, the only way to close the overlay.
+        val dismissRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(dp(20f), dp(8f), dp(20f), dp(16f))
+        }
+        dismissRow.addView(
+            pillButton("Dismiss", filled = false) { dismissEntryDetail() },
+            LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT),
+        )
+        overlay.addView(dismissRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+
+        entryDetailOverlay = overlay
+        bottomFrame.addView(overlay, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+
+        // Mutable pagination state — shared between the layout listener and buttons.
+        var pages = listOf<Pair<Int, Int>>()
+        var currentPage = 0
+        var lastTextH = 0
+        var lastTextW = 0
+
+        val paint = TextPaint().apply {
+            typeface = ReaderTheme.body(this@NoteActivity)
+            textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 16f, dm)
+        }
+
+        fun buildPages(textW: Int, textH: Int): List<Pair<Int, Int>> {
+            val sl = StaticLayout.Builder
+                .obtain(entry.text, 0, entry.text.length, paint, textW.coerceAtLeast(1))
+                .setLineSpacing(0f, 1.4f)
+                .build()
+            if (sl.lineCount == 0) return listOf(0 to entry.text.length)
+            val result = mutableListOf<Pair<Int, Int>>()
+            var startLine = 0
+            while (startLine < sl.lineCount) {
+                val topOfPage = sl.getLineTop(startLine)
+                var endLine = startLine
+                while (endLine < sl.lineCount &&
+                    sl.getLineBottom(endLine) - topOfPage <= textH) {
+                    endLine++
+                }
+                if (endLine == startLine) endLine = startLine + 1
+                result.add(sl.getLineStart(startLine) to
+                    if (endLine >= sl.lineCount) entry.text.length else sl.getLineStart(endLine))
+                startLine = endLine
+            }
+            return result
+        }
+
+        fun renderPage(p: Int) {
+            val (s, e) = pages[p]
+            textView.text = entry.text.substring(s, e)
+            pageLabel.text = "${p + 1} / ${pages.size}"
+            pagerRow.visibility = if (pages.size > 1) View.VISIBLE else View.GONE
+        }
+
+        // Re-paginate whenever the overlay resizes (keyboard show/hide via adjustResize).
+        // Guard on textH change so layout thrashing doesn't trigger unnecessary work.
+        // On resize, seek to the page containing the same start-char as the current page.
+        // Held in a field so dismissEntryDetail() can remove it (no listener leak).
+        val layoutListener = android.view.ViewTreeObserver.OnGlobalLayoutListener {
+            val textW = (textView.width - textView.paddingLeft - textView.paddingRight)
+            val textH = (textView.height - textView.paddingTop - textView.paddingBottom)
+            if (textH > 0 && !(textH == lastTextH && textW == lastTextW)) {
+                val anchorChar = pages.getOrNull(currentPage)?.first ?: 0
+                lastTextH = textH
+                lastTextW = textW
+                pages = buildPages(textW, textH)
+                // Seek to the page holding the anchor char to preserve reading position.
+                currentPage = pages.indexOfLast { (s, _) -> s <= anchorChar }.coerceAtLeast(0)
+                renderPage(currentPage)
+            }
+        }
+        entryDetailLayoutListener = layoutListener
+        overlay.viewTreeObserver.addOnGlobalLayoutListener(layoutListener)
+
+        prevBtn.setOnTouchListener(PenTapListener(this) {
+            if (currentPage > 0) { currentPage--; renderPage(currentPage) }
+        })
+        nextBtn.setOnTouchListener(PenTapListener(this) {
+            if (currentPage < pages.size - 1) { currentPage++; renderPage(currentPage) }
+        })
+    }
+
+    private fun dismissEntryDetail() {
+        val v = entryDetailOverlay ?: return
+        entryDetailLayoutListener?.let { v.viewTreeObserver.removeOnGlobalLayoutListener(it) }
+        entryDetailLayoutListener = null
+        bottomFrame.removeView(v)
+        entryDetailOverlay = null
+    }
 
     // -------------------------------------------------------------------------
     // Widget helpers
@@ -896,7 +1469,6 @@ class NoteActivity : Activity() {
         setBackgroundColor(0x14000000)
         layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(1f))
     }
-    private fun space(@Suppress("UNUSED_PARAMETER") dp: Float): View = View(this)
     private fun dp(v: Float): Int = ReaderTheme.dp(this, v).toInt()
 
     private fun readTempBytes(name: String): ByteArray? = try {
