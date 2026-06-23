@@ -2,6 +2,7 @@ package com.afluffywaffle.layuv.reader
 
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
@@ -11,11 +12,11 @@ import android.view.View
 /**
  * The reader's edge-navigation affordance, factored out as a standalone [View] so
  * Help can present the *same* navigation the reader uses. Tall strips run down the
- * left and right edges; each strip is split top (= next) / bottom (= prev) by a
- * midline hairline, with a faint chevron in each half — top points right (forward),
- * bottom points left (back). All paint specs are copied verbatim from [ReaderView]'s
- * baked-in nav (`drawNavStrips`/`drawChevron`, strip width [NAV_STRIP_DP]) so the two
- * surfaces match exactly.
+ * left and right edges; a faint dotted rail marks each strip's inner edge (hinting the
+ * whole column is tappable) and a midline meets that rail to split the strip top
+ * (= next) / bottom (= prev), with a faint chevron in each half — top points right
+ * (forward), bottom points left (back). Strip width is [NAV_STRIP_DP], matching the
+ * reader's baked-in nav so the two surfaces read the same.
  *
  * Two uses:
  *  - **Interactive overlay** (Help paging): pass [onNext]/[onPrev]; a tap inside a
@@ -53,6 +54,18 @@ class EdgeNavView(
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
+    // Live overlay: a faint, finely dotted full-height line at each strip's inner
+    // edge. It hints the WHOLE column is a tap zone (so you needn't aim for the
+    // chevron) while staying quiet enough not to compete with the text.
+    private val lanePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ReaderTheme.INK
+        alpha = 44
+        style = Paint.Style.STROKE
+        strokeWidth = ReaderTheme.dp(context, 1f)
+        strokeCap = Paint.Cap.ROUND
+        // Dense, very fine dots: ~1dp dots on a ~3dp pitch.
+        pathEffect = DashPathEffect(floatArrayOf(ReaderTheme.dp(context, 0.5f), ReaderTheme.dp(context, 2.5f)), 0f)
+    }
 
     // Diagram-only paints (page outline, strip separators, labels).
     private val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -82,6 +95,12 @@ class EdgeNavView(
     private var downY = 0f
     private val tapSlop = ReaderTheme.dp(context, 12f)
 
+    init {
+        // Software layer so the dashed lane line renders reliably (and matches the
+        // reader, which is a software-layer surface).
+        setLayerType(LAYER_TYPE_SOFTWARE, null)
+    }
+
     override fun onDraw(canvas: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
@@ -92,6 +111,10 @@ class EdgeNavView(
             canvas.drawLine(stripWidth, inset, stripWidth, h - inset, separatorPaint)
             canvas.drawLine(w - stripWidth, inset, w - stripWidth, h - inset, separatorPaint)
             drawTextLines(canvas, w, h)
+        } else {
+            // Faint dotted rails marking the inner edge of each tap strip.
+            canvas.drawLine(stripWidth, 0f, stripWidth, h, lanePaint)
+            canvas.drawLine(w - stripWidth, 0f, w - stripWidth, h, lanePaint)
         }
         drawStrip(canvas, 0f, h)
         drawStrip(canvas, w - stripWidth, h)
@@ -100,7 +123,10 @@ class EdgeNavView(
     private fun drawStrip(canvas: Canvas, left: Float, h: Float) {
         val cx = left + stripWidth / 2f
         val midY = h / 2f
-        canvas.drawLine(left, midY, left + stripWidth, midY, hairlinePaint)
+        // Midline splitting top (next) / bottom (prev). In the live overlay it shares
+        // the rail's faint dotted style and meets it, so it reads as anchored rather
+        // than a floating stub; the teaching diagram keeps a crisp solid divider.
+        canvas.drawLine(left, midY, left + stripWidth, midY, if (diagram) hairlinePaint else lanePaint)
         drawChevron(canvas, cx, h / 4f, pointRight = true)       // top = next
         drawChevron(canvas, cx, h * 3f / 4f, pointRight = false) // bottom = prev
         if (diagram) {

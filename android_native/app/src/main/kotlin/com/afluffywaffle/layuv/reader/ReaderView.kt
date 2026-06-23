@@ -2,6 +2,7 @@ package com.afluffywaffle.layuv.reader
 
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
@@ -66,11 +67,16 @@ class ReaderView(context: Context) : View(context) {
     private val navStripWidth = ReaderTheme.dp(context, NAV_STRIP_DP)
     private var navSide = "both"
     private val navPath = Path()
-    private val navHairlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    // Faint, finely dotted line used for BOTH the inner-edge rail (hints the whole
+    // column is a tap zone) and the midline that meets it to split top/bottom — so
+    // the midline reads as anchored rather than floating. Matches EdgeNavView.
+    private val navLanePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = ReaderTheme.INK
-        alpha = 90 // visible divider between the top (next) and bottom (prev) zones
+        alpha = 44
         style = Paint.Style.STROKE
-        strokeWidth = ReaderTheme.dp(context, 1.5f)
+        strokeWidth = ReaderTheme.dp(context, 1f)
+        strokeCap = Paint.Cap.ROUND
+        pathEffect = DashPathEffect(floatArrayOf(ReaderTheme.dp(context, 0.5f), ReaderTheme.dp(context, 2.5f)), 0f)
     }
     private val navChevronPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = ReaderTheme.INK
@@ -505,12 +511,11 @@ class ReaderView(context: Context) : View(context) {
 
     /**
      * Applies the per-tool cosmetic spans for [annotations] onto [sp]: a light grey
-     * fill (BackgroundColorSpan) behind highlight/comment text — which reads more
-     * easily than grey text on e-ink — and grey text (ForegroundColorSpan) for ink,
-     * whose primary marker is the dotted underline drawn separately. Both are
-     * NON-METRIC spans (line breaks unchanged), so [updateAnnotations] can swap them
-     * on the live layout text without re-paginating. The line decorations themselves
-     * are drawn from the annotations list in onDraw, not from these spans.
+     * fill (BackgroundColorSpan) behind highlight, comment, AND ink text — which reads
+     * more easily on e-ink than a coloured glyph. It is a NON-METRIC span (line breaks
+     * unchanged), so [updateAnnotations] can swap it on the live layout text without
+     * re-paginating. Underline/strikethrough decorations are drawn from the annotations
+     * list in onDraw, not from these spans; ink is further marked by its margin icon.
      */
     private fun applyAnnotationSpans(sp: SpannableString, annotations: List<ResolvedAnnotation>) {
         val len = sp.length
@@ -520,10 +525,10 @@ class ReaderView(context: Context) : View(context) {
             val e = span.end.coerceIn(0, len)
             if (e <= s) continue
             when (resolved.annotation.tool) {
-                AnnotationTool.highlight, AnnotationTool.comment ->
-                    sp.setSpan(BackgroundColorSpan(ReaderTheme.HIGHLIGHT_FILL), s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                AnnotationTool.highlight,
+                AnnotationTool.comment,
                 AnnotationTool.inkAnnotation ->
-                    sp.setSpan(ForegroundColorSpan(ReaderTheme.HIGHLIGHT_TEXT), s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    sp.setSpan(BackgroundColorSpan(ReaderTheme.HIGHLIGHT_FILL), s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                 else -> {}
             }
         }
@@ -677,16 +682,23 @@ class ReaderView(context: Context) : View(context) {
         }
     }
 
-    /** Faint edge-nav affordances: a midline split + chevrons (top=next, bottom=prev). */
+    /** Faint edge-nav affordances: a dotted inner-edge rail + anchored midline split + chevrons. */
     private fun drawNavStrips(canvas: Canvas) {
-        if (leftStripActive()) drawNavStrip(canvas, 0f, navStripWidth)
-        if (rightStripActive()) drawNavStrip(canvas, width - navStripWidth, width.toFloat())
+        val h = height.toFloat()
+        if (leftStripActive()) {
+            drawNavStrip(canvas, 0f, navStripWidth)
+            canvas.drawLine(navStripWidth, 0f, navStripWidth, h, navLanePaint) // inner-edge rail
+        }
+        if (rightStripActive()) {
+            drawNavStrip(canvas, width - navStripWidth, width.toFloat())
+            canvas.drawLine(width - navStripWidth, 0f, width - navStripWidth, h, navLanePaint)
+        }
     }
 
     private fun drawNavStrip(canvas: Canvas, left: Float, right: Float) {
         val midY = height / 2f
         val cx = (left + right) / 2f
-        canvas.drawLine(left, midY, right, midY, navHairlinePaint)
+        canvas.drawLine(left, midY, right, midY, navLanePaint) // midline, meets the rail
         drawChevron(canvas, cx, height / 4f, pointRight = true)   // top = next
         drawChevron(canvas, cx, height * 3f / 4f, pointRight = false) // bottom = prev
     }

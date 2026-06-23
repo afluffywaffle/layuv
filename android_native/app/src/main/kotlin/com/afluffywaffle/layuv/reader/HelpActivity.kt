@@ -100,10 +100,11 @@ class HelpActivity : Activity() {
 
         // Content region: padded page content, with the edge-nav overlay full-bleed on
         // top so its strips sit at the true screen edges (not inside the page padding).
-        // Inset the content horizontally PAST the nav strips so text never slides under
-        // the chevrons (mirrors the reader, whose columns clear the strip width).
+        // Inset the content horizontally PAST the nav strips (plus a small margin) so
+        // text clears the chevrons and the dotted rail (mirrors the reader, whose
+        // columns sit a margin in from the strip edge).
         val content = FrameLayout(this)
-        val sidePad = dp(EdgeNavView.NAV_STRIP_DP)
+        val sidePad = dp(EdgeNavView.NAV_STRIP_DP + 16f)
         pageContainer = FrameLayout(this).apply { setPadding(sidePad, dp(20f), sidePad, dp(16f)) }
         content.addView(pageContainer, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         content.addView(
