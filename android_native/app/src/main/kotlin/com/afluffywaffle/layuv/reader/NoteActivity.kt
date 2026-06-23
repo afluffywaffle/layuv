@@ -28,7 +28,9 @@ import android.view.ActionMode
 import android.view.Gravity
 import android.view.Menu
 import android.view.MenuItem
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.EditText
@@ -82,6 +84,23 @@ class NoteActivity : Activity() {
     private var entryDetailOverlay: View? = null
     private var entryDetailLayoutListener: android.view.ViewTreeObserver.OnGlobalLayoutListener? = null
 
+    // Toolbar paste affordance + its gating. Paste is greyed when the clipboard
+    // has no pasteable text, and disabled right after a paste (no undo, so this
+    // stops repeated dumping of the same chunk). It re-enables when the clipboard
+    // changes — i.e. the next time the user copies something.
+    private var pasteButton: ImageView? = null
+    // The clipboard text last pasted. Paste stays disabled while the clipboard
+    // still holds it, and re-enables when the clipboard changes (a fresh copy).
+    private var lastPastedClip: String? = null
+
+    // Full-screen compose overlay (P1d) — for writing a long reply while the
+    // referenced passage/comment stays visible. Held so it can be synced + torn
+    // down on pause. replyContextEntry is the comment a reply targets (else null,
+    // in which case the highlighted passage is the reference).
+    private var fullComposeOverlay: View? = null
+    private var fullComposeField: EditText? = null
+    private var replyContextEntry: ThreadEntry? = null
+
     private var selectedTool = AnnotationTool.highlight
     private var selectedTag: AnnotationTag? = null
     private var capturedInkBytes: ByteArray? = null
@@ -114,9 +133,16 @@ class NoteActivity : Activity() {
     // button shows '#' or the active tag's label. Both open a picker popup.
     private var toolButton: View? = null
     private var tagButton: FrameLayout? = null   // wrapper carries the corner-hint foreground
-    private lateinit var tagLabel: TextView      // the '#' / tag-label text inside the wrapper
+    private var tagLabel: TextView? = null       // the '#' / tag-label text inside the wrapper
     private var toolPickerPopup: PopupWindow? = null
     private var tagPickerPopup: PopupWindow? = null
+
+    // Mirrors of the tag + paste controls inside the full-screen compose sheet, so
+    // tag/paste are available while writing there too. Refreshed alongside the
+    // toolbar copies; nulled when the sheet closes.
+    private var fsTagButton: FrameLayout? = null
+    private var fsTagLabel: TextView? = null
+    private var fsPasteButton: ImageView? = null
 
     private val selectorTools = listOf(
         AnnotationTool.highlight,
@@ -160,7 +186,7 @@ class NoteActivity : Activity() {
         if (composePending.isNotEmpty()) {
             composeField.setText(composePending)
             composeField.setSelection(composeField.text.length)
-            if (composeEditIndex in threadEntries.indices) composeButton.text = "Update"
+            composeButton.text = composeCommitText()
         }
         refreshToolSelection()
         refreshTagSelection()
@@ -217,6 +243,9 @@ class NoteActivity : Activity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
+        // If the full-screen compose is open, fold its text back into composeField
+        // first so the in-progress edit is the value we persist below.
+        syncFullComposeText()
         outState.putString(STATE_THREAD, ThreadJson.encode(threadEntries))
         outState.putString(STATE_INITIAL_THREAD, initialThreadJson)
         outState.putInt(STATE_EDIT_INDEX, composeEditIndex)
@@ -287,7 +316,15 @@ class NoteActivity : Activity() {
     }
 
     @Deprecated("Deprecated in Java")
-    override fun onBackPressed() = handleBack()
+    override fun onBackPressed() {
+        // Back peels off transient layers first — full-screen compose (folding its
+        // text back), then a read overlay — rather than leaving the editor.
+        when {
+            fullComposeOverlay != null -> dismissFullScreenCompose()
+            entryDetailOverlay != null -> dismissEntryDetail()
+            else -> handleBack()
+        }
+    }
 
     override fun onPause() {
         super.onPause()
@@ -296,6 +333,17 @@ class NoteActivity : Activity() {
         toolPickerPopup?.dismiss(); toolPickerPopup = null
         tagPickerPopup?.dismiss(); tagPickerPopup = null
         dismissEntryDetail()
+        // Sync any full-screen compose text back into the field (so it survives
+        // recreation via composeField) and remove the overlay.
+        dismissFullScreenCompose()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // The clipboard may have changed while we were away; re-evaluate the paste
+        // button now that we hold window focus (clipboard reads need focus on
+        // Android 10+).
+        if (hasFocus) refreshPasteButton()
     }
 
     // -------------------------------------------------------------------------
@@ -342,9 +390,11 @@ class NoteActivity : Activity() {
         // just the compose field, freeing the rest for compose + comments.
         val top = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20f), dp(12f), dp(20f), dp(12f))
+            // 12dp gutter matches the header, so the field's left edge and the Add
+            // button's right edge line up with the toolbar's Dismiss + rightmost icon.
+            setPadding(dp(12f), dp(12f), dp(12f), dp(12f))
         }
-        top.addView(buildComposeRow(), LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        top.addView(buildComposeField(), LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         root.addView(top, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
         // FrameLayout wraps the tab bar + pane so showEntryDetail can layer an
@@ -382,8 +432,9 @@ class NoteActivity : Activity() {
 
     /**
      * Top bar: Dismiss + Save paired on the left (so reaching to exit surfaces
-     * Save), then a right cluster of tool · tag · paste · add. The compose field
-     * below gets the full width because paste + add moved up here.
+     * Save), then a right cluster of tool · tag · paste · expand · Add Comment. The
+     * compose helpers + commit all live up here so the compose row below is a clean
+     * full-width field (no button beside it to mis-align against).
      */
     private fun buildHeader(): View {
         val header = LinearLayout(this).apply {
@@ -420,14 +471,31 @@ class NoteActivity : Activity() {
             buildPasteButton(),
             LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.leftMargin = dp(8f) },
         )
+        // Expand → full-screen compose; grouped with Paste (a compose action).
+        header.addView(
+            iconButton(R.drawable.ic_expand, "Expand to full screen") { showFullScreenCompose() },
+            LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.leftMargin = dp(8f) },
+        )
+        // Add Comment — the compose commit, rightmost so the full-width field below
+        // sits directly under it. "Update Comment" when editing an existing entry.
+        composeButton = buildAddButton()
+        header.addView(
+            composeButton,
+            LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.leftMargin = dp(8f) },
+        )
         return header
     }
 
-    /** Clipboard paste icon button (toolbar) — wraps pasted text in quotes. */
-    private fun buildPasteButton(): View {
+    /**
+     * Clipboard paste icon button — wraps pasted text in quotes. Greyed (tap no-op)
+     * when there is nothing pasteable or paste was already used this compose;
+     * refreshPasteButton() keeps the dim state in sync. Shared by the toolbar and
+     * the full-screen sheet.
+     */
+    private fun makePasteButton(): ImageView {
         val btn = ImageView(this).apply {
             setImageResource(R.drawable.ic_paste)
-            setColorFilter(ReaderTheme.INK_54)
+            contentDescription = "Paste with quotes"
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = ReaderTheme.dp(this@NoteActivity, ReaderTheme.RADIUS_BTN)
@@ -439,14 +507,56 @@ class NoteActivity : Activity() {
             minimumWidth = dp(48f)
             minimumHeight = dp(48f)
         }
+        // The tap routes through pasteClipboardWithQuotes(), which no-ops when the
+        // gate is closed — so a greyed button reliably does nothing.
         btn.setOnTouchListener(PenTapListener(this) { pasteClipboardWithQuotes() })
         return btn
     }
 
-    /** The compose commit button (toolbar) — "Add" normally, "Update" when editing. */
+    private fun buildPasteButton(): View {
+        val btn = makePasteButton()
+        pasteButton = btn
+        refreshPasteButton()
+        return btn
+    }
+
+    /** Current primary-clip text, or null when the clipboard holds no text. */
+    private fun clipboardText(): String? {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return null
+        val clip = cm.primaryClip ?: return null
+        if (clip.itemCount == 0) return null
+        return clip.getItemAt(0).coerceToText(this)?.toString()
+    }
+
+    /** Paste is allowed when the clipboard holds text we haven't already pasted. */
+    private fun canPasteNow(): Boolean {
+        val t = clipboardText()
+        return !t.isNullOrBlank() && t != lastPastedClip
+    }
+
+    /**
+     * Fade every paste icon when disabled. The icon is a black vector, so a
+     * translucent-black colour filter is invisible (black over black) — fade via
+     * imageAlpha instead, which composites the black over the paper to a clear grey.
+     */
+    private fun refreshPasteButton() {
+        val alpha = if (canPasteNow()) 255 else 70
+        pasteButton?.imageAlpha = alpha
+        fsPasteButton?.imageAlpha = alpha
+    }
+
+    /** The compose field currently being written into (the full-screen sheet wins). */
+    private fun activeComposeField(): EditText = fullComposeField ?: composeField
+
+
+    /** Label for the compose commit button — reflects add-vs-edit. */
+    private fun composeCommitText(): String =
+        if (composeEditIndex in threadEntries.indices) "Update Comment" else "Add Comment"
+
+    /** The compose commit button — "Add Comment", or "Update Comment" when editing. */
     private fun buildAddButton(): TextView {
         val btn = TextView(this).apply {
-            text = "Add"
+            text = composeCommitText()
             typeface = ReaderTheme.bodyBold(this@NoteActivity)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             setTextColor(ReaderTheme.PAPER)
@@ -456,7 +566,7 @@ class NoteActivity : Activity() {
                 cornerRadius = ReaderTheme.dp(this@NoteActivity, ReaderTheme.RADIUS_BTN)
                 setColor(ReaderTheme.INK_87)
             }
-            setPadding(dp(18f), dp(10f), dp(18f), dp(10f))
+            setPadding(dp(16f), dp(10f), dp(16f), dp(10f))
             minimumHeight = dp(48f)
         }
         btn.setOnTouchListener(PenTapListener(this) { commitCompose() })
@@ -486,8 +596,9 @@ class NoteActivity : Activity() {
      * foreground reliably) around a '#'/tag-label TextView. Single-line + ellipsize
      * + a max width so a long label ("Continuity") can't crowd the Save button.
      */
-    private fun buildTagButton(): View {
-        tagLabel = TextView(this).apply {
+    /** Build a tag button (corner-hint wrapper + '#'/label). Shared by toolbar + sheet. */
+    private fun makeTagButton(): Pair<FrameLayout, TextView> {
+        val label = TextView(this).apply {
             typeface = ReaderTheme.bodyBold(this@NoteActivity)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, chromeSizeSp)
             setTextColor(ReaderTheme.INK_87)
@@ -501,10 +612,16 @@ class NoteActivity : Activity() {
         val wrap = FrameLayout(this).apply {
             minimumHeight = dp(48f)
             foreground = cornerHintDrawable()
-            addView(tagLabel, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.CENTER))
+            addView(label, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.CENTER))
         }
-        tagButton = wrap
         wrap.setOnTouchListener(PenTapListener(this) { showTagPicker(wrap) })
+        return wrap to label
+    }
+
+    private fun buildTagButton(): View {
+        val (wrap, label) = makeTagButton()
+        tagButton = wrap
+        tagLabel = label
         return wrap
     }
 
@@ -512,11 +629,14 @@ class NoteActivity : Activity() {
         toolButton?.invalidate()
     }
 
+    /** Refresh every tag button (toolbar + full-screen sheet) to the current tag. */
     private fun refreshTagSelection() {
-        val wrap = tagButton ?: return
         val tag = selectedTag
-        tagLabel.text = if (tag != null) tagLabels[tag] else "#"
-        wrap.background = chipBackground(tag != null)
+        val txt = if (tag != null) tagLabels[tag] else "#"
+        tagLabel?.text = txt
+        tagButton?.background = chipBackground(tag != null)
+        fsTagLabel?.text = txt
+        fsTagButton?.background = chipBackground(tag != null)
     }
 
     /** Drop the tool picker below the toolbar's tool button. */
@@ -534,6 +654,8 @@ class NoteActivity : Activity() {
             cell.setOnTouchListener(PenTapListener(this) {
                 selectedTool = tool
                 refreshToolSelection()
+                // The pinned passage label reflects the tool — refresh it live.
+                if (activeTab == Tab.THREAD) renderPane()
                 toolPickerPopup?.dismiss()
             })
             row.addView(cell, LinearLayout.LayoutParams(dp(52f), dp(52f)).also { it.rightMargin = dp(8f) })
@@ -597,9 +719,11 @@ class NoteActivity : Activity() {
         val next = if (tag != null && tag == prev) null else tag
         selectedTag = next
         refreshTagSelection()
-        if (next != null && next != prev && composeField.text.isEmpty()) {
-            composeField.setText(tagPrompts[next])
-            composeField.setSelection(composeField.text.length)
+        // Seed the field currently being written into (full-screen sheet, if open).
+        val field = activeComposeField()
+        if (next != null && next != prev && field.text.isEmpty()) {
+            field.setText(tagPrompts[next])
+            field.setSelection(field.text.length)
         }
     }
 
@@ -648,6 +772,17 @@ class NoteActivity : Activity() {
         @Suppress("DEPRECATION") override fun getOpacity() = PixelFormat.TRANSLUCENT
     }
 
+    /** Label for the annotated passage, reflecting the current annotation tool. */
+    private fun annotatedPassageLabel(): String = when (selectedTool) {
+        AnnotationTool.highlight -> "Highlighted passage"
+        AnnotationTool.underline -> "Underlined passage"
+        AnnotationTool.doubleUnderline -> "Double-underlined passage"
+        AnnotationTool.strikethrough -> "Struck-through passage"
+        AnnotationTool.wavyUnderline -> "Wavy-underlined passage"
+        AnnotationTool.bookmark -> "Bookmarked passage"
+        else -> "Annotated passage" // comment / ink / anything else
+    }
+
     /**
      * The annotated passage, pinned as the root of the Comments thread: grey left
      * margin bar + italic, 2-line truncation, tap to read it in full via the
@@ -664,7 +799,7 @@ class NoteActivity : Activity() {
         row.setOnTouchListener(PenTapListener(this) {
             showEntryDetail(
                 ThreadEntry(text, annotationTimestamp, ThreadEntry.SOURCE_LEAMH),
-                metaOverride = "Highlighted passage",
+                metaOverride = annotatedPassageLabel(),
             )
         })
         row.addView(TextView(this).apply {
@@ -684,7 +819,7 @@ class NoteActivity : Activity() {
             }
         }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         row.addView(TextView(this).apply {
-            this.text = "Highlighted passage"
+            this.text = annotatedPassageLabel()
             typeface = ReaderTheme.chrome(this@NoteActivity)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             setTextColor(ReaderTheme.INK_38)
@@ -693,28 +828,16 @@ class NoteActivity : Activity() {
         return row
     }
 
-    /** Compose field with the Add/Update button beside it (paste lives in the toolbar). */
-    private fun buildComposeRow(): View {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.BOTTOM
-        }
-        // Anonymous subclass so the system context-menu paste also goes through
-        // pasteClipboardWithQuotes(), keeping both paths in sync.
-        composeField = object : EditText(this) {
-            override fun onTextContextMenuItem(id: Int): Boolean {
-                if (id == android.R.id.paste || id == android.R.id.pasteAsPlainText) {
-                    pasteClipboardWithQuotes()
-                    return true
-                }
-                return super.onTextContextMenuItem(id)
-            }
-        }.apply {
+    /**
+     * The compose field — full width now that paste, expand and Add Comment all
+     * live in the toolbar above (no button beside it to mis-align against).
+     */
+    private fun buildComposeField(): View {
+        composeField = ComposeEditText(this).apply {
             typeface = ReaderTheme.body(this@NoteActivity)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, bodySizeSp)
             setTextColor(ReaderTheme.INK_87)
             setHintTextColor(0xFF9E9A92.toInt())
-            setHighlightColor(android.graphics.Color.argb(60, 0, 0, 0))
             hint = "Write a comment…"
             minLines = 2
             maxLines = 4
@@ -728,26 +851,46 @@ class NoteActivity : Activity() {
             }
             setPadding(dp(12f), dp(10f), dp(12f), dp(10f))
         }
-        row.addView(composeField, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-
-        // Add/Update sits to the right of the field — the commit action stays next
-        // to where the user is typing.
-        composeButton = buildAddButton()
-        row.addView(
-            composeButton,
-            LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.leftMargin = dp(10f) },
-        )
-        return row
+        return composeField
     }
 
-    /** Pulls clipboard text, wraps it in quotes, and inserts at the compose cursor. */
-    private fun pasteClipboardWithQuotes() {
+    /** A 48dp themed icon button (paper fill, INK_26 border) for toolbar affordances. */
+    private fun iconButton(iconRes: Int, contentDesc: String, onTap: () -> Unit): ImageView =
+        ImageView(this).apply {
+            setImageResource(iconRes)
+            setColorFilter(ReaderTheme.INK_54)
+            contentDescription = contentDesc
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = ReaderTheme.dp(this@NoteActivity, ReaderTheme.RADIUS_BTN)
+                setColor(ReaderTheme.FILL_04)
+                setStroke(dp(1f), ReaderTheme.INK_26)
+            }
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(dp(12f), dp(12f), dp(12f), dp(12f))
+            minimumWidth = dp(48f)
+            minimumHeight = dp(48f)
+            setOnTouchListener(PenTapListener(this@NoteActivity, onTap = onTap))
+        }
+
+    /**
+     * Pulls clipboard text, wraps it in quotes, and inserts at [target]'s cursor.
+     * Gated: no-ops unless canPasteNow() (clipboard holds text we haven't already
+     * pasted). Records the pasted clip and refreshes the buttons. All paste paths
+     * (toolbar button, in-field popup, system menu) route through here so the gate
+     * holds everywhere.
+     */
+    private fun pasteClipboardWithQuotes(target: EditText = activeComposeField()) {
+        if (!canPasteNow()) return
         val clip = (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
             .primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()
             ?: return
-        val start = composeField.selectionStart.coerceIn(0, composeField.text.length)
-        val end   = composeField.selectionEnd.coerceIn(start, composeField.text.length)
-        composeField.text.replace(start, end, "\"${clip.trim()}\" ")
+        val start = target.selectionStart.coerceIn(0, target.text.length)
+        val end   = target.selectionEnd.coerceIn(start, target.text.length)
+        target.text.replace(start, end, "\"${clip.trim()}\" ")
+        // Remember this clip so paste stays disabled until the clipboard changes.
+        lastPastedClip = clip
+        refreshPasteButton()
     }
 
     /** Add the compose field's text as a new entry, or save the entry being edited. */
@@ -764,7 +907,8 @@ class NoteActivity : Activity() {
         }
         composeEditIndex = -1
         composeField.setText("")
-        composeButton.text = "Add"
+        composeButton.text = composeCommitText()
+        replyContextEntry = null
         activeTab = Tab.THREAD
         // Jump to the new entry on add; keep the reader's place when saving an edit.
         if (!isEdit) threadPage = lastThreadPage()
@@ -998,8 +1142,9 @@ class NoteActivity : Activity() {
         composeEditIndex = index
         composeField.setText(threadEntries[index].text)
         composeField.setSelection(composeField.text.length)
-        // "Update" (not "Save") so it never collides with the toolbar's Save button.
-        composeButton.text = "Update"
+        composeButton.text = composeCommitText()
+        // Editing isn't replying — no reply-context reference.
+        replyContextEntry = null
         renderPane() // re-highlight the edited row
     }
 
@@ -1010,10 +1155,13 @@ class NoteActivity : Activity() {
         val snippet = words.take(8).joinToString(" ")
         val quoted = "\"" + snippet + (if (words.size > 8) "…" else "") + "\" "
         composeEditIndex = -1
-        composeButton.text = "Add"
+        composeButton.text = composeCommitText()
         composeField.setText(quoted)
         composeField.setSelection(composeField.text.length)
         composeField.requestFocus()
+        // Replying: remember the target entry (the full-screen compose shows it as
+        // the read-only reference).
+        replyContextEntry = entry
         // Clear any stale "being edited" row highlight.
         renderPane()
     }
@@ -1031,7 +1179,7 @@ class NoteActivity : Activity() {
                         composeEditIndex == index -> {
                             composeEditIndex = -1
                             composeField.setText("")
-                            composeButton.text = "Add"
+                            composeButton.text = composeCommitText()
                         }
                         composeEditIndex > index -> composeEditIndex--
                     }
@@ -1077,26 +1225,143 @@ class NoteActivity : Activity() {
     private fun formatTimestamp(millis: Long): String =
         if (millis <= 0L) "" else threadDateFormat.format(Date(millis))
 
-    /**
-     * Selectable TextView that draws a dotted underline for the selected range
-     * instead of Android's default fill highlight. Matches the reader's active
-     * selection style so the two surfaces feel consistent on e-ink.
-     */
-    private inner class SelectableBodyText(context: android.content.Context) : TextView(context) {
-        private val dottedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    // -------------------------------------------------------------------------
+    // Shared text-selection styling — the reader's dotted underline + a themed
+    // popup, used by BOTH the read-only entry-detail overlay (SelectableBodyText)
+    // and the editable compose fields (ComposeEditText) so selection looks the
+    // same on every surface, instead of Android's blue fill + floating toolbar.
+    // -------------------------------------------------------------------------
+
+    private val selDottedPaint by lazy {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             color = ReaderTheme.INK
-            strokeWidth = ReaderTheme.dp(context, ReaderTheme.UNDERLINE_STROKE_DP)
+            strokeWidth = ReaderTheme.dp(this@NoteActivity, ReaderTheme.UNDERLINE_STROKE_DP)
             pathEffect = DashPathEffect(
                 floatArrayOf(
-                    ReaderTheme.dp(context, ReaderTheme.UNDERLINE_DASH_ON_DP),
-                    ReaderTheme.dp(context, ReaderTheme.UNDERLINE_DASH_OFF_DP),
+                    ReaderTheme.dp(this@NoteActivity, ReaderTheme.UNDERLINE_DASH_ON_DP),
+                    ReaderTheme.dp(this@NoteActivity, ReaderTheme.UNDERLINE_DASH_OFF_DP),
                 ),
                 0f,
             )
         }
-        private val selPath = Path()
+    }
 
+    /**
+     * Draws the reader's dotted underline beneath [tv]'s current selection range —
+     * call from [tv]'s onDraw. Accounts for the view's scroll (the editable compose
+     * field can scroll vertically), so the read-only overlay (scroll always 0) is
+     * just the special case scrollX/scrollY == 0.
+     */
+    private fun drawSelectionUnderline(tv: TextView, canvas: Canvas, path: Path) {
+        val l = tv.layout ?: return
+        val lo = minOf(tv.selectionStart, tv.selectionEnd)
+        val hi = maxOf(tv.selectionStart, tv.selectionEnd)
+        if (lo < 0 || lo >= hi) return
+        val underlineOffset = ReaderTheme.dp(this, ReaderTheme.UNDERLINE_OFFSET_DP)
+        canvas.save()
+        canvas.translate(
+            (tv.totalPaddingLeft - tv.scrollX).toFloat(),
+            (tv.totalPaddingTop - tv.scrollY).toFloat(),
+        )
+        val firstLine = l.getLineForOffset(lo)
+        val lastLine = l.getLineForOffset((hi - 1).coerceAtLeast(lo))
+        for (line in firstLine..lastLine) {
+            val ls = maxOf(lo, l.getLineStart(line))
+            val le = minOf(hi, l.getLineEnd(line))
+            if (ls >= le) continue
+            var x0 = l.getPrimaryHorizontal(ls)
+            var x1 = l.getPrimaryHorizontal(le)
+            if (x1 <= x0) x1 = l.getLineRight(line)
+            if (x1 < x0) { val t = x0; x0 = x1; x1 = t }
+            val y = l.getLineBaseline(line).toFloat() + underlineOffset
+            path.rewind()
+            path.moveTo(x0, y)
+            path.lineTo(x1, y)
+            canvas.drawPath(path, selDottedPaint)
+        }
+        canvas.restore()
+    }
+
+    /**
+     * Builds + shows a themed selection popup (paper card, INK_26 border, divided
+     * chrome-bold buttons) positioned ~60dp above [tv]'s selection start. [actions]
+     * are (label, handler) pairs. Returns the PopupWindow so the caller stores +
+     * dismisses it.
+     */
+    private fun showSelectionPopup(tv: TextView, actions: List<Pair<String, () -> Unit>>): PopupWindow {
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = ReaderTheme.dp(this@NoteActivity, ReaderTheme.RADIUS_BTN)
+                setColor(ReaderTheme.PAPER)
+                setStroke(dp(1f), ReaderTheme.INK_26)
+            }
+        }
+        actions.forEachIndexed { i, (label, action) ->
+            if (i > 0) content.addView(View(this).apply {
+                setBackgroundColor(ReaderTheme.INK_26)
+                layoutParams = LinearLayout.LayoutParams(dp(1f), MATCH_PARENT).also {
+                    it.topMargin = dp(10f); it.bottomMargin = dp(10f)
+                }
+            })
+            content.addView(TextView(this).apply {
+                text = label
+                typeface = ReaderTheme.chromeBold(this@NoteActivity)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                setTextColor(ReaderTheme.INK_87)
+                gravity = Gravity.CENTER
+                setPadding(dp(20f), dp(12f), dp(20f), dp(12f))
+                minimumHeight = dp(48f)
+                setOnTouchListener(PenTapListener(this@NoteActivity) { action() })
+            })
+        }
+        val popup = PopupWindow(content, WRAP_CONTENT, WRAP_CONTENT, true).apply {
+            elevation = ReaderTheme.dp(this@NoteActivity, 4f)
+            isOutsideTouchable = true
+            setBackgroundDrawable(null)
+        }
+        // Position the popup just above the selected text's first line.
+        val l = tv.layout
+        val screenLoc = IntArray(2).also { tv.getLocationInWindow(it) }
+        val xScreen: Int
+        val yScreen: Int
+        if (l != null) {
+            val anchorOff = minOf(tv.selectionStart, tv.selectionEnd).coerceAtLeast(0)
+            val line = l.getLineForOffset(anchorOff)
+            val lineTop = tv.totalPaddingTop + l.getLineTop(line) - tv.scrollY
+            xScreen = (screenLoc[0] + tv.totalPaddingLeft +
+                l.getPrimaryHorizontal(anchorOff).toInt() - tv.scrollX)
+                .coerceIn(screenLoc[0], screenLoc[0] + tv.width - dp(140f))
+            yScreen = screenLoc[1] + lineTop - dp(60f)
+        } else {
+            xScreen = screenLoc[0] + dp(16f)
+            yScreen = screenLoc[1] - dp(60f)
+        }
+        popup.showAtLocation(tv, Gravity.NO_GRAVITY, xScreen, yScreen.coerceAtLeast(0))
+        return popup
+    }
+
+    /** Clears the system floating ActionMode (Copy/Share/…) so our themed popup is
+     *  the only selection toolbar. Returning true from onCreateActionMode lets the
+     *  selection itself proceed (handles stay live); the empty menu hides the bar. */
+    private fun suppressingActionModeCallback() = object : ActionMode.Callback {
+        override fun onCreateActionMode(mode: ActionMode, menu: Menu) = true
+        override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean {
+            menu.clear(); return true
+        }
+        override fun onActionItemClicked(mode: ActionMode, item: MenuItem) = false
+        override fun onDestroyActionMode(mode: ActionMode) {}
+    }
+
+    /**
+     * Read-only selectable TextView for the entry-detail overlay: suppresses the
+     * system fill, draws the shared dotted underline, and shows a themed Copy /
+     * Select-all popup via [showSelectionPopup].
+     */
+    private inner class SelectableBodyText(context: Context) : TextView(context) {
+        private val selPath = Path()
         private var selectionPopup: PopupWindow? = null
         private val popupHandler = Handler(Looper.getMainLooper())
         private var pendingPopup: Runnable? = null
@@ -1104,18 +1369,7 @@ class NoteActivity : Activity() {
         init {
             setTextIsSelectable(true)
             highlightColor = 0 // suppress fill; dotted underline drawn in onDraw
-            // Replace the system floating ActionMode (Copy/Share/Select all) with our
-            // own themed popup shown via onSelectionChanged. Returning true from
-            // onCreateActionMode lets selection proceed; clearing the menu in
-            // onPrepareActionMode suppresses the floating toolbar.
-            setCustomSelectionActionModeCallback(object : ActionMode.Callback {
-                override fun onCreateActionMode(mode: ActionMode, menu: Menu) = true
-                override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean {
-                    menu.clear(); return true
-                }
-                override fun onActionItemClicked(mode: ActionMode, item: MenuItem) = false
-                override fun onDestroyActionMode(mode: ActionMode) {}
-            })
+            setCustomSelectionActionModeCallback(suppressingActionModeCallback())
         }
 
         override fun onSelectionChanged(selStart: Int, selEnd: Int) {
@@ -1123,130 +1377,142 @@ class NoteActivity : Activity() {
             pendingPopup?.let { popupHandler.removeCallbacks(it) }
             pendingPopup = null
             if (selStart < selEnd) {
-                val r = Runnable { if (isAttachedToWindow) showSelectionPopup() }
+                val r = Runnable { if (isAttachedToWindow) showPopup() }
                 pendingPopup = r
                 popupHandler.postDelayed(r, 150L)
             } else {
-                dismissSelectionPopup()
+                dismissPopup()
             }
         }
 
         override fun onDetachedFromWindow() {
             super.onDetachedFromWindow()
             pendingPopup?.let { popupHandler.removeCallbacks(it) }
-            dismissSelectionPopup()
+            dismissPopup()
         }
 
-        private fun idp(v: Float) = ReaderTheme.dp(context, v).toInt()
-
-        private fun showSelectionPopup() {
-            dismissSelectionPopup()
-            val ctx = context
-
-            val content = LinearLayout(ctx).apply {
-                orientation = LinearLayout.HORIZONTAL
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.RECTANGLE
-                    cornerRadius = ReaderTheme.dp(ctx, ReaderTheme.RADIUS_BTN)
-                    setColor(ReaderTheme.PAPER)
-                    setStroke(idp(1f), ReaderTheme.INK_26)
-                }
-            }
-
-            fun popBtn(label: String, action: () -> Unit) = TextView(ctx).apply {
-                text = label
-                typeface = ReaderTheme.chromeBold(ctx)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-                setTextColor(ReaderTheme.INK_87)
-                gravity = Gravity.CENTER
-                setPadding(idp(20f), idp(12f), idp(20f), idp(12f))
-                minimumHeight = idp(48f)
-                setOnTouchListener(PenTapListener(ctx) { action() })
-            }
-
-            content.addView(popBtn("Copy") {
-                val s = selectionStart; val e = selectionEnd
-                if (s < e) {
-                    val copied = this.text.subSequence(s, e).toString()
-                    (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
-                        .setPrimaryClip(ClipData.newPlainText("", copied))
-                }
-                dismissSelectionPopup()
-            })
-
-            // Vertical divider between Copy and Select all.
-            content.addView(View(ctx).apply {
-                setBackgroundColor(ReaderTheme.INK_26)
-                layoutParams = LinearLayout.LayoutParams(idp(1f), MATCH_PARENT).also { lp ->
-                    lp.topMargin = idp(10f); lp.bottomMargin = idp(10f)
-                }
-            })
-
-            content.addView(popBtn("Select all") {
+        private fun showPopup() {
+            dismissPopup()
+            selectionPopup = showSelectionPopup(this, listOf(
+                "Copy" to {
+                    val s = minOf(selectionStart, selectionEnd)
+                    val e = maxOf(selectionStart, selectionEnd)
+                    if (s < e) (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                        .setPrimaryClip(ClipData.newPlainText("", text.subSequence(s, e).toString()))
+                    lastPastedClip = null // a fresh copy re-enables paste
+                    refreshPasteButton()
+                    dismissPopup()
+                },
                 // onTextContextMenuItem casts mText to Spannable (not Editable),
                 // which works correctly when setTextIsSelectable buffers as SPANNABLE.
-                this@SelectableBodyText.onTextContextMenuItem(android.R.id.selectAll)
-            })
-
-            val popup = PopupWindow(content, WRAP_CONTENT, WRAP_CONTENT, true).apply {
-                elevation = ReaderTheme.dp(ctx, 4f)
-                isOutsideTouchable = true
-                setBackgroundDrawable(null)
-            }
-
-            // Position the popup just above the selected text's first line.
-            val l = layout
-            val screenLoc = IntArray(2).also { getLocationInWindow(it) }
-            val xScreen: Int
-            val yScreen: Int
-            if (l != null) {
-                val anchorOff = minOf(selectionStart, selectionEnd).coerceAtLeast(0)
-                val line = l.getLineForOffset(anchorOff)
-                val lineTop = totalPaddingTop + l.getLineTop(line)
-                xScreen = (screenLoc[0] + totalPaddingLeft +
-                    l.getPrimaryHorizontal(anchorOff).toInt())
-                    .coerceIn(screenLoc[0], screenLoc[0] + width - idp(140f))
-                yScreen = screenLoc[1] + lineTop - idp(60f) // ~60dp above the line
-            } else {
-                xScreen = screenLoc[0] + idp(16f)
-                yScreen = screenLoc[1] - idp(60f)
-            }
-
-            selectionPopup = popup
-            popup.showAtLocation(this, Gravity.NO_GRAVITY, xScreen, yScreen.coerceAtLeast(0))
+                "Select all" to { onTextContextMenuItem(android.R.id.selectAll) },
+            ))
         }
 
-        private fun dismissSelectionPopup() {
+        private fun dismissPopup() {
             selectionPopup?.let { if (it.isShowing) it.dismiss() }
             selectionPopup = null
         }
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            val start = selectionStart
-            val end = selectionEnd
-            val l = layout ?: return
-            if (start >= end) return
-            val underlineOffset = ReaderTheme.dp(context, ReaderTheme.UNDERLINE_OFFSET_DP)
-            canvas.save()
-            canvas.translate(totalPaddingLeft.toFloat(), totalPaddingTop.toFloat())
-            val firstLine = l.getLineForOffset(start)
-            val lastLine = l.getLineForOffset((end - 1).coerceAtLeast(start))
-            for (line in firstLine..lastLine) {
-                val ls = maxOf(start, l.getLineStart(line))
-                val le = minOf(end, l.getLineEnd(line))
-                if (ls >= le) continue
-                var x0 = l.getPrimaryHorizontal(ls)
-                var x1 = l.getPrimaryHorizontal(le)
-                if (x1 <= x0) x1 = l.getLineRight(line)
-                if (x1 < x0) { val t = x0; x0 = x1; x1 = t }
-                val y = l.getLineBaseline(line).toFloat() + underlineOffset
-                selPath.rewind()
-                selPath.moveTo(x0, y)
-                selPath.lineTo(x1, y)
-                canvas.drawPath(selPath, dottedPaint)
+            drawSelectionUnderline(this, canvas, selPath)
+        }
+    }
+
+    /**
+     * Editable compose field that matches the reader's selection style: suppresses
+     * the system blue fill, draws the shared dotted underline, and replaces the
+     * floating toolbar with a themed Cut / Copy / Paste / Select-all popup.
+     * Selection handles and the paste path still work — paste (toolbar, in-field
+     * popup, or system insertion bubble) routes through [pasteClipboardWithQuotes].
+     * Touching the field dismisses any open entry-detail overlay (read → write).
+     */
+    private inner class ComposeEditText(context: Context) : EditText(context) {
+        private val selPath = Path()
+        private var selectionPopup: PopupWindow? = null
+        private val popupHandler = Handler(Looper.getMainLooper())
+        private var pendingPopup: Runnable? = null
+
+        init {
+            highlightColor = 0 // suppress fill; dotted underline drawn in onDraw
+            setCustomSelectionActionModeCallback(suppressingActionModeCallback())
+        }
+
+        override fun onTextContextMenuItem(id: Int): Boolean {
+            if (id == android.R.id.paste || id == android.R.id.pasteAsPlainText) {
+                pasteClipboardWithQuotes(this)
+                return true
             }
-            canvas.restore()
+            return super.onTextContextMenuItem(id)
+        }
+
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            // Tapping into the field is the write intent — close any read overlay.
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) dismissEntryDetail()
+            return super.onTouchEvent(event)
+        }
+
+        override fun onSelectionChanged(selStart: Int, selEnd: Int) {
+            super.onSelectionChanged(selStart, selEnd)
+            pendingPopup?.let { popupHandler.removeCallbacks(it) }
+            pendingPopup = null
+            if (selStart < selEnd) {
+                val r = Runnable { if (isAttachedToWindow) showPopup() }
+                pendingPopup = r
+                popupHandler.postDelayed(r, 150L)
+            } else {
+                dismissPopup()
+            }
+        }
+
+        override fun onDetachedFromWindow() {
+            super.onDetachedFromWindow()
+            pendingPopup?.let { popupHandler.removeCallbacks(it) }
+            dismissPopup()
+        }
+
+        private fun showPopup() {
+            dismissPopup()
+            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val actions = mutableListOf<Pair<String, () -> Unit>>()
+            actions += "Cut" to {
+                val s = minOf(selectionStart, selectionEnd)
+                val e = maxOf(selectionStart, selectionEnd)
+                if (s < e) {
+                    cm.setPrimaryClip(ClipData.newPlainText("", text.subSequence(s, e).toString()))
+                    text.replace(s, e, "")
+                }
+                lastPastedClip = null // a fresh copy/cut re-enables paste
+                refreshPasteButton()
+                dismissPopup()
+            }
+            actions += "Copy" to {
+                val s = minOf(selectionStart, selectionEnd)
+                val e = maxOf(selectionStart, selectionEnd)
+                if (s < e) cm.setPrimaryClip(ClipData.newPlainText("", text.subSequence(s, e).toString()))
+                lastPastedClip = null // a fresh copy/cut re-enables paste
+                refreshPasteButton()
+                dismissPopup()
+            }
+            // Paste only when the gate is open (clipboard has unpasted text) —
+            // honours the same gate as the toolbar paste button.
+            if (canPasteNow()) actions += "Paste" to {
+                pasteClipboardWithQuotes(this)
+                dismissPopup()
+            }
+            actions += "Select all" to { onTextContextMenuItem(android.R.id.selectAll) }
+            selectionPopup = showSelectionPopup(this, actions)
+        }
+
+        private fun dismissPopup() {
+            selectionPopup?.let { if (it.isShowing) it.dismiss() }
+            selectionPopup = null
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            drawSelectionUnderline(this, canvas, selPath)
         }
     }
 
@@ -1415,6 +1681,143 @@ class NoteActivity : Activity() {
         entryDetailLayoutListener = null
         bottomFrame.removeView(v)
         entryDetailOverlay = null
+    }
+
+    // -------------------------------------------------------------------------
+    // Full-screen compose (P1d)
+    // -------------------------------------------------------------------------
+
+    /** The reference shown in full-screen compose: the replied-to comment, else the passage. */
+    private fun composeContextText(): String? =
+        replyContextEntry?.text ?: selectedText.ifEmpty { null }
+
+    /**
+     * Full-screen compose: a paper sheet over everything with the referenced
+     * passage/comment pinned (and SELECTABLE, so the user can copy a phrase to
+     * quote) at the top, and a full-height editable field below, so a long reply
+     * can be written while re-reading the source. Tag + Paste mirror the toolbar so
+     * they're reachable while writing; the collapse icon folds the text back, and
+     * Add Comment commits it. The small compose field stays fixed — this is the
+     * escape hatch for overflow (no scroll, no char cap on it).
+     */
+    private fun showFullScreenCompose() {
+        if (fullComposeOverlay != null) return
+        dismissEntryDetail()
+
+        val sheet = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(ReaderTheme.PAPER)
+            isClickable = true   // consume touches; nothing leaks to the screen below
+            isFocusable = true
+            fitsSystemWindows = true
+        }
+
+        // Top bar: everything right-aligned (the left stays clear of where Dismiss/
+        // Save sit on the toolbar beneath). The collapse icon sits just before Add
+        // Comment — directly above the expand button it mirrors — so expand/collapse
+        // toggle in place and an accidental double-tap re-opens the sheet instead of
+        // reaching Dismiss/Save.
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12f), dp(8f), dp(12f), dp(8f))
+        }
+        bar.addView(Space(this), LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        // Tag mirror — set/clear a tag while writing (same picker + state).
+        val (tagWrap, tagLbl) = makeTagButton()
+        fsTagButton = tagWrap; fsTagLabel = tagLbl
+        bar.addView(tagWrap, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
+        // Paste mirror — quote-wrapping, same clipboard gate + dim.
+        val pasteBtn = makePasteButton()
+        fsPasteButton = pasteBtn
+        bar.addView(
+            pasteBtn,
+            LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.leftMargin = dp(8f) },
+        )
+        // Collapse — closes the sheet; sits where the expand button is underneath.
+        bar.addView(
+            iconButton(R.drawable.ic_collapse, "Collapse") { dismissFullScreenCompose() },
+            LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.leftMargin = dp(8f) },
+        )
+        // Add Comment — commit + close (folds text back, then commits to the thread).
+        val fsAdd = buildAddButton()
+        fsAdd.setOnTouchListener(PenTapListener(this) { dismissFullScreenCompose(); commitCompose() })
+        bar.addView(
+            fsAdd,
+            LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.leftMargin = dp(8f) },
+        )
+        sheet.addView(bar, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        sheet.addView(hDivider(), LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
+
+        // Reference: the comment being replied to, else the annotated passage.
+        // SelectableBodyText so a phrase can be selected → Copy → pasted as a quote.
+        // Bounded height so it can't crowd out the writing area on e-ink.
+        val ref = composeContextText()
+        if (!ref.isNullOrEmpty()) {
+            sheet.addView(TextView(this).apply {
+                text = if (replyContextEntry != null) "Replying to" else annotatedPassageLabel()
+                typeface = ReaderTheme.chrome(this@NoteActivity)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTextColor(ReaderTheme.INK_38)
+                setPadding(dp(20f), dp(12f), dp(20f), dp(2f))
+            }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+            sheet.addView(SelectableBodyText(this).apply {
+                this.text = ref
+                typeface = ReaderTheme.bodyItalic(this@NoteActivity)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, (bodySizeSp - 1f).coerceAtLeast(14f))
+                setTextColor(ReaderTheme.INK_87)
+                maxLines = 8
+                ellipsize = TextUtils.TruncateAt.END
+                setLineSpacing(0f, 1.3f)
+                setPadding(dp(20f), dp(2f), dp(20f), dp(12f))
+            }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+            sheet.addView(hDivider(), LinearLayout.LayoutParams(MATCH_PARENT, dp(1f)))
+        }
+
+        // Full-height editable field — same selection styling + quote-paste as the
+        // small field; grows with the text (cursor-following scroll, no swipe).
+        val field = ComposeEditText(this).apply {
+            typeface = ReaderTheme.body(this@NoteActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, bodySizeSp)
+            setTextColor(ReaderTheme.INK_87)
+            setHintTextColor(0xFF9E9A92.toInt())
+            hint = "Write a comment…"
+            gravity = Gravity.TOP or Gravity.START
+            isFocusable = true
+            isFocusableInTouchMode = true
+            setBackgroundColor(0)
+            setPadding(dp(20f), dp(14f), dp(20f), dp(14f))
+            setText(composeField.text)
+            setSelection(text.length)
+        }
+        fullComposeField = field
+        sheet.addView(field, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+
+        fullComposeOverlay = sheet
+        addContentView(sheet, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        // Sync the mirrored tag + paste controls to current state.
+        refreshTagSelection()
+        refreshPasteButton()
+        field.requestFocus()
+    }
+
+    /** Copy the full-screen field's text into composeField (if the sheet is open). */
+    private fun syncFullComposeText() {
+        val field = fullComposeField ?: return
+        composeField.setText(field.text)
+        composeField.setSelection(composeField.text.length)
+    }
+
+    /** Fold the full-screen text back into composeField and remove the sheet. */
+    private fun dismissFullScreenCompose() {
+        val sheet = fullComposeOverlay ?: return
+        syncFullComposeText()
+        (sheet.parent as? ViewGroup)?.removeView(sheet)
+        fullComposeOverlay = null
+        fullComposeField = null
+        fsTagButton = null
+        fsTagLabel = null
+        fsPasteButton = null
     }
 
     // -------------------------------------------------------------------------
