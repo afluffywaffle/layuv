@@ -1392,7 +1392,7 @@ class NoteActivity : Activity() {
             text = metaOverride ?: buildString {
                 append(formatTimestamp(entry.timestamp))
                 append("  ·  ")
-                append(if (entry.source == ThreadEntry.SOURCE_WORD) "Word" else "Leamh")
+                append(if (entry.source == ThreadEntry.SOURCE_WORD) "Word" else "Layuv")
             }
             typeface = ReaderTheme.chrome(this@NoteActivity)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)

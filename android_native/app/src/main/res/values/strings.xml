@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Distinct launcher label so the native .dev build is told apart from the
-         Flutter "Léamh" on the device launcher. -->
-    <string name="app_name">Léamh dev</string>
+    <!-- Launcher label. The " dev" suffix marks this as the .dev (debug) build. -->
+    <string name="app_name">Layuv dev</string>
     <string name="open_document">Open document</string>
     <string name="toggle_columns">Columns</string>
     <string name="empty_hint">Tap “Open document” to choose a DOCX.</string>

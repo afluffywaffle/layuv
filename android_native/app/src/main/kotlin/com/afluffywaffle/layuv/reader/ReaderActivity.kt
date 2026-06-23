@@ -667,7 +667,7 @@ class ReaderActivity : Activity() {
         if (Environment.isExternalStorageManager()) return true
         Toast.makeText(
             this,
-            "Grant “All files access” so Léamh can open and save annotations, then tap Open again.",
+            "Grant “All files access” so Layuv can open and save annotations, then tap Open again.",
             Toast.LENGTH_LONG,
         ).show()
         val appSpecific = Intent(
@@ -1076,24 +1076,20 @@ class ReaderActivity : Activity() {
         TempFiles.writeText(this, NoteActivity.FILE_LAUNCH_JSON, null)
         if (resolved.annotation.hasInk) {
             val id = resolved.annotation.id
-            // Prefer the in-memory cache — it's updated immediately on save, before
-            // the background write finishes updating book.bytes.
-            val cached = latestStrokes[id]
-            if (cached != null) {
-                TempFiles.writeText(this, NoteActivity.FILE_LAUNCH_JSON, cached)
-            } else {
-                val bytes = book?.bytes
-                if (bytes != null) {
-                    val strokeJson = DocxStore.readInkStrokes(bytes, id)
-                    if (strokeJson != null) {
-                        TempFiles.writeText(this, NoteActivity.FILE_LAUNCH_JSON, strokeJson)
-                    } else {
-                        val inkBytes = DocxStore.readInkPng(bytes, id)
-                        if (inkBytes != null) {
-                            TempFiles.writeBytes(this, NoteActivity.FILE_LAUNCH_PNG, inkBytes)
-                        }
-                    }
-                }
+            val bytes = book?.bytes
+            // Vector strokes drive editing in the ink canvas. Prefer the in-memory
+            // cache — it's updated immediately on save, before the background write
+            // finishes updating book.bytes.
+            val strokeJson = latestStrokes[id] ?: bytes?.let { DocxStore.readInkStrokes(it, id) }
+            if (strokeJson != null) {
+                TempFiles.writeText(this, NoteActivity.FILE_LAUNCH_JSON, strokeJson)
+            }
+            // The note pane's ink preview (NoteActivity.renderInkPane) renders from the
+            // PNG, so pass it whenever present — even for stroke-based notes — or the
+            // Ink tab shows blank on reopen.
+            val inkBytes = bytes?.let { DocxStore.readInkPng(it, id) }
+            if (inkBytes != null) {
+                TempFiles.writeBytes(this, NoteActivity.FILE_LAUNCH_PNG, inkBytes)
             }
         }
         val intent = Intent(this, NoteActivity::class.java)
@@ -1171,7 +1167,7 @@ class ReaderActivity : Activity() {
     private fun copyText(text: String) {
         if (text.isBlank()) return
         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        cm.setPrimaryClip(ClipData.newPlainText("Léamh", text))
+        cm.setPrimaryClip(ClipData.newPlainText("Layuv", text))
         Toast.makeText(this, "Copied", Toast.LENGTH_SHORT).show()
     }
 

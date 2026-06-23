@@ -281,7 +281,7 @@ class HelpActivity : Activity() {
 
     private fun buildReadingPage(): View {
         val col = pageColumn("Reading")
-        col.addView(para("Léamh shows your document one page at a time, like a book — nothing scrolls.", 0f))
+        col.addView(para("Layuv shows your document one page at a time, like a book — nothing scrolls.", 0f))
         col.addView(
             EdgeNavView(this, diagram = true),
             LinearLayout.LayoutParams(MATCH_PARENT, dp(150f)).also { it.topMargin = dp(20f) },
@@ -359,13 +359,10 @@ class HelpActivity : Activity() {
 
     private fun buildAboutPage(): View {
         val col = pageColumn("About")
-        col.addView(TextView(this).apply {
-            text = "Léamh"
-            typeface = ReaderTheme.bodyBold(this@HelpActivity)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
-            setTextColor(ReaderTheme.INK_87)
-        })
-        col.addView(para("A focused reader and annotator for manuscripts on e-ink. Marks and comments are stored as native DOCX comments, so they round-trip with Word, Pages and Google Docs.", topGap = 4f))
+        col.addView(nameEntry())
+        col.addView(para("A focused reader and annotator for manuscripts on e-ink. Marks and comments are stored as native DOCX comments, so they round-trip with Word, Pages and Google Docs.", topGap = 16f))
+        col.addView(subheading("Background"))
+        col.addView(para("Layuv was built — with heavy help from AI — to fill a gap in a literary project of my own. I wanted one reader that came with me across phone, Supernote and laptop, so I could review, critique and leave feedback on the work of an AI writer wherever I was. A private workaround grew into the app you’re using now.", topGap = 2f))
         col.addView(definitionRow("Version", appVersion()))
         col.addView(definitionRow("Bundle ID", "com.afluffywaffle.layuv"))
         col.addView(definitionRow("Licence", "GPL v3 — free, open source"))
@@ -373,16 +370,45 @@ class HelpActivity : Activity() {
         return col
     }
 
+    /** Dictionary-style entry for the app name: headword, pronunciation, origin. */
+    private fun nameEntry(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        // Headword + pronunciation, baseline-aligned like a dictionary lemma.
+        addView(LinearLayout(this@HelpActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(TextView(this@HelpActivity).apply {
+                text = "Layuv"
+                typeface = ReaderTheme.bodyBold(this@HelpActivity)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 30f)
+                setTextColor(ReaderTheme.INK_87)
+            })
+            addView(TextView(this@HelpActivity).apply {
+                text = "| lay-uv |  v."
+                typeface = ReaderTheme.bodyItalic(this@HelpActivity)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+                setTextColor(ReaderTheme.INK_54)
+                setPadding(dp(12f), 0, 0, 0)
+            })
+        })
+        addView(TextView(this@HelpActivity).apply {
+            text = "Irish · from léamh, “to read.”"
+            typeface = ReaderTheme.bodyItalic(this@HelpActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+            setTextColor(ReaderTheme.INK_54)
+            setPadding(0, dp(5f), 0, 0)
+        })
+    }
+
     private fun buildThanksPage(): View {
         val col = pageColumn("Thanks")
-        col.addView(para("Léamh stands on the work of others.", 0f))
+        col.addView(para("Layuv stands on the work of others.", 0f))
         col.addView(definitionRow(
             "Ratta · Supernote",
             "For sharing how to drive the low-latency drawPath ink layer — it's what makes the pen feel instant.",
         ))
         col.addView(definitionRow(
             "Literata · Source Sans 3",
-            "The open-licensed typefaces Léamh reads and writes in.",
+            "The open-licensed typefaces Layuv reads and writes in.",
         ))
         col.addView(definitionRow(
             "Open source",
