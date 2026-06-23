@@ -353,8 +353,6 @@ class InkNoteActivity : Activity() {
             setOnTouchListener(PenTapListener(this@InkNoteActivity, onTap = onClick))
         }
 
-    private fun hDivider(): View = View(this).apply { setBackgroundColor(ReaderTheme.INK_12) }
-    private fun dp(v: Float): Int = ReaderTheme.dp(this, v).toInt()
 
     private fun readTempBytes(name: String): ByteArray? = try {
         val f = File(cacheDir, name)

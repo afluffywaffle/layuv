@@ -692,10 +692,4 @@ class SearchActivity : Activity() {
         return i
     }
 
-    private fun hDivider(): View = View(this).apply { setBackgroundColor(ReaderTheme.INK_12) }
-    private fun rowDivider(): View = View(this).apply {
-        setBackgroundColor(ReaderTheme.FILL_08)
-        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(1f))
-    }
-    private fun dp(v: Float): Int = ReaderTheme.dp(this, v).toInt()
 }

@@ -1878,12 +1878,6 @@ class NoteActivity : Activity() {
             setOnTouchListener(PenTapListener(this@NoteActivity, onTap = onTap))
         }
 
-    private fun hDivider(): View = View(this).apply { setBackgroundColor(ReaderTheme.INK_12) }
-    private fun rowDivider(): View = View(this).apply {
-        setBackgroundColor(0x14000000)
-        layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(1f))
-    }
-    private fun dp(v: Float): Int = ReaderTheme.dp(this, v).toInt()
 
     private fun readTempBytes(name: String): ByteArray? = try {
         val f = File(cacheDir, name)

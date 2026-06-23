@@ -480,8 +480,6 @@ class FileBrowserActivity : Activity() {
         ?.sortedBy { it.name.lowercase() }
         ?: emptyList()
 
-    private fun dp(value: Float): Int = ReaderTheme.dp(this, value).toInt()
-
     /** How many recent rows fit in [sectionHeight] pixels, accounting for the header. */
     private fun recentsCapFromHeight(sectionHeight: Int): Int {
         val headerH = dp(36f)
