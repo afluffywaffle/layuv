@@ -1,5 +1,6 @@
 package com.afluffywaffle.layuv.docx
 
+import com.afluffywaffle.layuv.docx.model.AiTurn
 import com.afluffywaffle.layuv.docx.model.Annotation
 import com.afluffywaffle.layuv.docx.model.ReadingPosition
 import java.time.Instant
@@ -30,6 +31,7 @@ class LoadedDocument(
 object DocxStore {
     private const val ANNOTATIONS = "leamh/annotations.json"
     private const val POSITION = "leamh/position.json"
+    private const val AICHAT = "leamh/aichat.json"
     private const val DOCUMENT = "word/document.xml"
     private const val CLEAN = "leamh/document_clean.xml"
     private const val COMMENTS = "word/comments.xml"
@@ -286,6 +288,45 @@ object DocxStore {
         val archive = DocxArchive.read(docxBytes)
         val entries = archive.toMutableEntries()
         entries[POSITION] = JsonWriter.encode(position.toMap()).toByteArray(Charsets.UTF_8)
+        return DocxArchive.write(entries, archive.entryMethods())
+    }
+
+    // -------------------------------------------------------------------------
+    // Ask-AI conversation transcript — `leamh/aichat.json`.
+    //
+    // Persisted IN the chapter DOCX (same convention as annotations) so an
+    // in-app "Ask AI" thread suspends/resumes across leaving the panel, process
+    // death, and reboot. [writeAiChat] touches ONLY this part, so it coexists
+    // with annotation writes (both read the current bytes from disk via the
+    // DocxWriteQueue and layer onto the previous commit).
+    // -------------------------------------------------------------------------
+
+    /** Reads the persisted Ask-AI transcript, or empty if absent/garbage (load contract). */
+    fun readAiChat(docxBytes: ByteArray): List<AiTurn> = try {
+        val raw = DocxArchive.read(docxBytes).text(AICHAT) ?: return emptyList()
+        Json.parseArray(raw).filterIsInstance<Map<String, Any?>>().mapNotNull { m ->
+            try {
+                AiTurn.fromMap(m)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                null // skip one bad record; don't drop the whole transcript
+            }
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+        emptyList()
+    }
+
+    /** Writes/replaces `leamh/aichat.json`; leaves every other part untouched. */
+    fun writeAiChat(docxBytes: ByteArray, turns: List<AiTurn>): ByteArray {
+        val archive = DocxArchive.read(docxBytes)
+        val entries = archive.toMutableEntries()
+        entries[AICHAT] = JsonWriter.encode(turns.map { it.toMap() }).toByteArray(Charsets.UTF_8)
+        // Ensure the `json` default content-type exists (a chapter that was never
+        // annotated may lack it) so Word accepts the new part.
+        entries[CONTENT_TYPES]?.let {
+            entries[CONTENT_TYPES] = ContentTypes.ensure(it.toString(Charsets.UTF_8)).toByteArray(Charsets.UTF_8)
+        }
         return DocxArchive.write(entries, archive.entryMethods())
     }
 }

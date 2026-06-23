@@ -54,4 +54,6 @@ kotlin {
 
 dependencies {
     implementation(project(":docx"))
+    // Encrypted API-key storage (Tink + Android KeyStore — NOT Google Play Services).
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
 }

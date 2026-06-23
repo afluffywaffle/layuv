@@ -2,6 +2,7 @@ package com.afluffywaffle.layuv.reader
 
 import android.app.Dialog
 import android.content.Context
+import android.graphics.drawable.GradientDrawable
 import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
@@ -12,6 +13,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import com.afluffywaffle.layuv.R
 
@@ -254,6 +256,72 @@ object LeamhDialog {
         dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
         dialog.show()
         input.requestFocus()
+    }
+
+    /**
+     * Single-button info dialog with a **scrollable** body — for "learn more" /
+     * required-acknowledgment popups. The body scrolls within ~60% of the screen so a
+     * long explanation can't push the button off-screen. [onAccept] runs after dismiss
+     * (default no-op for plain info; pass a callback to treat the tap as an acceptance).
+     */
+    fun info(
+        context: Context,
+        message: String,
+        buttonLabel: String = "Got it",
+        onAccept: () -> Unit = {},
+    ) {
+        val dialog = Dialog(context)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.window?.setElevation(0f)
+
+        val root = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            // Bolder, attention-drawing frame — these are the privacy/security topics.
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = ReaderTheme.dp(context, ReaderTheme.RADIUS_CARD)
+                setColor(ReaderTheme.PAPER)
+                setStroke(ReaderTheme.dp(context, 2.5f).toInt(), ReaderTheme.INK_54)
+            }
+            val p = dp(context, 22f)
+            setPadding(p, p, p, dp(context, 12f))
+        }
+
+        val body = TextView(context).apply {
+            text = message
+            typeface = ReaderTheme.body(context)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTextColor(ReaderTheme.INK_87)
+            setLineSpacing(0f, 1.3f)
+        }
+        val maxH = (context.resources.displayMetrics.heightPixels * 0.82f).toInt()
+        val scroll = object : ScrollView(context) {
+            override fun onMeasure(widthSpec: Int, heightSpec: Int) {
+                super.onMeasure(widthSpec, MeasureSpec.makeMeasureSpec(maxH, MeasureSpec.AT_MOST))
+            }
+        }.apply { addView(body) }
+        root.addView(
+            scroll,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                .also { it.bottomMargin = dp(context, 12f) },
+        )
+
+        val btnRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+        }
+        btnRow.addView(labelButton(context, buttonLabel, ReaderTheme.INK_87) {
+            dialog.dismiss()
+            onAccept()
+        })
+        root.addView(btnRow)
+
+        dialog.setContentView(root)
+        val maxW = ReaderTheme.dp(context, 640f).toInt()
+        val w = minOf((context.resources.displayMetrics.widthPixels * 0.82f).toInt(), maxW)
+        dialog.window?.setLayout(w, WindowManager.LayoutParams.WRAP_CONTENT)
+        dialog.show()
     }
 
     private fun labelButton(context: Context, label: String, color: Int, onClick: () -> Unit): TextView =

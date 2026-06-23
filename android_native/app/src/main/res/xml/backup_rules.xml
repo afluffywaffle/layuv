@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android < 12 auto-backup. Exclude the encrypted API-key prefs: the master key
+     is device-bound, so a backed-up blob is useless on restore anyway, and it should
+     never be shipped to cloud backup. -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="leamh_secure.xml" />
+</full-backup-content>

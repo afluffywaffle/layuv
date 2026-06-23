@@ -47,6 +47,7 @@ class HelpActivity : Activity() {
             "Comments & ink"  to { buildCommentsPage() },
             "Search"          to { buildSearchPage() },
             "Settings"        to { buildSettingsPage() },
+            "Ask AI"          to { buildAiPage() },
             "About"           to { buildAboutPage() },
             "Thanks"          to { buildThanksPage() },
         )
@@ -55,7 +56,7 @@ class HelpActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ReaderTheme.seedBodyFont(this)
-        pageIndex = (savedInstanceState?.getInt(STATE_PAGE) ?: 0).coerceIn(0, pages.size - 1)
+        pageIndex = (savedInstanceState?.getInt(STATE_PAGE) ?: startPageIndex()).coerceIn(0, pages.size - 1)
         setContentView(buildUi())
         showPage(pageIndex)
     }
@@ -360,6 +361,92 @@ class HelpActivity : Activity() {
         return col
     }
 
+    /** Open at the page named by [EXTRA_PAGE] (e.g. deep-linked "Ask AI"), else page 0. */
+    private fun startPageIndex(): Int {
+        val title = intent.getStringExtra(EXTRA_PAGE) ?: return 0
+        return pages.indexOfFirst { it.first == title }.coerceAtLeast(0)
+    }
+
+    // -------------------------------------------------------------------------
+    // Ask AI page — a required-acknowledgments gate. The user must open and accept
+    // each topic dialog before "AI settings" (key entry) unlocks. All AI config is
+    // deliberate and lives here, not in the reader's quick-settings overflow.
+    // -------------------------------------------------------------------------
+
+    private data class AiAck(val key: String, val label: String, val text: String, val button: String)
+
+    private fun aiAcks(): List<AiAck> = listOf(
+        AiAck("ai_ack_privacy",    "Privacy & sending your data", AI_PRIVACY_TEXT,    "I understand and accept"),
+        AiAck("ai_ack_storage",    "How your key is stored",      AI_STORAGE_TEXT,    "I understand"),
+        AiAck("ai_ack_encryption", "Encryption in transit",       AI_ENCRYPTION_TEXT, "I understand"),
+        AiAck("ai_ack_verify",     "Verifying this yourself",     AI_VERIFY_TEXT,     "I understand"),
+    )
+
+    private fun buildAiPage(): View {
+        val col = pageColumn("Ask AI")
+        col.addView(para("Discuss a chapter with an AI and get a rewrite that addresses your annotations — in a panel beside the reader (the chat icon in the bottom bar). With no AI set up, Layuv connects to nothing and stays a fully offline annotator.", 0f))
+        col.addView(para("Please open and accept each point below. When all four are accepted, AI settings unlocks so you can add your key.", topGap = 14f))
+
+        val prefs = getSharedPreferences("leamh", MODE_PRIVATE)
+        val acks = aiAcks()
+
+        val settingsRow = definitionRow("AI settings", "Add, change, or remove your API key.")
+        fun refreshSettings() {
+            val ok = acks.all { prefs.getBoolean(it.key, false) }
+            prefs.edit().putBoolean("ai_disclosure_accepted", ok).apply()
+            settingsRow.alpha = if (ok) 1f else 0.4f
+            settingsRow.isEnabled = ok
+            settingsRow.setOnTouchListener(
+                if (ok) PenTapListener(this) { startActivity(Intent(this, AiSettingsActivity::class.java)) }
+                else null,
+            )
+        }
+
+        acks.forEach { ack ->
+            col.addView(ackRow(ack, prefs.getBoolean(ack.key, false)) {
+                prefs.edit().putBoolean(ack.key, true).apply()
+                refreshSettings()
+            })
+        }
+        refreshSettings()
+        col.addView(settingsRow)
+        return col
+    }
+
+    /** A checklist row: a check box (filled once acknowledged) + label; tap opens the topic dialog. */
+    private fun ackRow(ack: AiAck, initiallyDone: Boolean, onAccept: () -> Unit): View {
+        val icon = ImageView(this)
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(48f)
+            setPadding(0, dp(14f), 0, 0)
+        }
+        row.addView(icon, LinearLayout.LayoutParams(dp(24f), dp(24f)))
+        row.addView(TextView(this).apply {
+            text = ack.label
+            typeface = ReaderTheme.chromeBold(this@HelpActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+            setTextColor(ReaderTheme.INK_87)
+            setPadding(dp(10f), 0, 0, 0)
+        }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+
+        var done = initiallyDone
+        fun refreshIcon() {
+            val d = getDrawable(if (done) R.drawable.ic_check_box else R.drawable.ic_check_box_blank)!!.mutate()
+            d.setTint(if (done) ReaderTheme.INK_87 else ReaderTheme.INK_38)
+            icon.setImageDrawable(d)
+        }
+        refreshIcon()
+        row.setOnTouchListener(PenTapListener(this) {
+            LeamhDialog.info(this, ack.text, ack.button) {
+                if (!done) { done = true; refreshIcon() }
+                onAccept()
+            }
+        })
+        return row
+    }
+
     private fun buildAboutPage(): View {
         val col = pageColumn("About")
         col.addView(nameEntry())
@@ -436,5 +523,42 @@ class HelpActivity : Activity() {
 
     companion object {
         private const val STATE_PAGE = "help_page"
+
+        /** Intent extra: a page title to open at (e.g. "Ask AI"). */
+        const val EXTRA_PAGE = "help_start_page"
+
+        private const val AI_PRIVACY_TEXT =
+            "Ask AI sends this chapter's text and your annotations to the AI provider you configure — " +
+                "for now, Anthropic's Claude — over the internet. It is a third-party service, so don't " +
+                "use Ask AI for confidential work you can't share.\n\n" +
+                "Nothing is sent anywhere until you add a key and tap Send. With no AI configured, " +
+                "Layuv connects to nothing and stays a fully offline reader and annotator.\n\n" +
+                "Anthropic's commercial API does not train on data you submit."
+
+        private const val AI_STORAGE_TEXT =
+            "Your API key is encrypted on this device using the Android Keystore, and it is tied to " +
+                "this device — a copy of the file is useless anywhere else. It is never shown on screen " +
+                "and never written to logs.\n\n" +
+                "Layuv has no server of its own and no analytics, so your key is only ever sent to the " +
+                "AI provider you configure — never to the developer."
+
+        private const val AI_ENCRYPTION_TEXT =
+            "Cloud providers such as Anthropic's Claude are reached over HTTPS, so your chapter, " +
+                "annotations, key and the replies are encrypted in transit with TLS, and the server's " +
+                "certificate is verified.\n\n" +
+                "If you later point Layuv at a model on your own network, that connection is usually " +
+                "plain HTTP — not encrypted by the app, but it never leaves your Wi-Fi. To reach a home " +
+                "model from elsewhere, use a VPN such as Tailscale, which encrypts the whole connection. " +
+                "Never expose a plain-HTTP model to the internet."
+
+        private const val AI_VERIFY_TEXT =
+            "You don't have to take our word for any of this:\n\n" +
+                "•  Layuv is open source (GPL-3.0). You can read exactly how your key is stored and where " +
+                "requests go: github.com/afluffywaffle/layuv\n\n" +
+                "•  Watch the network with an on-device proxy such as PCAPdroid — you'll see only your " +
+                "chosen provider's address, and nothing sent to the developer.\n\n" +
+                "•  Scan the app with a privacy checker like exodus-privacy or MobSF: it has no trackers.\n\n" +
+                "•  Install from F-Droid, which builds the app from that public source — so the app you " +
+                "run matches the code you can read."
     }
 }

@@ -61,6 +61,9 @@ class ReaderActivity : Activity() {
     private var lastPageCount = 1
     private var pageJumpOverlay: PageJumpOverlay? = null
 
+    // In-reader "Ask AI" conversation panel (top half; toggled from the toolbar).
+    private var aiPanel: AskAiPanel? = null
+
     // AppBarPill — icon pill replacing the old text-button toolbar.
     private lateinit var pillRow: LinearLayout
     private lateinit var annotationsButton: ChromeIconButton
@@ -298,6 +301,15 @@ class ReaderActivity : Activity() {
         }
 
         root.addView(readerView, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        // Ask-AI panel: a visibility-toggled child ABOVE the reader (index 0), equal
+        // weight so it takes the top half when shown and zero height when GONE — the
+        // reader stays usable below for reference. NOT a PopupWindow (alpha
+        // compositing breaks on the e-ink software layer).
+        aiPanel = AskAiPanel(
+            this,
+            onHide = { closeAiChat() },
+            onOpenDraft = { openDraft(it) },
+        ).also { root.addView(it, 0, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f)) }
         // Dotted hairline anchors the bottom bar (it has no solid border) and matches
         // the edge-nav rails, so the chrome reads as one system instead of floating.
         root.addView(DottedDivider(this), LinearLayout.LayoutParams(MATCH_PARENT, dp(2f)))
@@ -322,11 +334,14 @@ class ReaderActivity : Activity() {
         }
         moreButton = ChromeIconButton(this, R.drawable.ic_more_horiz) { showOverflowMenu() }
         searchButton = ChromeIconButton(this, R.drawable.ic_search) { launchSearch() }
+        val aiChatButton = ChromeIconButton(this, R.drawable.ic_chat_outline) { toggleAiChat() }
         pill.addView(annotationsButton)
         pill.addView(divider())
         pill.addView(bookmarkButton)
         pill.addView(divider())
         pill.addView(searchButton)
+        pill.addView(divider())
+        pill.addView(aiChatButton)
         pill.addView(divider())
         pill.addView(moreButton)
         return pill
@@ -712,6 +727,36 @@ class ReaderActivity : Activity() {
         )
     }
 
+    // --- Ask AI --------------------------------------------------------------
+
+    private fun toggleAiChat() {
+        val panel = aiPanel ?: return
+        if (panel.isOpen) { closeAiChat(); return }
+        val opened = book ?: run {
+            Toast.makeText(this, "Open a document first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (opened.file == null) {
+            Toast.makeText(this, "File is read-only.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        annotationPopup.dismissQuiet()
+        panel.open(opened)
+        readerView.post { initDrawPathLasso() }
+    }
+
+    private fun closeAiChat() {
+        aiPanel?.close()
+        readerView.post { initDrawPathLasso() }
+    }
+
+    /** Open a just-saved AI draft like a freshly browsed file (updates last-path + recents). */
+    private fun openDraft(file: File) {
+        prefs.edit().putString(KEY_LAST_PATH, file.absolutePath).apply()
+        saveRecent(file.absolutePath)
+        loadFromFile(file)
+    }
+
     private fun launchSearch() {
         val file = book?.file ?: run {
             Toast.makeText(this, "Open a document first.", Toast.LENGTH_SHORT).show()
@@ -932,6 +977,7 @@ class ReaderActivity : Activity() {
         readerView.showContent(opened.doc.plainText, opened.doc.annotations, columns, startChar, opened.doc.formatSpans)
         updatePillState()
         dismissUndoPill()
+        aiPanel?.onBookChanged(opened)
     }
 
     private fun updateTitle() {
@@ -1302,6 +1348,18 @@ class ReaderActivity : Activity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        aiPanel?.destroy()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        // Back closes the AI panel first, leaving the reader intact.
+        if (aiPanel?.isOpen == true) {
+            closeAiChat()
+            return
+        }
+        @Suppress("DEPRECATION")
+        super.onBackPressed()
     }
 
     /** Write the current reading position back into the DOCX file (off-main). */
