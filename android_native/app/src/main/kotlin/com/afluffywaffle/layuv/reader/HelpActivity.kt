@@ -1,6 +1,8 @@
 package com.afluffywaffle.layuv.reader
 
 import android.app.Activity
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.util.TypedValue
 import android.view.Gravity
@@ -367,7 +369,17 @@ class HelpActivity : Activity() {
         col.addView(definitionRow("Bundle ID", "com.afluffywaffle.layuv"))
         col.addView(definitionRow("Licence", "GPL v3 — free, open source"))
         col.addView(definitionRow("Source", "github.com/afluffywaffle/layuv"))
+        col.addView(definitionRow("Contact · Support", "afluffywaffle.com/stack").apply {
+            setOnClickListener { openUrl("https://afluffywaffle.com/stack/") }
+        })
         return col
+    }
+
+    /** Open [url] in a browser; quietly does nothing if no handler is available. */
+    private fun openUrl(url: String) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (_: Exception) { /* no browser on device — the URL is shown as text anyway */ }
     }
 
     /** Dictionary-style entry for the app name: headword, pronunciation, origin. */
