@@ -36,6 +36,12 @@ object ReaderTheme {
     // Renders only via a full refresh — see ReaderView.updateAnnotations.
     const val HIGHLIGHT_TEXT = 0xFF808080.toInt()
 
+    // Highlight/comment background fill (P2): a light grey band behind black body
+    // text — easier to catch in a body of text than grey text on e-ink. Kept
+    // subtle (~12%); if it washes out under the GC16 full refresh, nudge the alpha
+    // up toward the jump-highlight's ~20% (Color.argb(50, 0, 0, 0)).
+    const val HIGHLIGHT_FILL = 0x1F000000.toInt()
+
     // --- Chrome geometry (dp) ---
     const val RADIUS_PILL = 20f
     const val RADIUS_MENU = 12f

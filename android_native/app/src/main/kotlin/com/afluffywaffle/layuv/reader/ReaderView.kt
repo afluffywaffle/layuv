@@ -11,6 +11,7 @@ import android.os.Looper
 import android.text.Spannable
 import android.text.SpannableString
 import android.text.TextPaint
+import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.MetricAffectingSpan
 import android.util.Log
@@ -289,10 +290,10 @@ class ReaderView(context: Context) : View(context) {
         this.annotations = annotations
         val raw = rawText
         if (raw != null) {
-            // ForegroundColorSpan (grey text) is baked into the StaticLayout at
-            // paginate time — we must rebuild the layout so new highlights appear.
-            // Colour spans don't affect line metrics, so page breaks are unchanged.
-            // repaginate calls epd.fullClear itself after the new layout is ready.
+            // Highlight/comment fill (BackgroundColorSpan) + ink grey text are baked
+            // into the StaticLayout at paginate time — we must rebuild the layout so
+            // new marks appear. Colour spans don't affect line metrics, so page
+            // breaks are unchanged. repaginate calls epd.fullClear itself after.
             this.text = buildSpanned(raw, rawFormatSpans, annotations)
             repaginate(fullClear = true)
         }
@@ -482,13 +483,19 @@ class ReaderView(context: Context) : View(context) {
         }
         for (resolved in annotations) {
             val span = resolved.span ?: continue
-            if (resolved.annotation.tool != AnnotationTool.highlight &&
-                resolved.annotation.tool != AnnotationTool.comment &&
-                resolved.annotation.tool != AnnotationTool.inkAnnotation) continue
             val s = span.start.coerceIn(0, len)
             val e = span.end.coerceIn(0, len)
             if (e <= s) continue
-            sp.setSpan(ForegroundColorSpan(ReaderTheme.HIGHLIGHT_TEXT), s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            when (resolved.annotation.tool) {
+                // P2: a light grey fill behind black text reads more easily in a
+                // body of text on e-ink than grey text did.
+                AnnotationTool.highlight, AnnotationTool.comment ->
+                    sp.setSpan(BackgroundColorSpan(ReaderTheme.HIGHLIGHT_FILL), s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                // Ink keeps its grey text — its primary marker is the dotted underline.
+                AnnotationTool.inkAnnotation ->
+                    sp.setSpan(ForegroundColorSpan(ReaderTheme.HIGHLIGHT_TEXT), s, e, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                else -> {}
+            }
         }
         return sp
     }

@@ -12,8 +12,8 @@ import com.afluffywaffle.layuv.docx.model.AnnotationTool
 /**
  * Draws resolved annotation spans onto the reader canvas.
  *
- * - [AnnotationTool.highlight] / [AnnotationTool.comment]: no decoration here —
- *   text rendered in light grey via [android.text.style.ForegroundColorSpan]
+ * - [AnnotationTool.highlight] / [AnnotationTool.comment]: no line decoration here —
+ *   a light grey background fill via [android.text.style.BackgroundColorSpan] is
  *   baked into the layout by [ReaderView.buildSpanned].
  * - [AnnotationTool.bookmark]: margin icon only, no text decoration.
  * - [AnnotationTool.underline] / [AnnotationTool.doubleUnderline]: solid line(s).
@@ -162,7 +162,7 @@ class HighlightPainter(context: Context) {
             }
             AnnotationTool.underline -> line(canvas, xStart, xEnd, baseline + underlineOffset, solid)
             AnnotationTool.highlight,
-            AnnotationTool.comment -> { /* grey text via ForegroundColorSpan in buildSpanned — no line */ }
+            AnnotationTool.comment -> { /* grey background fill via BackgroundColorSpan in buildSpanned — no line */ }
             AnnotationTool.inkAnnotation -> line(canvas, xStart, xEnd, baseline + underlineOffset, dotted)
             AnnotationTool.bookmark -> { /* margin icon only — no line decoration */ }
             else -> { /* unknown tool — no decoration */ }
