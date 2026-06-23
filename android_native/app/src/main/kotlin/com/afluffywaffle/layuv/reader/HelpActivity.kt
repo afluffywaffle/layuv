@@ -42,7 +42,6 @@ class HelpActivity : Activity() {
         listOf(
             "Reading"         to { buildReadingPage() },
             "Annotating text" to { buildAnnotatePage() },
-            "Tags"            to { buildTagsPage() },
             "Comments & ink"  to { buildCommentsPage() },
             "Search"          to { buildSearchPage() },
             "Settings"        to { buildSettingsPage() },
@@ -188,6 +187,15 @@ class HelpActivity : Activity() {
         setPadding(0, dp(topGap), 0, 0)
     }
 
+    /** A bold in-page section heading, smaller than the page title. */
+    private fun subheading(text: String, topGap: Float = 26f): TextView = TextView(this).apply {
+        this.text = text
+        typeface = ReaderTheme.chromeBold(this@HelpActivity)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 19f)
+        setTextColor(ReaderTheme.INK_87)
+        setPadding(0, dp(topGap), 0, dp(2f))
+    }
+
     /** Name + description row (used for tags + settings). */
     private fun definitionRow(name: String, desc: String): View =
         LinearLayout(this).apply {
@@ -312,22 +320,18 @@ class HelpActivity : Activity() {
         return col
     }
 
-    private fun buildTagsPage(): View {
-        val col = pageColumn("Tags")
-        col.addView(para("When you write a comment you can tag it, to classify the kind of note:", 0f))
-        col.addView(definitionRow("Voice", "The voice doesn't sound like the character."))
-        col.addView(definitionRow("Pacing", "This section feels too fast or too slow."))
-        col.addView(definitionRow("Continuity", "A possible inconsistency with elsewhere."))
-        col.addView(definitionRow("Query", "A question to come back to."))
-        return col
-    }
-
     private fun buildCommentsPage(): View {
         val col = pageColumn("Comments & ink")
         col.addView(para("Tap any annotation in the reader to bring up its toolbar, then tap the comment icon to open the editor.", 0f))
         col.addView(para("In the editor, the highlighted passage sits at the top of a thread. Add a comment, reply to one, or edit and delete your own — they stack up under the passage."))
-        col.addView(para("Switch to the Ink tab to attach a handwritten note with the pen instead of typing."))
-        col.addView(para("The expand icon opens a full-screen writing area with the passage kept in view, so you can quote from it while you write."))
+        col.addView(para("Switch to the Ink tab to attach a handwritten note with the pen instead of typing. The expand icon opens a full-screen writing area with the passage kept in view, so you can quote from it while you write."))
+
+        col.addView(subheading("Tags"))
+        col.addView(para("Tag a comment to classify the kind of note:", topGap = 2f))
+        col.addView(definitionRow("Voice", "The voice doesn't sound like the character."))
+        col.addView(definitionRow("Pacing", "This section feels too fast or too slow."))
+        col.addView(definitionRow("Continuity", "A possible inconsistency with elsewhere."))
+        col.addView(definitionRow("Query", "A question to come back to."))
         return col
     }
 
