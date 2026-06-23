@@ -41,6 +41,7 @@ class HelpActivity : Activity() {
             "Search"          to { buildSearchPage() },
             "Settings"        to { buildSettingsPage() },
             "About"           to { buildAboutPage() },
+            "Thanks"          to { buildThanksPage() },
         )
     }
 
@@ -365,11 +366,29 @@ class HelpActivity : Activity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
             setTextColor(ReaderTheme.INK_87)
         })
-        col.addView(para("Manuscript annotation for e-ink.", topGap = 4f))
+        col.addView(para("A focused reader and annotator for manuscripts on e-ink. Marks and comments are stored as native DOCX comments, so they round-trip with Word, Pages and Google Docs.", topGap = 4f))
         col.addView(definitionRow("Version", appVersion()))
         col.addView(definitionRow("Bundle ID", "com.afluffywaffle.layuv"))
-        col.addView(definitionRow("Licence", "GPL v3"))
+        col.addView(definitionRow("Licence", "GPL v3 — free, open source"))
         col.addView(definitionRow("Source", "github.com/afluffywaffle/layuv"))
+        return col
+    }
+
+    private fun buildThanksPage(): View {
+        val col = pageColumn("Thanks")
+        col.addView(para("Léamh stands on the work of others.", 0f))
+        col.addView(definitionRow(
+            "Ratta · Supernote",
+            "For sharing how to drive the low-latency drawPath ink layer — it's what makes the pen feel instant.",
+        ))
+        col.addView(definitionRow(
+            "Literata · Source Sans 3",
+            "The open-licensed typefaces Léamh reads and writes in.",
+        ))
+        col.addView(definitionRow(
+            "Open source",
+            "Built in Kotlin on Android, and released under the GPL so others can build on it too.",
+        ))
         return col
     }
 
