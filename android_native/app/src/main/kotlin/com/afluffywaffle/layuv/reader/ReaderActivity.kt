@@ -504,6 +504,11 @@ class ReaderActivity : Activity() {
             popup?.dismiss()
             confirmFlattenInk()
         })
+        root.addView(overflowMenuDivider())
+        root.addView(overflowActionRow("Help & About") {
+            popup?.dismiss()
+            startActivity(Intent(this, HelpActivity::class.java))
+        })
         val popupW = dp(310f)
         root.measure(
             View.MeasureSpec.makeMeasureSpec(popupW, View.MeasureSpec.EXACTLY),

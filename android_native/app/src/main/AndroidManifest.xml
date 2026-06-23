@@ -44,6 +44,11 @@
             android:theme="@style/Theme.Leamh" />
 
         <activity
+            android:name=".reader.HelpActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Leamh" />
+
+        <activity
             android:name=".reader.SearchActivity"
             android:exported="false"
             android:theme="@style/Theme.Leamh"
