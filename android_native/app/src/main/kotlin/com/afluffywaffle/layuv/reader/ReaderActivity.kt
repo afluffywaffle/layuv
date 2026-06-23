@@ -298,6 +298,9 @@ class ReaderActivity : Activity() {
         }
 
         root.addView(readerView, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        // Dotted hairline anchors the bottom bar (it has no solid border) and matches
+        // the edge-nav rails, so the chrome reads as one system instead of floating.
+        root.addView(DottedDivider(this), LinearLayout.LayoutParams(MATCH_PARENT, dp(2f)))
         root.addView(toolbar, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         rootOverlay.addView(root)
         updatePillState()

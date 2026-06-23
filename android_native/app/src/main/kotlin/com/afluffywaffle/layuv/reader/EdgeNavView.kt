@@ -2,7 +2,6 @@ package com.afluffywaffle.layuv.reader
 
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
@@ -54,18 +53,10 @@ class EdgeNavView(
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
-    // Live overlay: a faint, finely dotted full-height line at each strip's inner
-    // edge. It hints the WHOLE column is a tap zone (so you needn't aim for the
-    // chevron) while staying quiet enough not to compete with the text.
-    private val lanePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = ReaderTheme.INK
-        alpha = 44
-        style = Paint.Style.STROKE
-        strokeWidth = ReaderTheme.dp(context, 1f)
-        strokeCap = Paint.Cap.ROUND
-        // Dense, very fine dots: ~1dp dots on a ~3dp pitch.
-        pathEffect = DashPathEffect(floatArrayOf(ReaderTheme.dp(context, 0.5f), ReaderTheme.dp(context, 2.5f)), 0f)
-    }
+    // Live overlay: a faint, finely dotted line at each strip's inner edge (and the
+    // midline). Hints the WHOLE column is a tap zone, while staying quiet enough not
+    // to compete with the text. Shared spec — see [ReaderTheme.dottedLinePaint].
+    private val lanePaint = ReaderTheme.dottedLinePaint(context)
 
     // Diagram-only paints (page outline, strip separators, labels).
     private val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {

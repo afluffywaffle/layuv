@@ -2,6 +2,8 @@ package com.afluffywaffle.layuv.reader
 
 import android.content.Context
 import android.graphics.Color
+import android.graphics.DashPathEffect
+import android.graphics.Paint
 import android.graphics.Typeface
 import android.util.TypedValue
 
@@ -152,6 +154,22 @@ object ReaderTheme {
     fun seedBodyFont(context: Context) {
         val prefs = context.getSharedPreferences("leamh", Context.MODE_PRIVATE)
         bodyFont = prefs.getString("body_font", "literata") ?: "literata"
+    }
+
+    /**
+     * The faint, finely dotted hairline used for edge-nav rails/midlines and chrome
+     * dividers (e.g. the reader's bottom bar). One source of truth so every surface
+     * matches: ink ~17% alpha, ~1dp dots on a ~3dp pitch. Returns a fresh [Paint] per
+     * call (callers may keep their own instance). Draw on a software layer for crisp
+     * dashing on e-ink.
+     */
+    fun dottedLinePaint(context: Context): Paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = INK
+        alpha = 44
+        style = Paint.Style.STROKE
+        strokeWidth = dp(context, 1f)
+        strokeCap = Paint.Cap.ROUND
+        pathEffect = DashPathEffect(floatArrayOf(dp(context, 0.5f), dp(context, 2.5f)), 0f)
     }
 
     fun dp(context: Context, value: Float): Float =

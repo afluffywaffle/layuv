@@ -2,7 +2,6 @@ package com.afluffywaffle.layuv.reader
 
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
@@ -69,15 +68,9 @@ class ReaderView(context: Context) : View(context) {
     private val navPath = Path()
     // Faint, finely dotted line used for BOTH the inner-edge rail (hints the whole
     // column is a tap zone) and the midline that meets it to split top/bottom — so
-    // the midline reads as anchored rather than floating. Matches EdgeNavView.
-    private val navLanePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = ReaderTheme.INK
-        alpha = 44
-        style = Paint.Style.STROKE
-        strokeWidth = ReaderTheme.dp(context, 1f)
-        strokeCap = Paint.Cap.ROUND
-        pathEffect = DashPathEffect(floatArrayOf(ReaderTheme.dp(context, 0.5f), ReaderTheme.dp(context, 2.5f)), 0f)
-    }
+    // the midline reads as anchored rather than floating. Shared spec, also used by
+    // EdgeNavView and the bottom-bar divider — see [ReaderTheme.dottedLinePaint].
+    private val navLanePaint = ReaderTheme.dottedLinePaint(context)
     private val navChevronPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = ReaderTheme.INK
         alpha = 55
