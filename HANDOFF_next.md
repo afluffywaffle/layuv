@@ -6,12 +6,14 @@ Install: `~/Library/Android/sdk/platform-tools/adb install -r app/build/outputs/
 
 ---
 
-## ⚠️ This session — UNCOMMITTED changes
+## Recently committed — NoteActivity redesign + P1
 
-All of this session's work is **uncommitted** on `native-port-drawpath-ink`.
-Build is green (`./gradlew :app:assembleDebug` BUILD SUCCESSFUL) and every path
-below was verified on-device (Manta, reports as Nomad, 1404×1872). Nothing has
-been committed — the next session should review and commit.
+The NoteActivity redesign **and** the P1 compose-field cluster are now committed
+on `native-port-drawpath-ink` (`e9e703e`, `4a6af00`, `f48a2d2`). Build is green
+and layout/alignment, the tool-aware passage label, and the full-screen
+open/collapse round-trip were verified on-device (Manta). A few interactive bits
+still want a hands-on pass — see "Pending verification" under P1. The detailed
+notes below are kept as a record of what landed.
 
 **Files changed:**
 - `android_native/.../reader/NoteActivity.kt` — modified (all the work below)
@@ -103,24 +105,33 @@ highlight change, then the cross-cutting sweeps, then the refactor + new screens
   `onPause` dismisses the detail overlay + removes its layout listener, compose
   edit label "Save" → "Update" (no collision with toolbar Save).
 
-### P1 — Compose-field cluster (NoteActivity — do next, file still hot)
-- **Paste: grey out when clipboard has no pasteable text.** Dim the toolbar paste
-  icon (INK_26, tap no-op) when the primary clip is empty/non-text; re-check on
-  resume / window-focus.
-- **Paste: one-time only per compose.** After a successful paste, disable the
-  paste button until the field is committed/cleared — there is NO undo, so this
-  stops repeated dumping of large chunks.
-- **Compose-field text selection must match the established style.** The compose
-  `EditText` still shows Android's default fill + handles + system context menu.
-  Make it match the reader/overlay selection: suppress the fill
-  (`highlightColor = 0`), draw the dotted underline, and use the themed
-  Copy/Paste popup (same pattern as `SelectableBodyText`). Editable field is
-  trickier than the read-only overlay — handles + paste path must still work.
-- **Full-screen compose-on-overflow** — compose field stays fixed (no scroll, no
-  char cap — both rejected as un-e-ink). An expand button opens a full-screen
-  compose view showing the entry being replied to (read-only quote box) above a
-  full-height field, so the user can re-reference while writing. Tapping the
-  compose field auto-dismisses any open detail overlay (read vs. write modes).
+### P1 — Compose-field cluster ✓ DONE (`f48a2d2`)
+- **Paste grey-when-empty / one-shot.** Quote-wrapping paste via a toolbar
+  clipboard icon; all paste paths route through `pasteClipboardWithQuotes()`.
+  Disabled state fades the icon via `imageAlpha` (a translucent-black colour
+  filter is invisible on the black vector — that was the "not greying" bug).
+  **Re-enable rule (refined with the user):** paste disables right after a paste
+  and goes solid again when the **clipboard changes (next copy)** — NOT on field
+  clear. Copy/Cut clear the gate so a fresh copy re-enables immediately.
+- **Compose-field selection** (`ComposeEditText`) shares one dotted-underline +
+  themed Cut/Copy/Paste/Select-all popup with the read-only `SelectableBodyText`:
+  system fill suppressed (`highlightColor = 0`), scroll-aware underline in onDraw,
+  floating toolbar cleared. Handles + paste path preserved; touching the field
+  dismisses any open read overlay.
+- **Full-screen compose-on-overflow** — expand opens a sheet over everything with
+  a **selectable** reference (replied-to comment, else the annotated passage) so a
+  phrase can be copied to quote, plus a full-height field. Mirrors **Tag + Paste**;
+  **Add Comment** commits + closes; a **collapse icon** (positioned exactly over
+  the expand button → toggles in place) folds the text back. Text syncs on
+  pause/save-state.
+- **Redesign follow-ups (this session):** Add moved into the toolbar as
+  **"Add Comment"** (field full-width, edges aligned to the 12dp gutter); pinned
+  quote + overlay label is **tool-aware** (Highlighted / Underlined /
+  Double-underlined / Struck-through / Wavy-underlined / Bookmarked passage, else
+  "Annotated passage").
+- **Pending verification (hands-on):** selection popup behaviour, the paste fade,
+  and the full-screen↔field text sync couldn't be scripted — the Supernote is
+  IME-less so `adb` can't drive text entry / long-press selection.
 
 ### P2 — Annotation highlight: light grey fill
 Replace the grey `ForegroundColorSpan` text tint for highlight/comment
@@ -153,14 +164,11 @@ Literata per the typography rules, paginate like the reader if long.
 
 ## Next session — start here
 
-1. **First: review + commit this session's uncommitted work** (see the
-   ⚠️ UNCOMMITTED section above). Build is green and verified on-device; it just
-   needs review and a commit (or split commits — e.g. paste/selection, then the
-   toolbar/quote restructure, then the review fixes).
-2. **Then: P1 — Compose-field cluster** (Tracker above). NoteActivity is the hot
-   file, so clear all compose-field work next: paste grey-when-empty, paste
-   once-per-compose, compose `EditText` selection matched to the dotted-underline
-   style, then full-screen compose-on-overflow.
+1. **P1 is committed** (`f48a2d2`). If convenient, do the hands-on pass on the
+   interactive bits noted under P1 (selection popup, paste fade, full-screen text
+   sync) — they couldn't be scripted on the IME-less Supernote.
+2. **Next: P2 — Annotation highlight light grey fill** (Tracker below). Moves to
+   the reader (`HighlightPainter` / `ReaderView.buildSpanned()`), out of NoteActivity.
 3. Continue down the Tracker (P2 highlight fill → P3 font sweep → P4 code-size →
    P5 Help/About). **App icon** (greyscale-safe adaptive assets under
    `android_native/app/src/main/res/`, bundle `com.afluffywaffle.layuv`) remains
