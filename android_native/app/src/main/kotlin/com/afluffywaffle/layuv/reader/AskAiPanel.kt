@@ -94,9 +94,10 @@ class AskAiPanel(
         leftFlipStrip = buildFlipStrip()
         rightFlipStrip = buildFlipStrip()
         val transcriptRow = LinearLayout(activity).apply { orientation = HORIZONTAL }
-        transcriptRow.addView(leftFlipStrip)
+        // Strips fill the row height so their gravity=BOTTOM groups the buttons low, in reach.
+        transcriptRow.addView(leftFlipStrip, LinearLayout.LayoutParams(WRAP_CONTENT, MATCH_PARENT))
         transcriptRow.addView(scroll, LinearLayout.LayoutParams(0, MATCH_PARENT, 1f))
-        transcriptRow.addView(rightFlipStrip)
+        transcriptRow.addView(rightFlipStrip, LinearLayout.LayoutParams(WRAP_CONTENT, MATCH_PARENT))
         addView(transcriptRow, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
         applyFlipSide()
 
@@ -209,10 +210,25 @@ class AskAiPanel(
         if (messages.isEmpty()) {
             // Consent is captured upstream — Help & About → Ask AI must be accepted before a key can
             // be saved — so the panel sends directly.
-            val seed = buildSeed(b, typed)
-            input.setText("")
-            appendUser(seed)
-            callProvider(b)
+            val send = {
+                val note = input.text.toString().trim()
+                input.setText("")
+                appendUser(buildSeed(b, note))
+                callProvider(b)
+            }
+            // Heads-up if this is manuscript-sized, not a chapter: the rewrite would truncate at the
+            // per-call output cap and come back in pieces. Inline banner (not a popup) with a
+            // "Send anyway" action — the input text is kept until they confirm.
+            if (b.doc.plainText.length > LARGE_INPUT_CHARS) {
+                showBanner(
+                    "This looks like a large document, not a single chapter — the rewrite may come back " +
+                        "in pieces and stop before the end. For a complete rewrite, send one chapter at a time.",
+                    actionLabel = "Send anyway",
+                    action = send,
+                )
+            } else {
+                send()
+            }
         } else {
             if (typed.isEmpty()) return
             input.setText("")
@@ -271,7 +287,12 @@ class AskAiPanel(
 
     private fun continueTurn(b: OpenBook) {
         if (continuationCount >= MAX_CONTINUATIONS) {
-            toast("Reached the continuation limit.")
+            // Persistent banner, not a toast — the limit is too easy to miss otherwise.
+            showBanner(
+                "This is longer than a chapter — send one chapter at a time for a complete rewrite.",
+                actionLabel = null,
+                action = null,
+            )
             return
         }
         continuationCount++
@@ -285,9 +306,10 @@ class AskAiPanel(
         val b = book ?: return
         val file = b.file ?: return
         val safe = if (fileName.endsWith(".docx", ignoreCase = true)) fileName else "$fileName.docx"
-        val outFile = File(file.parentFile, safe)
         io.execute {
             try {
+                // A draft is always a NEW file — never overwrite an existing one.
+                val outFile = uniqueFile(file.parentFile, safe)
                 val src = file.readBytes() // freshest on-disk structure
                 val bytes = DocxFromText.build(src, rewriteText)
                 DocxWriteQueue.writeAtomicDurable(outFile, bytes)
@@ -299,6 +321,19 @@ class AskAiPanel(
             } catch (e: Exception) {
                 main.post { toast("Couldn't save the draft.") }
             }
+        }
+    }
+
+    /** Resolve to a non-colliding file: if the name is taken, append " (2)", " (3)", … */
+    private fun uniqueFile(dir: File?, fileName: String): File {
+        val candidate = File(dir, fileName)
+        if (!candidate.exists()) return candidate
+        val stem = fileName.substringBeforeLast(".docx", fileName)
+        var n = 2
+        while (true) {
+            val next = File(dir, "$stem ($n).docx")
+            if (!next.exists()) return next
+            n++
         }
     }
 
@@ -763,6 +798,8 @@ class AskAiPanel(
         private const val KEY_FLIP_SIDE = "ai_flip_side"
         // An unmarked reply at least this long is treated as a rewrite (model-omitted markers).
         private const val REWRITE_FALLBACK_CHARS = 1200
+        // Above this many chars the chapter is likely a whole manuscript — warn before sending.
+        private const val LARGE_INPUT_CHARS = 45000
         private const val MAX_CONTINUATIONS = 3
         private const val CONTINUE_PROMPT =
             "Continue the rewrite from exactly where the previous message was cut off. " +

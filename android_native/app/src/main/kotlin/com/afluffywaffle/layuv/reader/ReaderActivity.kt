@@ -27,6 +27,7 @@ import android.widget.PopupWindow
 import android.widget.TextView
 import android.widget.Toast
 import com.afluffywaffle.layuv.R
+import com.afluffywaffle.layuv.ai.SecureKeyStore
 import com.afluffywaffle.layuv.docx.DocxStore
 import com.afluffywaffle.layuv.docx.LoadedDocument
 import com.afluffywaffle.layuv.docx.ResolvedAnnotation
@@ -73,6 +74,8 @@ class ReaderActivity : Activity() {
     // Bookmark button — inside the pill; dimmed when current page has no bookmark.
     private lateinit var bookmarkButton: ChromeIconButton
     private lateinit var searchButton: ChromeIconButton
+    private lateinit var aiChatButton: AiChatButton
+    private lateinit var aiChatDivider: View
 
     // Title/filename label — bottom right of toolbar.
     private lateinit var titleLabel: TextView
@@ -334,16 +337,18 @@ class ReaderActivity : Activity() {
         }
         moreButton = ChromeIconButton(this, R.drawable.ic_more_horiz) { showOverflowMenu() }
         searchButton = ChromeIconButton(this, R.drawable.ic_search) { launchSearch() }
-        val aiChatButton = AiChatButton(this) { toggleAiChat() }
+        aiChatButton = AiChatButton(this) { toggleAiChat() }
+        aiChatDivider = divider()
         pill.addView(annotationsButton)
         pill.addView(divider())
         pill.addView(bookmarkButton)
         pill.addView(divider())
         pill.addView(searchButton)
-        pill.addView(divider())
+        pill.addView(aiChatDivider)
         pill.addView(aiChatButton)
         pill.addView(divider())
         pill.addView(moreButton)
+        updateAiButtonVisibility()
         return pill
     }
 
@@ -748,6 +753,18 @@ class ReaderActivity : Activity() {
     private fun closeAiChat() {
         aiPanel?.close()
         readerView.post { initDrawPathLasso() }
+    }
+
+    /** Ask AI is "set up" only once the disclosure is accepted AND a key is stored. */
+    private fun isAiConfigured(): Boolean =
+        prefs.getBoolean("ai_disclosure_accepted", false) && !SecureKeyStore.read(this).isNullOrBlank()
+
+    /** Keep the AI chat button (+ its divider) hidden until Ask AI is set up, so it isn't
+     *  an idle affordance for users who haven't opted in. Re-checked in onResume. */
+    private fun updateAiButtonVisibility() {
+        val vis = if (isAiConfigured()) View.VISIBLE else View.GONE
+        aiChatButton.visibility = vis
+        aiChatDivider.visibility = vis
     }
 
     /** Open a just-saved AI draft like a freshly browsed file (updates last-path + recents). */
@@ -1338,6 +1355,8 @@ class ReaderActivity : Activity() {
         // if the user changed it in Settings while this activity was paused.
         pageJumpOverlay?.dismiss()
         pageJumpOverlay = null
+        // Reflect any AI setup/removal done in Help/Settings while we were paused.
+        updateAiButtonVisibility()
         readerView.post { initDrawPathLasso() }
     }
 

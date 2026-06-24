@@ -30,9 +30,22 @@ import android.view.View
 class EdgeNavView(
     context: Context,
     private val diagram: Boolean = false,
+    side: String = "both",
     private val onNext: (() -> Unit)? = null,
     private val onPrev: (() -> Unit)? = null,
 ) : View(context) {
+
+    /** Which edge(s) draw + tap: "both" (default), "left", or "right". */
+    private var navSide: String = side
+    private fun leftActive() = navSide != "right"
+    private fun rightActive() = navSide != "left"
+
+    /** Switch the active edge at runtime (e.g. a handedness toggle). */
+    fun setSide(side: String) {
+        if (side == navSide) return
+        navSide = side
+        invalidate()
+    }
 
     private val stripWidth = ReaderTheme.dp(context, NAV_STRIP_DP)
     private val chevronHalfW = ReaderTheme.dp(context, 8f)
@@ -103,12 +116,12 @@ class EdgeNavView(
             canvas.drawLine(w - stripWidth, inset, w - stripWidth, h - inset, separatorPaint)
             drawTextLines(canvas, w, h)
         } else {
-            // Faint dotted rails marking the inner edge of each tap strip.
-            canvas.drawLine(stripWidth, 0f, stripWidth, h, lanePaint)
-            canvas.drawLine(w - stripWidth, 0f, w - stripWidth, h, lanePaint)
+            // Faint dotted rails marking the inner edge of each active tap strip.
+            if (leftActive()) canvas.drawLine(stripWidth, 0f, stripWidth, h, lanePaint)
+            if (rightActive()) canvas.drawLine(w - stripWidth, 0f, w - stripWidth, h, lanePaint)
         }
-        drawStrip(canvas, 0f, h)
-        drawStrip(canvas, w - stripWidth, h)
+        if (leftActive()) drawStrip(canvas, 0f, h)
+        if (rightActive()) drawStrip(canvas, w - stripWidth, h)
     }
 
     private fun drawStrip(canvas: Canvas, left: Float, h: Float) {
@@ -160,7 +173,8 @@ class EdgeNavView(
         if (onNext == null && onPrev == null) return false // diagram: non-interactive
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                val inStrip = event.x < stripWidth || event.x > width - stripWidth
+                val inStrip = (leftActive() && event.x < stripWidth) ||
+                    (rightActive() && event.x > width - stripWidth)
                 if (!inStrip) return false // let center taps/scrolls fall through
                 downX = event.x
                 downY = event.y
