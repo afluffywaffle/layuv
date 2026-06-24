@@ -147,8 +147,18 @@ app) than on the Play-Services-free Supernote. See memory `project_ai_networking
 (`http://192.168.153.59:8080/v1`, **no key**) → Layuv **Test connection = OK**. Confirms the agnostic
 form, the keyless-local path, the Paste-on-every-field + partial-save UX, and the cleartext guard
 correctly *allowing* `http://` to a private LAN host. (Quality is junk — 1.7B — but the wire is proven.)
+Full text-only Send loop also verified (annotate typed note → Send → 200, 433-token prompt; reply renders,
+junk quality as expected for 1.7B — confirms the **model** is the only bottleneck, not the pipe).
+
 **UX follow-up (next time AI settings is touched):** make **Test connection** a prominent button/pill —
 it's a text link today and easy to miss (user feedback).
+
+**Known limitation — text-only endpoints reject ink notes (HOLD these fixes for when it recurs):** ink
+notes are sent as `image_url` images, so a text-only endpoint 404s the whole Send (confirmed: MLX/Qwen
+plain-text → 200, with-image → 404). Layuv then shows a misleading *"check the model name."* Recommended:
+(1) clearer message (*"model may not accept images — use a vision model or remove the ink note"*); (2) a
+text-only fallback that omits ink images + substitutes a placeholder so the rest still rewrites; (3) maybe
+a per-endpoint "supports vision" toggle. Full detail in memory `ai_text_only_endpoint_images.md`.
 
 Remaining test paths (no code left to write; on-device verification):
 - **Fastest, quality, zero-cost — Gemini (cloud, already-proven path):** free AIza key at
