@@ -62,6 +62,13 @@ class AiSettingsActivity : Activity() {
         ioExecutor.shutdownNow()
     }
 
+    override fun onPause() {
+        super.onPause()
+        // Partial save: persist the fields as-is whenever the screen loses focus, so a value
+        // pasted one-at-a-time (back out → copy the next from the doc → return) isn't lost.
+        persistFields()
+    }
+
     private fun buildUi(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -115,7 +122,7 @@ class AiSettingsActivity : Activity() {
             background = popupBackground()
             minimumHeight = dp(48f)
         }
-        body.addView(baseUrlField, lp(topMargin = dp(8f)))
+        body.addView(rowWithPaste(baseUrlField), lp(topMargin = dp(8f)))
 
         // Worked examples (plain text, not buttons — keeps the form provider-agnostic).
         body.addView(TextView(this).apply {
@@ -155,7 +162,7 @@ class AiSettingsActivity : Activity() {
             background = popupBackground()
             minimumHeight = dp(48f)
         }
-        body.addView(modelField, lp(topMargin = dp(8f)))
+        body.addView(rowWithPaste(modelField), lp(topMargin = dp(8f)))
 
         // API key (optional).
         body.addView(sectionLabel("API key (optional)"), lp(topMargin = dp(20f)))
@@ -180,7 +187,7 @@ class AiSettingsActivity : Activity() {
         fieldRow.addView(keyField, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         keyToggle = textButton("Show", bold = true) { toggleKeyVisible() }
         fieldRow.addView(keyToggle, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.leftMargin = dp(4f) })
-        fieldRow.addView(textButton("Paste", bold = true) { pasteKey() },
+        fieldRow.addView(textButton("Paste", bold = true) { pasteInto(keyField, reveal = true) },
             LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.leftMargin = dp(4f) })
         body.addView(fieldRow, lp(topMargin = dp(8f)))
 
@@ -245,21 +252,37 @@ class AiSettingsActivity : Activity() {
             toast("Enter the endpoint (base URL).")
             return
         }
-        prefs().edit()
-            .putString("ai_base_url", url)
-            .putString("ai_model", modelField.text.toString().trim())
-            .apply()
-
-        val key = keyField.text.toString().trim()
-        if (key.isNotEmpty()) {
-            SecureKeyStore.write(this, key)
+        persistFields()
+        if (keyField.text.toString().isNotBlank()) {
             logKeystoreBacking()
             keyField.setText("")
             keyField.hint = "Key saved — enter a new key to replace"
         }
-
         showStatus(cleartextNote(url))
         toast("Saved.")
+    }
+
+    /** Persist the current field contents — endpoint + model always, key only if a new one is typed.
+     *  Called by Save AND onPause, so pasting one value at a time across app switches is never lost. */
+    private fun persistFields() {
+        if (!::baseUrlField.isInitialized) return // locked screen has no fields
+        prefs().edit()
+            .putString("ai_base_url", baseUrlField.text.toString().trim())
+            .putString("ai_model", modelField.text.toString().trim())
+            .apply()
+        keyField.text.toString().trim().takeIf { it.isNotEmpty() }?.let { SecureKeyStore.write(this, it) }
+    }
+
+    /** Wrap a field in a row with a trailing "Paste" button (clipboard → field). */
+    private fun rowWithPaste(field: EditText): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        row.addView(field, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        row.addView(textButton("Paste", bold = true) { pasteInto(field) },
+            LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.leftMargin = dp(4f) })
+        return row
     }
 
     /** A friendly note about how the endpoint's address is treated by the cleartext guard. */
@@ -355,8 +378,8 @@ class AiSettingsActivity : Activity() {
     private fun keyToUse(): String? =
         keyField.text.toString().trim().ifEmpty { SecureKeyStore.read(this) }?.takeIf { it.isNotBlank() }
 
-    /** Paste the clipboard into the key field and reveal it, so the user can verify it landed. */
-    private fun pasteKey() {
+    /** Paste the clipboard into [field]. For the key field, [reveal] also un-masks it so you can verify. */
+    private fun pasteInto(field: EditText, reveal: Boolean = false) {
         val cm = getSystemService(CLIPBOARD_SERVICE) as? ClipboardManager
         val clip = cm?.primaryClip?.takeIf { it.itemCount > 0 }
             ?.getItemAt(0)?.coerceToText(this)?.toString()?.trim()
@@ -364,9 +387,9 @@ class AiSettingsActivity : Activity() {
             toast("Clipboard is empty.")
             return
         }
-        keyField.setText(clip)
-        if (!keyVisible) toggleKeyVisible()
-        keyField.setSelection(keyField.text.length)
+        field.setText(clip)
+        if (reveal && !keyVisible) toggleKeyVisible()
+        field.setSelection(field.text.length)
     }
 
     private fun toggleKeyVisible() {

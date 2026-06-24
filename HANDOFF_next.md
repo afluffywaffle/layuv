@@ -142,8 +142,15 @@ brain a trusted address *and* encrypts). The app enforces it: plain HTTP only to
 so each port must re-implement the private-host guard in Swift. Tailscale is easier on Apple (first-class
 app) than on the Play-Services-free Supernote. See memory `project_ai_networking.md`.
 
-### ⏭️ Still to do here — runtime-verify the agnostic loop
-Three independent test paths (no code left to write; this is on-device verification):
+### ✅ Pipe verified on-device (2026-06-24) + remaining checks
+**Verified:** Nomad → MLX (`mlx_lm.server`, Qwen3-1.7B-4bit) on the MacBook over LAN
+(`http://192.168.153.59:8080/v1`, **no key**) → Layuv **Test connection = OK**. Confirms the agnostic
+form, the keyless-local path, the Paste-on-every-field + partial-save UX, and the cleartext guard
+correctly *allowing* `http://` to a private LAN host. (Quality is junk — 1.7B — but the wire is proven.)
+**UX follow-up (next time AI settings is touched):** make **Test connection** a prominent button/pill —
+it's a text link today and easy to miss (user feedback).
+
+Remaining test paths (no code left to write; on-device verification):
 - **Fastest, quality, zero-cost — Gemini (cloud, already-proven path):** free AIza key at
   aistudio.google.com → endpoint `https://generativelanguage.googleapis.com/v1beta/openai`, model
   `gemini-2.5-flash`. Tests the full loop with a good model, no Mac, no cost.
