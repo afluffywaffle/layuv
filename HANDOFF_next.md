@@ -153,6 +153,12 @@ junk quality as expected for 1.7B — confirms the **model** is the only bottlen
 **UX follow-up (next time AI settings is touched):** make **Test connection** a prominent button/pill —
 it's a text link today and easy to miss (user feedback).
 
+**UX follow-up (next time the Ask AI pane / `AskAiPanel` is touched):** add a **"Settings" button in the
+Ask AI pane** that opens `AiSettingsActivity` directly — so a user copy-pasting endpoint/model/key
+doesn't have to round-trip through Help & About → Ask AI each time to reach settings (user feedback,
+while setting up). Note: the AI chat bubble already appears the moment an endpoint is saved (gate =
+base-URL set + disclosures accepted), which is intended/fine; this is purely a faster path to settings.
+
 **Known limitation — text-only endpoints reject ink notes (HOLD these fixes for when it recurs):** ink
 notes are sent as `image_url` images, so a text-only endpoint 404s the whole Send (confirmed: MLX/Qwen
 plain-text → 200, with-image → 404). Layuv then shows a misleading *"check the model name."* Recommended:
