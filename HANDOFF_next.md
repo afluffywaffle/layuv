@@ -159,6 +159,15 @@ doesn't have to round-trip through Help & About → Ask AI each time to reach se
 while setting up). Note: the AI chat bubble already appears the moment an endpoint is saved (gate =
 base-URL set + disclosures accepted), which is intended/fine; this is purely a faster path to settings.
 
+**UX follow-up (next time `AiReplyActivity` is touched):** let users **reply from the expanded
+full-screen reply viewer**, not just the panel. Small-screen (Nomad) design — keep the viewer
+read-only/clean by default; add a **"Reply" toggle** that reveals a compact input + Send on demand (so
+reading stays full-screen until you want to reply); `adjustPan` so the OSK floats and the text stays in
+view; on Send → "Working…" → the viewer refreshes to the new latest reply and the input collapses back
+to hidden (so you stay in the comfortable full-screen view for the whole back-and-forth and never have
+full-reply-text + input + keyboard all fighting the small screen at once). Minimal fallback if still too
+cramped: "Reply" just closes the viewer and focuses the panel's input. (User feedback.)
+
 **Known limitation — text-only endpoints reject ink notes (HOLD these fixes for when it recurs):** ink
 notes are sent as `image_url` images, so a text-only endpoint 404s the whole Send (confirmed: MLX/Qwen
 plain-text → 200, with-image → 404). Layuv then shows a misleading *"check the model name."* Recommended:
