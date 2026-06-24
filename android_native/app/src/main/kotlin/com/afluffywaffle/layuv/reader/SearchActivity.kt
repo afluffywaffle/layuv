@@ -576,7 +576,8 @@ class SearchActivity : Activity() {
         val list = loadRecentSearches().toMutableList()
         list.remove(query)
         list.add(0, query)
-        while (list.size > MAX_RECENT) list.removeLast()
+        // removeAt(lastIndex), NOT removeLast() — JDK21/API-35 SequencedCollection, NoSuchMethodError on older Android.
+        while (list.size > MAX_RECENT) list.removeAt(list.size - 1)
         prefs.edit().putString(KEY_RECENT, JSONArray(list).toString()).apply()
     }
 

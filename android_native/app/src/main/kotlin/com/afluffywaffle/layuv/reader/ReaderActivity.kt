@@ -963,7 +963,9 @@ class ReaderActivity : Activity() {
         } catch (e: Exception) { mutableListOf() }
         list.remove(path)
         list.add(0, path)
-        while (list.size > MAX_RECENTS) list.removeLast()
+        // removeAt(lastIndex), NOT removeLast() — List.removeLast() is JDK21/API-35 SequencedCollection
+        // and throws NoSuchMethodError on the Supernote's older Android.
+        while (list.size > MAX_RECENTS) list.removeAt(list.size - 1)
         prefs.edit().putString(KEY_RECENTS, JSONArray(list).toString()).apply()
     }
 
