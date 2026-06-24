@@ -210,10 +210,10 @@ parity (mirror `ManuscriptSerializer`/`RewriteProtocol`/`DocxFromText`/aichat/in
 | `docx/.../RewriteProtocol.kt` | `===REWRITE===` markers + `parse()` |
 | `docx/.../DocxFromText.kt` | rewrite text → clean draft `.docx` |
 | `docx/.../DocxStore.kt` | `readAiChat`/`writeAiChat`, `readInkPng` |
-| `app/.../ai/*` | `AiProvider`, `ClaudeProvider`, `OpenAiCompatibleProvider`, `AiProviderFactory`, `AiMessage`, `SecureKeyStore` |
+| `app/.../ai/*` | `AiProvider`, `OpenAiCompatibleProvider` (**sole** client; `ClaudeProvider` deleted), `AiProviderFactory` (agnostic: baseUrl/model), `AiMessage`, `SecureKeyStore`, **`CleartextPolicy`** + `res/xml/network_security_config.xml` |
 | `app/.../reader/AskAiPanel.kt` | chat panel — seed, ink load, render, save |
 | `app/.../reader/AiReplyActivity.kt` | full-screen reply viewer (`EdgeNavView` rail) |
-| `app/.../reader/AiSettingsActivity.kt` | key entry (gated) |
+| `app/.../reader/AiSettingsActivity.kt` | **agnostic endpoint form** — base URL + model + optional key, Paste on every field, partial-save (gated) |
 | `app/.../reader/HelpActivity.kt` | "Ask AI" gate + "Directing the AI" pages |
 | `app/.../reader/EdgeNavView.kt` | shared edge-nav (now has a `side` option: both/left/right) |
 
@@ -222,29 +222,69 @@ Note: `am start` can't deep-link `HelpActivity` (blocked) — navigate on-device
 
 ---
 
+## ⏭️ NEXT TASK — build the ③ "brain" (Phase 1 reference proxy)
+
+**The Android side is DONE.** Layuv is a provider-agnostic OpenAI-compatible client, verified end-to-end
+on-device with Gemini this session (annotate → Send → it asked a clarifying question → full rewrite →
+Save & Open as a clean versioned draft). **No Android changes are needed for what's next.**
+
+The next direction is the **③ brain** (plan file → "NEXT ARCHITECTURE", Phase 1): a small server on the
+user's Mac that gives Layuv **continuity** — it injects the project's reference library into every
+request so the model writes with memory instead of cold-starting each time. (Recall the ①/②/③ framing
+from this session: ① device→cloud direct, ② device→a model the Mac runs itself, **③ device→Mac proxy that
+holds the key + library and forwards to a real model** — ③ is the goal.)
+
+**Phase 1 spec — reference proxy (net-new SERVER code; zero Android changes):**
+- A small (~150-line) server on the user's **MacBook Pro M3 Pro** (later a Mac Mini) exposing an
+  **OpenAI-compatible `/chat/completions` SSE** endpoint.
+- **Holds the API key** (start with the user's **Gemini free** key; Claude later for quality) — the key
+  **NEVER** touches the device.
+- Reads **ALL** project reference files from a folder and **injects them whole** into each request
+  (**NO RAG** — whole-context injection; per the plan a personal-novel bible fits the window).
+- Forwards to the upstream model and **streams the reply back unchanged** (SSE passthrough).
+- **LAN-first:** bind to the Mac's LAN interface, **plain HTTP** — Layuv's `CleartextPolicy` already
+  allows private/LAN hosts and refuses public cleartext (proven this session). Tailscale for remote = a
+  later phase.
+- **Layuv just re-points** its endpoint pref at `http://<mac-ip>:<port>/v1` — no app code, no rebuild.
+- **Verify (the whole point):** from Layuv, send a chapter → the reply must reflect a fact that exists
+  **only** in the reference files (proves injection) → the rewrite card + Save & Open still work → the
+  key never leaves the Mac (device prefs hold only the Mac URL).
+- **Confirm scope first:** where the server lives (new `brain/` dir in the repo?), Python vs Node (user
+  has python3/pipx/mlx), reference-folder convention, Gemini-first upstream.
+
 ## Handoff prompt for a new conversation
 
-> I'm working on the Léamh/Layuv Android app (`android_native/` at `/Users/jayromacorda/Develop/layuv`),
-> branch `native-port-drawpath-ink`. Read `CLAUDE.md` and `HANDOFF_next.md` in full first, and skim
-> `~/.claude/plans/rewrite-if-this-was-rustling-comet.md` for the AI architecture.
+> I'm working on the Léamh/Layuv project (`/Users/jayromacorda/Develop/layuv`), branch
+> `native-port-drawpath-ink`. Read `CLAUDE.md` and `HANDOFF_next.md` in full first, and read
+> `~/.claude/plans/rewrite-if-this-was-rustling-comet.md` → "NEXT ARCHITECTURE" for the brain design.
 >
-> The **Ask AI feature is built, committed, and verified on-device** (Gemini): annotate a chapter →
-> in-reader chat panel → the model returns a complete rewrite addressing the marks (including
-> **handwritten ink notes**, read as images) → "Save & Open" as a clean versioned `.docx` →
-> re-annotate. See HANDOFF "This session — landed."
+> **State:** the in-app Ask AI feature is done and **provider-agnostic** — Layuv is a pure
+> OpenAI-compatible client (no provider list; one endpoint + model + optional key, Paste on every
+> field). It's **verified end-to-end on-device** with **Gemini** (free tier): annotate → Send → it even
+> asked a clarifying question → complete rewrite → Save & Open as a clean versioned draft. The cleartext
+> guard (`CleartextPolicy`) allows plain HTTP to private/LAN hosts and refuses it to the public internet,
+> all verified. **The device side is complete — no Android changes needed for what's next.**
 >
-> **Pick up the next item: multi-provider + a user's remote/local LLM.** `OpenAiCompatibleProvider`
-> already speaks the wire format; what's left is (1) a provider picker + `ai_base_url`/token in
-> `AiSettingsActivity` (route via `AiProviderFactory.current()`, new `ai_provider="custom"`);
-> (2) a **scoped** cleartext-HTTP `network-security-config` for LAN endpoints (private hosts only,
-> never global) + an HTTPS warning; (3) **provider-aware disclosure copy** — the Privacy ack still
-> hard-codes "Anthropic's commercial API does not train…", which is wrong for Gemini's free tier;
-> generalize it as part of this. Confirm scope with me before building.
+> **Next task: build the ③ "brain" — Phase 1 reference proxy** (a small server on my MacBook Pro M3 Pro
+> for now). It exposes an OpenAI-compatible `/chat/completions` SSE endpoint, **holds the API key** (start
+> with my Gemini free key; Claude later for quality), reads **all** my project reference files from a
+> folder and **injects them whole** into every request (**NO RAG** — whole-context), forwards to the
+> upstream model, and streams the reply back. **LAN-first, plain HTTP** (Layuv's guard already allows
+> private LAN). Then I just re-point Layuv's endpoint at the Mac's URL — no app rebuild. **Confirm scope
+> with me before building** (where the code lives, Python vs Node, reference-folder layout, Gemini-first).
 >
-> Build: `cd android_native && ./gradlew :app:assembleDebug`. Engine tests after any `docx/` change:
-> `./gradlew :docx:test`. Devices/adb + IP recovery: memory `reference_supernote_device.md`
-> (Manta `SN100C10008955` @ `192.168.12.185:5555`; Nomad `SN078C10005528`). adb path:
-> `$HOME/Library/Android/sdk/platform-tools/adb`. App id `com.afluffywaffle.layuv.dev`. I can't
-> deep-link Help via `am` — to check Help, navigate on-device (reader → ⋯ → Help & About → swipe).
-> Sample chapter at `/sdcard/Document/salt_road.docx`. Still unverified: conversation
-> **suspend/resume**, and the **Claude provider** (only Gemini tested).
+> **Verify it works:** from Layuv, send a chapter → the reply must reflect a fact that exists **only** in
+> the reference files (proves the library is injected) → the rewrite card + Save still work → confirm the
+> key never leaves the Mac.
+>
+> Context: I'm on the **MacBook Pro M3 Pro 18GB** (python3/pipx/mlx installed; `mlx_lm.server` gives a
+> local OpenAI-compat `/v1` if you want a free test upstream). My Gemini key is validated and already in
+> Layuv (endpoint `https://generativelanguage.googleapis.com/v1beta/openai`, model `gemini-2.5-flash`).
+> Devices: **Nomad** `SN078C10005528` (USB) / **Manta** `SN100C10008955`; adb at
+> `$HOME/Library/Android/sdk/platform-tools/adb`; app id `com.afluffywaffle.layuv.dev`. Android build
+> (only if you touch it): `cd android_native && ./gradlew :app:assembleDebug`. Memory:
+> `project_ai_networking.md` (agnostic client + home/work/hotspot/remote trust model),
+> `project_ask_ai.md`, `ai_text_only_endpoint_images.md` (text-only upstreams reject ink-note images —
+> relevant if the brain ever targets one), `native_android_sequencedcollection_trap.md`. Queued Android
+> UX follow-ups (NOT for now, just be aware): prominent "Test connection" button, a "Settings" shortcut
+> in the Ask AI pane, reply-from-expanded-viewer, and the text-only-endpoint error/fallback.
