@@ -66,6 +66,8 @@ class AskAiPanel(
     private val messages = mutableListOf<AiTurn>()
     private var sending = false
     private var continuationCount = 0
+    /** Ids of ink annotations referenced by the seed, so their PNGs can ride the first turn as images. */
+    private var seedInkIds: List<String> = emptyList()
 
     private val transcript: LinearLayout
     private val scroll: ScrollView
@@ -122,7 +124,7 @@ class AskAiPanel(
             setTextColor(ReaderTheme.INK_87)
             setHintTextColor(0xFF9E9A92.toInt())
             setHighlightColor(android.graphics.Color.argb(60, 0, 0, 0))
-            hint = "Discuss, or just tap Send for a rewrite…"
+            hint = "Add optional instructions, or just tap Send…"
             minLines = 1
             maxLines = 4
             gravity = Gravity.TOP or Gravity.START
@@ -185,6 +187,7 @@ class AskAiPanel(
                 if (book !== b) return@post
                 messages.clear()
                 messages.addAll(loaded)
+                seedInkIds = emptyList() // a resumed conversation has no live ink to attach
                 render()
                 scrollToBottom()
             }
@@ -239,11 +242,12 @@ class AskAiPanel(
     }
 
     private fun buildSeed(b: OpenBook, typed: String): String {
-        val base = ManuscriptSerializer.buildPrompt(
+        val prompt = ManuscriptSerializer.buildPrompt(
             b.doc.plainText,
             b.doc.annotations.map { it.annotation },
         )
-        return if (typed.isEmpty()) base else "$base\n\nAuthor's note for this revision: $typed"
+        seedInkIds = prompt.inkAnnotationIds
+        return if (typed.isEmpty()) prompt.text else "${prompt.text}\n\nAuthor's note for this revision: $typed"
     }
 
     private fun appendUser(text: String) {
@@ -265,9 +269,19 @@ class AskAiPanel(
             return
         }
         setSending(true)
-        val history = messages.map { AiMessage(it.role, it.text) }
         val provider = AiProviderFactory.current(activity)
+        val inkIds = seedInkIds                          // ink ids referenced by the seed turn
+        val turns = messages.map { it.role to it.text }  // snapshot off the main thread
         io.execute {
+            // Load the handwritten-note PNGs (read by vision models) and attach them to the seed turn.
+            val imgs = if (inkIds.isEmpty()) emptyList() else {
+                val docBytes = try { b.file?.readBytes() } catch (e: Exception) { null } ?: b.bytes
+                inkIds.mapNotNull { DocxStore.readInkPng(docBytes, it) }
+            }
+            val history = turns.mapIndexed { i, pair ->
+                if (i == 0 && imgs.isNotEmpty()) AiMessage(pair.first, pair.second, imgs)
+                else AiMessage(pair.first, pair.second)
+            }
             val res = provider.send(key, history)
             main.post {
                 if (book !== b) return@post
@@ -689,6 +703,7 @@ class AskAiPanel(
             onConfirm = {
                 messages.clear()
                 continuationCount = 0
+                seedInkIds = emptyList()
                 persist()
                 render()
             },

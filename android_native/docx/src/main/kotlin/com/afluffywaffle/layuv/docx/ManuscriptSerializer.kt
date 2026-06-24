@@ -22,6 +22,10 @@ object ManuscriptSerializer {
         "while preserving the author's voice and everything that isn't flagged. You " +
         "may ask a brief clarifying question first if an annotation is genuinely " +
         "ambiguous, and you can discuss the changes when the author replies.\n\n" +
+        "Some annotations include the author's note as a HANDWRITTEN image, " +
+        "referenced as \"attached image N\" (the Nth image attached, in order). Read " +
+        "the handwriting in that image and treat it as the author's note for that " +
+        "passage.\n\n" +
         "Format every rewrite exactly like this: put the FULL revised chapter — " +
         "plain prose, paragraphs separated by a blank line, no headings, markup, or " +
         "commentary — between a line reading " + RewriteProtocol.BEGIN + " and a " +
@@ -30,8 +34,12 @@ object ManuscriptSerializer {
         "When you are only discussing or asking a question (not delivering a " +
         "rewrite), reply normally with no markers."
 
-    fun buildPrompt(plainText: String, annotations: List<Annotation>): String {
+    /** The seed prompt text + the ids of ink annotations, in the order they're referenced as images. */
+    data class Prompt(val text: String, val inkAnnotationIds: List<String>)
+
+    fun buildPrompt(plainText: String, annotations: List<Annotation>): Prompt {
         val sb = StringBuilder()
+        val inkIds = mutableListOf<String>()
         sb.append(PREAMBLE).append("\n\n")
         sb.append("=== CHAPTER ===\n")
         sb.append(plainText.trim()).append("\n\n")
@@ -44,10 +52,14 @@ object ManuscriptSerializer {
                     .append('“').append(a.selectedText.trim()).append('”').append('\n')
                 val note = noteText(a)
                 if (note.isNotBlank()) sb.append("   note: ").append(note).append('\n')
+                if (a.hasInk) {
+                    inkIds.add(a.id)
+                    sb.append("   handwritten note: see attached image ").append(inkIds.size).append('\n')
+                }
                 a.tag?.let { sb.append("   tag: ").append(it.name).append('\n') }
             }
         }
-        return sb.toString()
+        return Prompt(sb.toString(), inkIds)
     }
 
     /** Full thread text when present (the note is just the first entry), else the note. */

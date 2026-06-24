@@ -4,6 +4,7 @@ import com.afluffywaffle.layuv.docx.model.Annotation
 import com.afluffywaffle.layuv.docx.model.AnnotationTag
 import com.afluffywaffle.layuv.docx.model.AnnotationTool
 import com.afluffywaffle.layuv.docx.model.ThreadEntry
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -17,6 +18,7 @@ class ManuscriptSerializerTest {
         note: String? = null,
         tag: AnnotationTag? = null,
         thread: List<ThreadEntry> = emptyList(),
+        hasInk: Boolean = false,
     ) = Annotation(
         id = "id-$selected",
         selectedText = selected,
@@ -27,6 +29,7 @@ class ManuscriptSerializerTest {
         tag = tag,
         timestamp = Instant.EPOCH,
         position = 0.0,
+        hasInk = hasInk,
         threadEntries = thread,
     )
 
@@ -43,13 +46,15 @@ class ManuscriptSerializerTest {
                     ThreadEntry("yes, the back one", 1L, ThreadEntry.SOURCE_LEAMH),
                 ),
             ),
+            ann(AnnotationTool.highlight, "the cliff", hasInk = true),
         )
-        val prompt = ManuscriptSerializer.buildPrompt("Chapter body text here.", annotations)
+        val result = ManuscriptSerializer.buildPrompt("Chapter body text here.", annotations)
+        val prompt = result.text
 
         assertTrue(prompt.contains("revise a manuscript chapter"), "has preamble")
         assertTrue(prompt.contains("=== CHAPTER ==="))
         assertTrue(prompt.contains("Chapter body text here."))
-        assertTrue(prompt.contains("=== ANNOTATIONS (3) ==="))
+        assertTrue(prompt.contains("=== ANNOTATIONS (4) ==="))
         assertTrue(prompt.contains("[Highlight] “the old man”"))
         assertTrue(prompt.contains("note: tighten this"))
         assertTrue(prompt.contains("tag: pacing"))
@@ -58,11 +63,14 @@ class ManuscriptSerializerTest {
         // Thread entries are folded into the note (the note mirrors only the first).
         assertTrue(prompt.contains("is this the right door?"))
         assertTrue(prompt.contains("yes, the back one"))
+        // An ink annotation is referenced as an attached image, and its id is surfaced for loading.
+        assertTrue(prompt.contains("handwritten note: see attached image 1"))
+        assertEquals(listOf("id-the cliff"), result.inkAnnotationIds)
     }
 
     @Test
     fun handlesNoAnnotations() {
-        val prompt = ManuscriptSerializer.buildPrompt("Just the chapter.", emptyList())
+        val prompt = ManuscriptSerializer.buildPrompt("Just the chapter.", emptyList()).text
         assertTrue(prompt.contains("=== ANNOTATIONS (0) ==="))
         assertTrue(prompt.contains("(none)"))
         assertFalse(prompt.contains("note:"))

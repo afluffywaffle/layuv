@@ -1,5 +1,6 @@
 package com.afluffywaffle.layuv.ai
 
+import android.util.Base64
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
@@ -55,7 +56,26 @@ class ClaudeProvider : AiProvider {
 
     private fun buildBody(messages: List<AiMessage>): String {
         val arr = JSONArray()
-        for (m in messages) arr.put(JSONObject().put("role", m.role).put("content", m.text))
+        for (m in messages) {
+            val msg = JSONObject().put("role", m.role)
+            if (m.images.isEmpty()) {
+                msg.put("content", m.text)
+            } else {
+                // Multimodal: text block first, then each handwritten-note PNG as a base64 image block.
+                val content = JSONArray().put(JSONObject().put("type", "text").put("text", m.text))
+                for (img in m.images) {
+                    content.put(
+                        JSONObject().put("type", "image").put(
+                            "source",
+                            JSONObject().put("type", "base64").put("media_type", "image/png")
+                                .put("data", Base64.encodeToString(img, Base64.NO_WRAP)),
+                        ),
+                    )
+                }
+                msg.put("content", content)
+            }
+            arr.put(msg)
+        }
         return JSONObject()
             .put("model", MODEL)
             .put("max_tokens", MAX_TOKENS)

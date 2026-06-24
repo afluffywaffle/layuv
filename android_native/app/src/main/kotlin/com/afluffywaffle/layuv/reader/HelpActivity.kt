@@ -48,6 +48,7 @@ class HelpActivity : Activity() {
             "Search"          to { buildSearchPage() },
             "Settings"        to { buildSettingsPage() },
             "Ask AI"          to { buildAiPage() },
+            "Directing the AI" to { buildAiNotesPage() },
             "About"           to { buildAboutPage() },
             "Thanks"          to { buildThanksPage() },
         )
@@ -346,7 +347,7 @@ class HelpActivity : Activity() {
             LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT),
         )
         col.addView(para("Tap the search icon in the bottom bar to find any text across the whole document.", 0f))
-        col.addView(para("Tap a result to jump straight to that page; the match is briefly highlighted so you can spot it."))
+        col.addView(para("Tap a result to see it with more surrounding text in a popup; tap Go to page to jump there, where the match is briefly highlighted so you can spot it."))
         return col
     }
 
@@ -358,6 +359,7 @@ class HelpActivity : Activity() {
         col.addView(definitionRow("Columns", "One or two columns per page."))
         col.addView(definitionRow("Font family", "Literata (serif) or Source Sans 3."))
         col.addView(definitionRow("Right to left", "For right-bound texts."))
+        col.addView(definitionRow("Flatten ink", "Bake ink strokes into a flat image — freehand erase only afterward, and it can't be undone."))
         return col
     }
 
@@ -384,8 +386,8 @@ class HelpActivity : Activity() {
 
     private fun buildAiPage(): View {
         val col = pageColumn("Ask AI")
-        col.addView(para("Discuss a chapter with an AI and get a rewrite that addresses your annotations — in a panel beside the reader (the chat icon in the bottom bar). With no AI set up, Layuv connects to nothing and stays a fully offline annotator.", 0f))
-        col.addView(para("Please open and accept each point below. When all four are accepted, AI settings unlocks so you can add your key.", topGap = 14f))
+        col.addView(para("Ask AI rewrites the whole chapter to address your annotations — a complete new draft, not edits to just the parts you marked. It needs an AI provider's API key, not a chat subscription: a paid Claude or ChatGPT plan won't work (Gemini's API key is free). With no AI set up, Layuv connects to nothing and stays a fully offline annotator.", 0f))
+        col.addView(para("Open and accept each point below; AI settings then unlocks so you can add your key.", topGap = 14f))
 
         val prefs = getSharedPreferences("leamh", MODE_PRIVATE)
         val acks = aiAcks()
@@ -410,6 +412,17 @@ class HelpActivity : Activity() {
         }
         refreshSettings()
         col.addView(settingsRow)
+        return col
+    }
+
+    /** How annotations drive the rewrite — its own page so the gated "Ask AI" page stays one screen. */
+    private fun buildAiNotesPage(): View {
+        val col = pageColumn("Directing the AI")
+        col.addView(para("What you mark tells the AI where to focus and why:", 0f))
+        col.addView(definitionRow("Marks", "The passage you select and the tool — a highlight says \"look here,\" strikethrough means \"cut this.\""))
+        col.addView(definitionRow("Typed notes", "A note tells it why — \"show, don't tell,\" \"tighten this.\""))
+        col.addView(definitionRow("Handwritten ink", "A note you write with the pen — print or cursive — is read too (sent as an image). Scrawl an instruction and it acts on it."))
+        col.addView(para("If your intent isn't obvious from the passage, add a note — typed or handwritten — saying so.", topGap = 14f))
         return col
     }
 
@@ -528,8 +541,10 @@ class HelpActivity : Activity() {
         const val EXTRA_PAGE = "help_start_page"
 
         private const val AI_PRIVACY_TEXT =
-            "Ask AI sends this chapter's text and your annotations to the AI provider you configure — " +
-                "for now, Anthropic's Claude — over the internet. It is a third-party service, so don't " +
+            "Ask AI always sends the whole chapter — its full text, your annotations, and any " +
+                "handwritten ink notes (as images) — to the AI provider you configure, over the " +
+                "internet. It works on the entire chapter at once and returns a complete new draft, " +
+                "not edits to only the parts you marked. It is a third-party service, so don't " +
                 "use Ask AI for confidential work you can't share.\n\n" +
                 "Nothing is sent anywhere until you add a key and tap Send. With no AI configured, " +
                 "Layuv connects to nothing and stays a fully offline reader and annotator.\n\n" +

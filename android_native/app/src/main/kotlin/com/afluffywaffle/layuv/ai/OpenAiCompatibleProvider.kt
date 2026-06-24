@@ -1,5 +1,6 @@
 package com.afluffywaffle.layuv.ai
 
+import android.util.Base64
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
@@ -53,7 +54,24 @@ class OpenAiCompatibleProvider(
 
     private fun buildBody(messages: List<AiMessage>): String {
         val arr = JSONArray()
-        for (m in messages) arr.put(JSONObject().put("role", m.role).put("content", m.text))
+        for (m in messages) {
+            val msg = JSONObject().put("role", m.role)
+            if (m.images.isEmpty()) {
+                msg.put("content", m.text)
+            } else {
+                // Multimodal: text first, then each handwritten-note PNG as a data-URI image part.
+                val content = JSONArray().put(JSONObject().put("type", "text").put("text", m.text))
+                for (img in m.images) {
+                    val uri = "data:image/png;base64," + Base64.encodeToString(img, Base64.NO_WRAP)
+                    content.put(
+                        JSONObject().put("type", "image_url")
+                            .put("image_url", JSONObject().put("url", uri)),
+                    )
+                }
+                msg.put("content", content)
+            }
+            arr.put(msg)
+        }
         return JSONObject()
             .put("model", model)
             .put("max_tokens", MAX_TOKENS)
