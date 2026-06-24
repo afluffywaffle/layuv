@@ -584,9 +584,10 @@ class AskAiPanel(
         addView(expandButton())
     }
 
-    /** Expand: open the latest reply full screen (read-only) — sits below the flip controls. */
+    /** Expand: open the latest reply full screen (read-only) — sits below the flip controls.
+     *  Uses the same outward-arrows icon the comments pane uses to expand. */
     private fun expandButton(): View = ImageView(activity).apply {
-        setImageResource(R.drawable.ic_fullscreen)
+        setImageResource(R.drawable.ic_expand)
         setColorFilter(ReaderTheme.INK_87)
         scaleType = ImageView.ScaleType.CENTER_INSIDE
         minimumWidth = dp(48f)
