@@ -1,39 +1,51 @@
 package com.afluffywaffle.layuv.ai
 
-import android.content.Context
+import java.net.URL
 
 /**
- * Builds the [AiProvider] for the user's current selection, stored in the plain
- * `"leamh"` prefs (`ai_provider`, `ai_model`). The API key itself lives in
- * [SecureKeyStore]. v1 ships Claude (native Anthropic API) + Gemini (free tier,
- * via Gemini's OpenAI-compatible endpoint); a fully custom OpenAI-compatible /
- * local endpoint is a later addition that reuses [OpenAiCompatibleProvider].
+ * Builds the [AiProvider] from the user's configured endpoint.
+ *
+ * Layuv is **AI-platform agnostic**: it speaks the OpenAI-compatible
+ * chat-completions wire format to ANY endpoint the user points it at — there is
+ * no built-in provider list. That single client reaches:
+ *   - a cloud provider's OpenAI-compatible URL — Claude (`https://api.anthropic.com/v1`),
+ *     Gemini (`https://generativelanguage.googleapis.com/v1beta/openai`),
+ *     OpenAI (`https://api.openai.com/v1`);
+ *   - the user's own server — Ollama / LM Studio / llama.cpp / vLLM, or a Mac
+ *     "brain" exposing `/chat/completions` (the planned reference proxy).
+ *
+ * Connection config lives in the plain `"leamh"` prefs (`ai_base_url`, `ai_model`);
+ * the API key — optional, since a local server may need none — lives in
+ * [SecureKeyStore]. The cleartext boundary for `http://` endpoints is [CleartextPolicy].
  */
 object AiProviderFactory {
-    const val PROVIDER_CLAUDE = "claude"
-    const val PROVIDER_GEMINI = "gemini"
 
-    // Gemini's OpenAI-compatibility endpoint — same wire format as OpenAI/local.
-    const val GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai"
-    const val GEMINI_DEFAULT_MODEL = "gemini-2.5-flash"
+    private fun prefs(context: android.content.Context) =
+        context.getSharedPreferences("leamh", android.content.Context.MODE_PRIVATE)
 
-    private fun prefs(context: Context) = context.getSharedPreferences("leamh", Context.MODE_PRIVATE)
+    /** OpenAI-compatible base URL, e.g. `https://api.anthropic.com/v1` or `http://192.168.x.x:11434/v1`. */
+    fun baseUrl(context: android.content.Context): String =
+        prefs(context).getString("ai_base_url", "")?.trim().orEmpty()
 
-    fun selected(context: Context): String =
-        prefs(context).getString("ai_provider", PROVIDER_CLAUDE) ?: PROVIDER_CLAUDE
+    /** Model name the endpoint expects, e.g. `claude-sonnet-4-6`, `gemini-2.5-flash`, `gpt-4o-mini`, `llama3.1`. */
+    fun model(context: android.content.Context): String =
+        prefs(context).getString("ai_model", "")?.trim().orEmpty()
 
-    fun geminiModel(context: Context): String =
-        prefs(context).getString("ai_model", GEMINI_DEFAULT_MODEL)?.takeIf { it.isNotBlank() }
-            ?: GEMINI_DEFAULT_MODEL
+    /** True once an endpoint is configured (a base URL is set) — the gate for showing the AI UI. */
+    fun isConfigured(context: android.content.Context): Boolean = baseUrl(context).isNotBlank()
 
-    fun current(context: Context): AiProvider = when (selected(context)) {
-        PROVIDER_GEMINI -> OpenAiCompatibleProvider(GEMINI_BASE, geminiModel(context))
-        else -> ClaudeProvider()
-    }
+    fun current(context: android.content.Context): AiProvider =
+        OpenAiCompatibleProvider(baseUrl(context), model(context), requireKey = false)
 
-    /** Friendly name of the active provider, for chat labels ("Claude" / "Gemini"). */
-    fun displayName(context: Context): String = when (selected(context)) {
-        PROVIDER_GEMINI -> "Gemini"
-        else -> "Claude"
+    /** A friendly name for the active endpoint, derived from its host, for chat labels. */
+    fun displayName(context: android.content.Context): String {
+        val host = try { URL(baseUrl(context)).host.lowercase() } catch (e: Exception) { "" }
+        return when {
+            host.isBlank() -> "the AI"
+            host.contains("anthropic") -> "Claude"
+            host.contains("googleapis") -> "Gemini"
+            host.contains("openai") -> "OpenAI"
+            else -> "your server"
+        }
     }
 }

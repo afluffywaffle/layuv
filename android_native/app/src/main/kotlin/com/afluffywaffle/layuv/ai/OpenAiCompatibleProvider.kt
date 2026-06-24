@@ -14,25 +14,32 @@ import java.net.UnknownHostException
 /**
  * OpenAI-compatible chat-completions client (`POST {baseUrl}/chat/completions`,
  * Bearer auth, SSE) — covers OpenAI, Google Gemini (via its OpenAI-compat
- * endpoint), and local servers (Ollama / LM Studio / llama.cpp / vLLM). Same
- * streaming-for-timeout-safety, render-once, and minimal-logging contract as
- * [ClaudeProvider] (never logs the key or the request body).
+ * endpoint), and local servers (Ollama / LM Studio / llama.cpp / vLLM, or a Mac
+ * "brain"). The sole AI client in Layuv — streams for timeout safety, renders
+ * once, and logs minimally (never the key or the request body / manuscript).
  */
 class OpenAiCompatibleProvider(
     private val baseUrl: String,
     private val model: String,
+    // Cloud endpoints (Gemini) require a key; a user's local server usually has none,
+    // so the custom provider passes false and we send without an Authorization header.
+    private val requireKey: Boolean = true,
 ) : AiProvider {
 
     override fun send(apiKey: String, messages: List<AiMessage>): AiResult {
-        if (apiKey.isBlank()) return AiResult.Error("Set your API key in AI settings first.")
+        if (requireKey && apiKey.isBlank()) return AiResult.Error("Set your API key in AI settings first.")
+        if (baseUrl.isBlank()) return AiResult.Error("Set the server address (base URL) in AI settings first.")
+        val endpoint = baseUrl.trimEnd('/') + "/chat/completions"
+        // Refuse plain HTTP to the public internet — only private/trusted hosts (see CleartextPolicy).
+        CleartextPolicy.cleartextError(endpoint)?.let { return AiResult.Error(it) }
         var conn: HttpURLConnection? = null
         return try {
-            conn = (URL(baseUrl.trimEnd('/') + "/chat/completions").openConnection() as HttpURLConnection).apply {
+            conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 doOutput = true
                 connectTimeout = 30_000
                 readTimeout = 180_000
-                setRequestProperty("Authorization", "Bearer $apiKey")
+                if (apiKey.isNotBlank()) setRequestProperty("Authorization", "Bearer $apiKey")
                 setRequestProperty("content-type", "application/json")
                 setRequestProperty("accept", "text/event-stream")
             }

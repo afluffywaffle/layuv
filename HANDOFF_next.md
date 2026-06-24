@@ -87,22 +87,76 @@ Commits (newest first):
 
 ---
 
-## ⏭️ OUTSTANDING / next — multi-provider + a user's remote/local LLM
+## ✅ LANDED (2026-06-24) — multi-provider + a user's remote/local LLM (Android)
 
-The user's stated next direction; several deferred copy items hinge on it.
+All three items shipped; `:app:assembleDebug` clean. **App-layer + manifest + `res/xml` only — no
+`docx/` change, no engine tests.** Not yet runtime-tested end-to-end (no "brain" server stood up yet;
+the cleartext guard's host-classification logic was verified standalone — 16/16 cases, incl. boundary
+traps 172.32 and 100.200 correctly refused).
 
-1. **Provider picker + custom endpoint in `AiSettingsActivity`.** `OpenAiCompatibleProvider` already
-   speaks the wire format (Bearer + `{model,messages,stream}` SSE, multimodal-ready). Left to do:
-   a provider option (`ai_provider="custom"`), `ai_base_url` + token prefs, and the settings UI;
-   route via `AiProviderFactory.current()`. Reaches OpenAI and a user's remote/local LLM
-   (Ollama/LM Studio/llama.cpp/vLLM `/v1`).
-2. **Scoped cleartext-HTTP allowance for a LAN endpoint.** A local model is usually plain HTTP →
-   a `network-security-config` limited to private/LAN hosts (NEVER global). Warn when an endpoint
-   isn't HTTPS; recommend Tailscale for remote.
-3. **Provider-aware disclosure copy (deferred this session, by decision).** The Privacy ack still
-   says *"Anthropic's commercial API does not train on data you submit"* — Claude-specific and wrong
-   for Gemini's free tier (which may train). Generalize it WITH the multi-provider change so the copy
-   flexes per provider.
+1. **Provider-AGNOSTIC client (refactored from the picker, by user decision).** There is **no provider
+   list** — Layuv speaks the OpenAI-compatible wire format to ANY endpoint. The native `ClaudeProvider`
+   was **deleted**; `OpenAiCompatibleProvider` is the sole client. `AiProviderFactory` is now just
+   `baseUrl`/`model` (prefs `ai_base_url`, `ai_model`) → `OpenAiCompatibleProvider(baseUrl, model,
+   requireKey=false)`; `displayName()` derives a label from the host (anthropic→"Claude",
+   googleapis→"Gemini", openai→"OpenAI", else "your server"). `OpenAiCompatibleProvider`: (a) optional
+   auth — omits `Authorization` when the key is blank (local servers need none); (b) runs every request
+   through `CleartextPolicy` first. `AiSettingsActivity` is one agnostic form — **Endpoint (base URL) +
+   Model + optional Key** + worked-example URLs (Claude `https://api.anthropic.com/v1`, Gemini, OpenAI,
+   local `http://ip:11434/v1`). The AI-button gate (`ReaderActivity.isAiConfigured`) now keys on
+   **base-URL set**, NOT a stored key (keyless local server must still show the button).
+   - **Claude via its OpenAI-compat endpoint** (`https://api.anthropic.com/v1`, Bearer auth, model e.g.
+     `claude-sonnet-4-6`). ⚠️ **Verify ink-note vision on-device** — Anthropic's compat layer is a shim;
+     it does map OpenAI `image_url` → images, but this path is untested (native Claude was never tested
+     either; Gemini — the tested path — already proves vision through the same `image_url` shape).
+2. **Cleartext HTTP — Option 1 (decided with user): permit at NSC, enforce private-only IN CODE.**
+   `res/xml/network_security_config.xml` keeps system trust anchors and grants the cleartext capability
+   (Android NSC can't CIDR-scope, so true "private-only" isn't expressible in the manifest);
+   **`CleartextPolicy.kt` is the real boundary** — refuses `http://` to any non-private host. Trusts
+   RFC1918 / loopback / link-local / IPv6 ULA / Tailscale 100.64/10 + `*.ts.net` / local names. Wired
+   via `android:networkSecurityConfig`. **This file is the single source of truth — read its KDoc.**
+3. **Provider-aware disclosure.** The one-time Help gate (`AI_PRIVACY_TEXT`) is now provider-neutral
+   (dropped the Claude-only "doesn't train" claim; explains paid-vs-free-vs-local data policy generally).
+   `AiSettingsActivity`'s reminder is one general note (endpoint-you-set / local-stays-local /
+   free-tier-may-train) and the endpoint field carries the trusted-vs-shared HTTP warning.
+   `AI_ENCRYPTION_TEXT` generalized + sharpened (home/hotspot = fine; work/remote = Tailscale; app
+   refuses public cleartext). The Help gate intro now says "any OpenAI-compatible endpoint … or a model
+   you run yourself, which needs no key".
+
+### 🌐 Trust model — the reusable reference (model the iOS/iPadOS/macOS ports on this)
+
+The rule is platform-agnostic: **are both devices on the same network, and do you trust it?**
+
+| Setup | Same net? | Trust? | User does | Wire |
+|---|---|---|---|---|
+| Mac Mini at home, client on home Wi-Fi | ✅ | ✅ yours | nothing — plain HTTP | stays on LAN |
+| MacBook at work, client on same work Wi-Fi | ✅ | ⚠️ shared | **Tailscale** (others/IT could sniff; client-isolation may block) | tunnel |
+| MacBook at work, client at home/cellular | ❌ | — | **Tailscale** (required) | tunnel |
+| iPhone hotspot, both client + brain joined | ✅ | ✅ yours | nothing — plain HTTP (no cellular used) | stays on hotspot |
+| iPhone hotspot for client, brain remote | ❌ | — | **Tailscale** | tunnel |
+
+**Owned network + both devices on it → plain HTTP, zero setup. Anything else → Tailscale** (makes the
+brain a trusted address *and* encrypts). The app enforces it: plain HTTP only to private/trusted hosts,
+**refused** to the public internet. **Porting caveat:** the *rule* carries to iPhone/iPad/Mac, but the
+*enforcement* is Android-specific (NSC + `CleartextPolicy.kt`) — Apple uses **App Transport Security**,
+so each port must re-implement the private-host guard in Swift. Tailscale is easier on Apple (first-class
+app) than on the Play-Services-free Supernote. See memory `project_ai_networking.md`.
+
+### ⏭️ Still to do here — runtime-verify the agnostic loop
+Three independent test paths (no code left to write; this is on-device verification):
+- **Fastest, quality, zero-cost — Gemini (cloud, already-proven path):** free AIza key at
+  aistudio.google.com → endpoint `https://generativelanguage.googleapis.com/v1beta/openai`, model
+  `gemini-2.5-flash`. Tests the full loop with a good model, no Mac, no cost.
+- **Local/LAN plumbing — MLX on the user's MacBook Pro M3 Pro (18GB):** `pipx install mlx-lm` then
+  `mlx_lm.server --model mlx-community/Qwen3-1.7B-4bit --host 0.0.0.0 --port 8080` → Supernote on the
+  same Wi-Fi points at `http://<mac-LAN-ip>:8080/v1`, **no key**. Proves keyless-local + plain-HTTP-LAN +
+  the cleartext guard. ⚠️ Quality is poor — per the user's own testing (`~/Downloads/Gofal-Session-2026-06-18.md`)
+  18GB only stably hosts a 1.7B @ 64K (~8.9GB; 4B OOM-crashes). MLX serves an OpenAI-compatible `/v1`, so
+  it's a drop-in. Real quality wants the Mac-Mini tier (14B+) or the Anthropic-key proxy.
+- **Claude (cloud):** `https://api.anthropic.com/v1` + a console `sk-ant-` key → verify ink-note vision
+  through the compat layer (see item 1 caveat).
+- In all: confirm `http://` LAN allowed, `http://` public refused with the guard message, suspend/resume.
+- Still unverified from the prior session: conversation **suspend/resume**, and the **Claude** provider.
 
 **Bigger vision (plan file, not started):** a Mac-Mini "memory layer" — a small server holding the
 project's reference files + the Anthropic key, exposing an OpenAI-compatible endpoint, so the model

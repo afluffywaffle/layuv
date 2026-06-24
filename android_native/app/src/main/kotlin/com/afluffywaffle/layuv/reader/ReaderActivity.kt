@@ -27,7 +27,6 @@ import android.widget.PopupWindow
 import android.widget.TextView
 import android.widget.Toast
 import com.afluffywaffle.layuv.R
-import com.afluffywaffle.layuv.ai.SecureKeyStore
 import com.afluffywaffle.layuv.docx.DocxStore
 import com.afluffywaffle.layuv.docx.LoadedDocument
 import com.afluffywaffle.layuv.docx.ResolvedAnnotation
@@ -755,9 +754,11 @@ class ReaderActivity : Activity() {
         readerView.post { initDrawPathLasso() }
     }
 
-    /** Ask AI is "set up" only once the disclosure is accepted AND a key is stored. */
+    /** Ask AI is "set up" once the disclosure is accepted AND an endpoint (base URL) is
+     *  configured. The key is NOT part of the gate — a local server may legitimately have none. */
     private fun isAiConfigured(): Boolean =
-        prefs.getBoolean("ai_disclosure_accepted", false) && !SecureKeyStore.read(this).isNullOrBlank()
+        prefs.getBoolean("ai_disclosure_accepted", false) &&
+            !prefs.getString("ai_base_url", "").isNullOrBlank()
 
     /** Keep the AI chat button (+ its divider) hidden until Ask AI is set up, so it isn't
      *  an idle affordance for users who haven't opted in. Re-checked in onResume. */

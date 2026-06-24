@@ -3,7 +3,6 @@ package com.afluffywaffle.layuv.reader
 import android.app.Activity
 import android.content.ClipboardManager
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -21,14 +20,18 @@ import android.widget.Toast
 import com.afluffywaffle.layuv.ai.AiMessage
 import com.afluffywaffle.layuv.ai.AiProviderFactory
 import com.afluffywaffle.layuv.ai.AiResult
+import com.afluffywaffle.layuv.ai.CleartextPolicy
 import com.afluffywaffle.layuv.ai.SecureKeyStore
 import java.util.concurrent.Executors
 
 /**
- * Minimal API-key settings for the "Ask AI" feature. Masked field + Save + Clear,
- * an optional connection test, and a link to the Anthropic console. The stored key
- * is never displayed (only a "saved" hint); it lives in [SecureKeyStore], not the
- * plain `"leamh"` prefs. Intentionally bare — the target user is technical.
+ * AI endpoint settings — **provider-agnostic**. One screen with three fields:
+ * the OpenAI-compatible endpoint (base URL), the model name, and an optional API
+ * key (blank for a keyless local server). No provider list — the same form reaches
+ * Claude / Gemini / OpenAI via their OpenAI-compatible URLs or the user's own
+ * server / Mac "brain". Config lives in the plain `"leamh"` prefs; the key lives in
+ * [SecureKeyStore] and is never displayed. Gated behind the Help & About → Ask AI
+ * disclosures. Intentionally bare — the target user is technical.
  */
 class AiSettingsActivity : Activity() {
 
@@ -37,10 +40,11 @@ class AiSettingsActivity : Activity() {
     }
     private val main = Handler(Looper.getMainLooper())
 
+    private lateinit var baseUrlField: EditText
+    private lateinit var modelField: EditText
     private lateinit var keyField: EditText
     private lateinit var keyToggle: TextView
     private var keyVisible = false
-    private var modelField: EditText? = null
     private lateinit var statusLabel: TextView
     private var testing = false
 
@@ -49,7 +53,7 @@ class AiSettingsActivity : Activity() {
         ReaderTheme.seedBodyFont(this)
         // Defensive gate: this screen is only reachable once the user has accepted the
         // AI disclosures in Help & About → Ask AI. If not (e.g. launched directly), show a
-        // locked screen pointing there rather than the key field.
+        // locked screen pointing there rather than the fields.
         setContentView(if (disclosureAccepted()) buildUi() else buildLockedUi())
     }
 
@@ -86,33 +90,85 @@ class AiSettingsActivity : Activity() {
             setPadding(dp(20f), dp(16f), dp(20f), dp(16f))
         }
 
-        val isGemini = AiProviderFactory.selected(this) == AiProviderFactory.PROVIDER_GEMINI
+        // Intro — Layuv talks to any OpenAI-compatible endpoint, no provider list.
+        body.addView(TextView(this).apply {
+            text = "Layuv connects to any OpenAI-compatible AI endpoint — a cloud provider or a model " +
+                "you run yourself. Enter its address, the model name, and a key if it needs one."
+            typeface = ReaderTheme.body(this@AiSettingsActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(ReaderTheme.INK_54)
+        })
 
-        // Provider picker.
-        body.addView(sectionLabel("Provider"))
-        val providerRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        providerRow.addView(pillButton("Claude", filled = !isGemini) { selectProvider(AiProviderFactory.PROVIDER_CLAUDE) })
-        providerRow.addView(
-            pillButton("Gemini (free tier)", filled = isGemini) { selectProvider(AiProviderFactory.PROVIDER_GEMINI) },
-            LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.leftMargin = dp(8f) },
-        )
-        body.addView(providerRow, lp(topMargin = dp(8f)))
+        // Endpoint (base URL).
+        body.addView(sectionLabel("Endpoint (base URL)"), lp(topMargin = dp(20f)))
+        baseUrlField = EditText(this).apply {
+            typeface = ReaderTheme.body(this@AiSettingsActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, ReaderTheme.BODY_TEXT_SP)
+            setTextColor(ReaderTheme.INK_87)
+            setHintTextColor(HINT)
+            setHighlightColor(android.graphics.Color.argb(60, 0, 0, 0))
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            isSingleLine = true
+            hint = "https://… or http://192.168.x.x:11434/v1"
+            setText(AiProviderFactory.baseUrl(this@AiSettingsActivity))
+            setPadding(dp(12f), dp(10f), dp(12f), dp(10f))
+            background = popupBackground()
+            minimumHeight = dp(48f)
+        }
+        body.addView(baseUrlField, lp(topMargin = dp(8f)))
 
-        // Key.
-        body.addView(sectionLabel(if (isGemini) "Gemini API key" else "Anthropic API key"), lp(topMargin = dp(20f)))
+        // Worked examples (plain text, not buttons — keeps the form provider-agnostic).
+        body.addView(TextView(this).apply {
+            text = "Examples:\n" +
+                "•  Claude — https://api.anthropic.com/v1  (model e.g. claude-sonnet-4-6)\n" +
+                "•  Gemini (free tier) — https://generativelanguage.googleapis.com/v1beta/openai  (gemini-2.5-flash)\n" +
+                "•  OpenAI — https://api.openai.com/v1  (gpt-4o-mini)\n" +
+                "•  Your own server — http://192.168.x.x:11434/v1  (Ollama / LM Studio / a Mac you run)"
+            typeface = ReaderTheme.body(this@AiSettingsActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextColor(ReaderTheme.INK_54)
+        }, lp(topMargin = dp(8f)))
+
+        // Cleartext / HTTPS guidance.
+        body.addView(TextView(this).apply {
+            text = "Use http:// only for a model on a network you trust — your home Wi-Fi or your own " +
+                "phone hotspot. On a shared or work network, or to reach it from elsewhere, use https:// " +
+                "or a VPN like Tailscale. Layuv refuses plain http:// to public internet addresses."
+            typeface = ReaderTheme.body(this@AiSettingsActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(ReaderTheme.INK_54)
+        }, lp(topMargin = dp(8f)))
+
+        // Model.
+        body.addView(sectionLabel("Model"), lp(topMargin = dp(20f)))
+        modelField = EditText(this).apply {
+            typeface = ReaderTheme.body(this@AiSettingsActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, ReaderTheme.BODY_TEXT_SP)
+            setTextColor(ReaderTheme.INK_87)
+            setHintTextColor(HINT)
+            setHighlightColor(android.graphics.Color.argb(60, 0, 0, 0))
+            inputType = InputType.TYPE_CLASS_TEXT
+            isSingleLine = true
+            hint = "The model name your endpoint expects"
+            setText(AiProviderFactory.model(this@AiSettingsActivity))
+            setPadding(dp(12f), dp(10f), dp(12f), dp(10f))
+            background = popupBackground()
+            minimumHeight = dp(48f)
+        }
+        body.addView(modelField, lp(topMargin = dp(8f)))
+
+        // API key (optional).
+        body.addView(sectionLabel("API key (optional)"), lp(topMargin = dp(20f)))
         keyField = EditText(this).apply {
             typeface = ReaderTheme.body(this@AiSettingsActivity)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, ReaderTheme.BODY_TEXT_SP)
             setTextColor(ReaderTheme.INK_87)
-            setHintTextColor(0xFF9E9A92.toInt())
+            setHintTextColor(HINT)
             setHighlightColor(android.graphics.Color.argb(60, 0, 0, 0))
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             isSingleLine = true
-            hint = when {
-                SecureKeyStore.hasKey(this@AiSettingsActivity) -> "Key saved — enter a new key to replace"
-                isGemini -> "Gemini API key (AIza…)"
-                else -> "sk-ant-…"
-            }
+            hint = if (SecureKeyStore.hasKey(this@AiSettingsActivity)) "Key saved — enter a new key to replace"
+            else "Leave blank only for a local server with no key"
             setPadding(dp(12f), dp(10f), dp(12f), dp(10f))
             background = popupBackground()
             minimumHeight = dp(48f)
@@ -128,24 +184,13 @@ class AiSettingsActivity : Activity() {
             LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.leftMargin = dp(4f) })
         body.addView(fieldRow, lp(topMargin = dp(8f)))
 
-        // Model (Gemini only — editable in case the default name changes).
-        modelField = null
-        if (isGemini) {
-            body.addView(sectionLabel("Model"), lp(topMargin = dp(16f)))
-            modelField = EditText(this).apply {
-                typeface = ReaderTheme.body(this@AiSettingsActivity)
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, ReaderTheme.BODY_TEXT_SP)
-                setTextColor(ReaderTheme.INK_87)
-                setHighlightColor(android.graphics.Color.argb(60, 0, 0, 0))
-                inputType = InputType.TYPE_CLASS_TEXT
-                isSingleLine = true
-                setText(AiProviderFactory.geminiModel(this@AiSettingsActivity))
-                setPadding(dp(12f), dp(10f), dp(12f), dp(10f))
-                background = popupBackground()
-                minimumHeight = dp(48f)
-            }
-            body.addView(modelField, lp(topMargin = dp(8f)))
-        }
+        body.addView(TextView(this).apply {
+            text = "A cloud provider's API key is not the same as a chat subscription — a paid Claude or " +
+                "ChatGPT plan won't work here. Gemini's API key is free."
+            typeface = ReaderTheme.body(this@AiSettingsActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextColor(ReaderTheme.INK_54)
+        }, lp(topMargin = dp(8f)))
 
         // Save + full removal.
         val btnRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -167,25 +212,17 @@ class AiSettingsActivity : Activity() {
         }
         body.addView(statusLabel, lp(topMargin = dp(8f)))
 
-        // Short reminder + provider-specific key link.
+        // Privacy reminder. The data-policy specifics differ per endpoint, so this stays general;
+        // the one-time Help gate carries the full disclosure.
         body.addView(TextView(this).apply {
-            text = if (isGemini) {
-                "Your key is encrypted on this device and sent only to Google over HTTPS — never to the " +
-                    "developer. Note: Gemini's FREE tier may use your inputs to improve their products, so " +
-                    "don't use it for confidential work. With no key set, Layuv connects to nothing."
-            } else {
-                "Your key is encrypted on this device and sent only to Anthropic over HTTPS — never to the " +
-                    "developer. With no key set, Layuv connects to nothing. Full detail: Help & About → Ask AI."
-            }
+            text = "Your key (if any) is encrypted on this device and sent only to the endpoint you set " +
+                "above — never to the developer. A model on your own machine keeps the manuscript on your " +
+                "network; a cloud provider's data policy is its own (some free tiers may train on inputs). " +
+                "With nothing set, Layuv connects to nothing."
             typeface = ReaderTheme.body(this@AiSettingsActivity)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTextColor(ReaderTheme.INK_54)
         }, lp(topMargin = dp(24f)))
-
-        body.addView(textButton(
-            if (isGemini) "Get a free key at aistudio.google.com" else "Get a key at console.anthropic.com",
-            bold = true,
-        ) { openConsole(isGemini) }.apply { gravity = Gravity.START }, lp(topMargin = dp(8f)))
 
         val scroll = ScrollView(this).apply { addView(body) }
         root.addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
@@ -203,39 +240,52 @@ class AiSettingsActivity : Activity() {
         LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).also { it.topMargin = topMargin }
 
     private fun save() {
-        val key = keyField.text.toString().trim()
-        if (key.isEmpty()) {
-            toast("Enter a key first.")
+        val url = baseUrlField.text.toString().trim()
+        if (url.isEmpty()) {
+            toast("Enter the endpoint (base URL).")
             return
         }
-        SecureKeyStore.write(this, key)
-        modelField?.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let {
-            prefs().edit().putString("ai_model", it).apply()
+        prefs().edit()
+            .putString("ai_base_url", url)
+            .putString("ai_model", modelField.text.toString().trim())
+            .apply()
+
+        val key = keyField.text.toString().trim()
+        if (key.isNotEmpty()) {
+            SecureKeyStore.write(this, key)
+            logKeystoreBacking()
+            keyField.setText("")
+            keyField.hint = "Key saved — enter a new key to replace"
         }
-        logKeystoreBacking()
-        keyField.setText("")
-        keyField.hint = "Key saved — enter a new key to replace"
+
+        showStatus(cleartextNote(url))
         toast("Saved.")
     }
 
-    /** Switch provider and rebuild the screen (key field/hint/model adapt to it). */
-    private fun selectProvider(provider: String) {
-        prefs().edit().putString("ai_provider", provider).apply()
-        setContentView(buildUi())
+    /** A friendly note about how the endpoint's address is treated by the cleartext guard. */
+    private fun cleartextNote(url: String): String = when {
+        url.startsWith("https://", ignoreCase = true) -> "Saved. Encrypted (HTTPS)."
+        CleartextPolicy.cleartextError(url) != null ->
+            "Saved, but this is a plain-HTTP public address — Layuv will refuse it. Use https:// or Tailscale."
+        url.startsWith("http://", ignoreCase = true) ->
+            "Saved. Plain HTTP — fine on a network you trust; use Tailscale to reach it from elsewhere."
+        else -> "Saved."
     }
 
     /** Full opt-out: wipe the key and reset every AI acknowledgment so re-enabling re-prompts. */
     private fun confirmRemove() {
         LeamhDialog.confirm(
             context = this,
-            message = "Remove your API key and AI configuration? Layuv will stop connecting to any AI " +
-                "until you set it up again.",
+            message = "Remove your AI configuration (endpoint, model, and key)? Layuv will stop connecting " +
+                "to any AI until you set it up again.",
             positiveLabel = "Remove",
             negativeLabel = "Cancel",
             onConfirm = {
                 SecureKeyStore.clear(this)
                 val e = prefs().edit().putBoolean(KEY_DISCLOSURE, false)
                 ACK_KEYS.forEach { e.putBoolean(it, false) }
+                // Clear endpoint config too → a clean no-AI state.
+                e.remove("ai_base_url").remove("ai_model")
                 e.apply()
                 toast("AI configuration removed.")
                 finish()
@@ -246,7 +296,7 @@ class AiSettingsActivity : Activity() {
     private fun prefs() = getSharedPreferences("leamh", MODE_PRIVATE)
     private fun disclosureAccepted() = prefs().getBoolean(KEY_DISCLOSURE, false)
 
-    /** Shown when the disclosures haven't been accepted — points to the gate, no key field. */
+    /** Shown when the disclosures haven't been accepted — points to the gate, no fields. */
     private fun buildLockedUi(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -273,7 +323,7 @@ class AiSettingsActivity : Activity() {
             setPadding(dp(20f), dp(24f), dp(20f), dp(16f))
         }
         body.addView(TextView(this).apply {
-            text = "Review and accept the AI disclosures in Help & About → Ask AI before adding a key."
+            text = "Review and accept the AI disclosures in Help & About → Ask AI before setting up an endpoint."
             typeface = ReaderTheme.body(this@AiSettingsActivity)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, ReaderTheme.BODY_TEXT_SP)
             setTextColor(ReaderTheme.INK_87)
@@ -301,7 +351,7 @@ class AiSettingsActivity : Activity() {
         }
     }
 
-    /** The key to test: the just-typed one if present, else the stored one. */
+    /** The key to test: the just-typed one if present, else the stored one (may be null for a local server). */
     private fun keyToUse(): String? =
         keyField.text.toString().trim().ifEmpty { SecureKeyStore.read(this) }?.takeIf { it.isNotBlank() }
 
@@ -332,15 +382,22 @@ class AiSettingsActivity : Activity() {
 
     private fun testConnection() {
         if (testing) return
-        val key = keyToUse()
-        if (key.isNullOrBlank()) {
-            showStatus("Enter or save a key first.")
+        val url = baseUrlField.text.toString().trim()
+        if (url.isEmpty()) {
+            showStatus("Enter the endpoint (base URL) first.")
             return
         }
+        // current() reads saved prefs, so flush the typed endpoint/model first.
+        prefs().edit()
+            .putString("ai_base_url", url)
+            .putString("ai_model", modelField.text.toString().trim())
+            .apply()
         testing = true
         showStatus("Testing…")
+        val key = keyToUse() ?: ""
         ioExecutor.execute {
-            val res = AiProviderFactory.current(this).send(key, listOf(AiMessage(AiMessage.ROLE_USER, "Reply with exactly: connection ok")))
+            val res = AiProviderFactory.current(this)
+                .send(key, listOf(AiMessage(AiMessage.ROLE_USER, "Reply with exactly: connection ok")))
             main.post {
                 testing = false
                 when (res) {
@@ -356,20 +413,11 @@ class AiSettingsActivity : Activity() {
         statusLabel.visibility = View.VISIBLE
     }
 
-    private fun openConsole(gemini: Boolean) {
-        val url = if (gemini) "https://aistudio.google.com/apikey"
-        else "https://console.anthropic.com/settings/keys"
-        try {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-        } catch (e: Exception) {
-            toast("No browser available.")
-        }
-    }
-
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 
     companion object {
         private const val KEY_DISCLOSURE = "ai_disclosure_accepted"
         private val ACK_KEYS = listOf("ai_ack_privacy", "ai_ack_storage", "ai_ack_encryption", "ai_ack_verify")
+        private const val HINT = 0xFF9E9A92.toInt()
     }
 }

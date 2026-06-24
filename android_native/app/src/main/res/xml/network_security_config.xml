@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext (plain HTTP) is permitted at the platform level so Layuv can reach a model
+  the user runs on their OWN network — a Mac Mini at home, a MacBook at work, a laptop
+  on a phone hotspot — which typically serves plain HTTP. Android's network-security-config
+  can name exact hosts but CANNOT express an IP range (no CIDR), so "permit only 192.168.x"
+  is not expressible here. The capability is therefore granted broadly and DELIBERATELY
+  NARROWED IN CODE: OpenAiCompatibleProvider runs every request through CleartextPolicy,
+  which refuses http:// to any non-private host — so the app never transmits cleartext to
+  the public internet. All cloud providers (Claude, Gemini, OpenAI) are hardcoded https://
+  and TLS-verified via the system trust store. See CleartextPolicy.kt for the trust model.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

@@ -386,7 +386,7 @@ class HelpActivity : Activity() {
 
     private fun buildAiPage(): View {
         val col = pageColumn("Ask AI")
-        col.addView(para("Ask AI rewrites the whole chapter to address your annotations — a complete new draft, not edits to just the parts you marked. It needs an AI provider's API key, not a chat subscription: a paid Claude or ChatGPT plan won't work (Gemini's API key is free). With no AI set up, Layuv connects to nothing and stays a fully offline annotator.", 0f))
+        col.addView(para("Ask AI rewrites the whole chapter to address your annotations — a complete new draft, not edits to just the parts you marked. You point Layuv at any OpenAI-compatible AI endpoint: a cloud provider (Claude, Gemini, OpenAI) with an API key — not a chat subscription, so a paid Claude or ChatGPT plan won't work, though Gemini's API key is free — or a model you run yourself, which needs no key. With no AI set up, Layuv connects to nothing and stays a fully offline annotator.", 0f))
         col.addView(para("Open and accept each point below; AI settings then unlocks so you can add your key.", topGap = 14f))
 
         val prefs = getSharedPreferences("leamh", MODE_PRIVATE)
@@ -542,13 +542,16 @@ class HelpActivity : Activity() {
 
         private const val AI_PRIVACY_TEXT =
             "Ask AI always sends the whole chapter — its full text, your annotations, and any " +
-                "handwritten ink notes (as images) — to the AI provider you configure, over the " +
-                "internet. It works on the entire chapter at once and returns a complete new draft, " +
-                "not edits to only the parts you marked. It is a third-party service, so don't " +
-                "use Ask AI for confidential work you can't share.\n\n" +
-                "Nothing is sent anywhere until you add a key and tap Send. With no AI configured, " +
-                "Layuv connects to nothing and stays a fully offline reader and annotator.\n\n" +
-                "Anthropic's commercial API does not train on data you submit."
+                "handwritten ink notes (as images) — to the AI provider you configure. It works on the " +
+                "entire chapter at once and returns a complete new draft, not edits to only the parts " +
+                "you marked.\n\n" +
+                "Providers handle your data differently. A paid cloud API (such as Anthropic's Claude) " +
+                "typically does not train on what you send; a free tier (such as Gemini's) may use your " +
+                "inputs to improve its models — so check your chosen provider's terms, and don't use a " +
+                "free tier for confidential work. If you connect Layuv to a model on your own machine, " +
+                "your manuscript never leaves your network.\n\n" +
+                "Nothing is sent anywhere until you add a provider and tap Send. With no AI configured, " +
+                "Layuv connects to nothing and stays a fully offline reader and annotator."
 
         private const val AI_STORAGE_TEXT =
             "Your API key is encrypted on this device using the Android Keystore, and it is tied to " +
@@ -558,13 +561,16 @@ class HelpActivity : Activity() {
                 "AI provider you configure — never to the developer."
 
         private const val AI_ENCRYPTION_TEXT =
-            "Cloud providers such as Anthropic's Claude are reached over HTTPS, so your chapter, " +
+            "Cloud providers (Claude, Gemini, OpenAI) are reached over HTTPS, so your chapter, " +
                 "annotations, key and the replies are encrypted in transit with TLS, and the server's " +
                 "certificate is verified.\n\n" +
-                "If you later point Layuv at a model on your own network, that connection is usually " +
-                "plain HTTP — not encrypted by the app, but it never leaves your Wi-Fi. To reach a home " +
-                "model from elsewhere, use a VPN such as Tailscale, which encrypts the whole connection. " +
-                "Never expose a plain-HTTP model to the internet."
+                "If you point Layuv at a model on your own network, that connection is usually plain " +
+                "HTTP — not encrypted by the app. That's fine on a network you trust, like your home " +
+                "Wi-Fi or your own phone hotspot, where the traffic never leaves it. On a shared or work " +
+                "network, others on it could see that traffic, and to reach the model from elsewhere it " +
+                "would cross the internet — in both cases use a VPN such as Tailscale, which encrypts the " +
+                "whole connection. Layuv refuses to send plain HTTP to a public internet address, so it " +
+                "can't leak your manuscript in the clear by mistake."
 
         private const val AI_VERIFY_TEXT =
             "You don't have to take our word for any of this:\n\n" +
