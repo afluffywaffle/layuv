@@ -220,9 +220,13 @@ class AnnotationPopup(private val activity: Activity) {
         )
         val popupH = popupContent.measuredHeight
 
-        val pw = PopupWindow(popupContent, popupW, WRAP_CONTENT, false).apply {
+        // A non-focusable PopupWindow won't dismiss on an outside tap even with
+        // isOutsideTouchable=true + a background; match focusable to the dismiss
+        // intent, as every other popup in the app does.
+        val dismissOnOutside = (lockedTool != null) || isOutsideDismissEnabled()
+        val pw = PopupWindow(popupContent, popupW, WRAP_CONTENT, dismissOnOutside).apply {
             setBackgroundDrawable(ColorDrawable(0x00000000))
-            isOutsideTouchable = (lockedTool != null) || isOutsideDismissEnabled()
+            isOutsideTouchable = dismissOnOutside
             setOnDismissListener { popup = null; if (!suppressDismissCallback) onDismiss?.invoke() }
         }
         popup = pw
@@ -292,9 +296,10 @@ class AnnotationPopup(private val activity: Activity) {
         )
         val popupH = pill.measuredHeight
 
-        val pw = PopupWindow(pill, popupW, WRAP_CONTENT, false).apply {
+        val dismissOnOutside = isOutsideDismissEnabled()
+        val pw = PopupWindow(pill, popupW, WRAP_CONTENT, dismissOnOutside).apply {
             setBackgroundDrawable(ColorDrawable(0x00000000))
-            isOutsideTouchable = isOutsideDismissEnabled()
+            isOutsideTouchable = dismissOnOutside
             setOnDismissListener { popup = null; if (!suppressDismissCallback) onDismiss?.invoke() }
         }
         popup = pw
@@ -368,9 +373,10 @@ class AnnotationPopup(private val activity: Activity) {
         )
         val cardH = card.measuredHeight
 
-        val lw = PopupWindow(card, cardW, WRAP_CONTENT, false).apply {
+        val dismissOnOutside = isOutsideDismissEnabled()
+        val lw = PopupWindow(card, cardW, WRAP_CONTENT, dismissOnOutside).apply {
             setBackgroundDrawable(ColorDrawable(0x00000000))
-            isOutsideTouchable = isOutsideDismissEnabled()
+            isOutsideTouchable = dismissOnOutside
             setOnDismissListener { lockConfirmPopup = null; pendingLockTool = null }
         }
         lockConfirmPopup = lw
