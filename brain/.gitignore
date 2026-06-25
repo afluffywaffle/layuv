@@ -1,0 +1,5 @@
+# Secrets and private data must never be committed.
+brain.env
+references/
+*.local
+__pycache__/
