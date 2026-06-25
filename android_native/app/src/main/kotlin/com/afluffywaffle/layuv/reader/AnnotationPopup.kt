@@ -220,13 +220,14 @@ class AnnotationPopup(private val activity: Activity) {
         )
         val popupH = popupContent.measuredHeight
 
-        // A non-focusable PopupWindow won't dismiss on an outside tap even with
-        // isOutsideTouchable=true + a background; match focusable to the dismiss
-        // intent, as every other popup in the app does.
-        val dismissOnOutside = (lockedTool != null) || isOutsideDismissEnabled()
-        val pw = PopupWindow(popupContent, popupW, WRAP_CONTENT, dismissOnOutside).apply {
+        // Outside-tap dismissal is handled in ReaderView, not here: its tap handler calls
+        // cancelSelection() -> onHidePopup, gated on the "Tap outside" pref. The Supernote's
+        // window manager doesn't deliver ACTION_OUTSIDE to PopupWindows (verified on-device),
+        // so isOutsideTouchable never fires; the popup stays non-focusable so outside taps
+        // fall through to the reader window where the dismiss decision is made.
+        val pw = PopupWindow(popupContent, popupW, WRAP_CONTENT, false).apply {
             setBackgroundDrawable(ColorDrawable(0x00000000))
-            isOutsideTouchable = dismissOnOutside
+            isOutsideTouchable = (lockedTool != null) || isOutsideDismissEnabled()
             setOnDismissListener { popup = null; if (!suppressDismissCallback) onDismiss?.invoke() }
         }
         popup = pw
@@ -296,10 +297,9 @@ class AnnotationPopup(private val activity: Activity) {
         )
         val popupH = pill.measuredHeight
 
-        val dismissOnOutside = isOutsideDismissEnabled()
-        val pw = PopupWindow(pill, popupW, WRAP_CONTENT, dismissOnOutside).apply {
+        val pw = PopupWindow(pill, popupW, WRAP_CONTENT, false).apply {
             setBackgroundDrawable(ColorDrawable(0x00000000))
-            isOutsideTouchable = dismissOnOutside
+            isOutsideTouchable = isOutsideDismissEnabled()
             setOnDismissListener { popup = null; if (!suppressDismissCallback) onDismiss?.invoke() }
         }
         popup = pw
@@ -373,10 +373,9 @@ class AnnotationPopup(private val activity: Activity) {
         )
         val cardH = card.measuredHeight
 
-        val dismissOnOutside = isOutsideDismissEnabled()
-        val lw = PopupWindow(card, cardW, WRAP_CONTENT, dismissOnOutside).apply {
+        val lw = PopupWindow(card, cardW, WRAP_CONTENT, false).apply {
             setBackgroundDrawable(ColorDrawable(0x00000000))
-            isOutsideTouchable = dismissOnOutside
+            isOutsideTouchable = isOutsideDismissEnabled()
             setOnDismissListener { lockConfirmPopup = null; pendingLockTool = null }
         }
         lockConfirmPopup = lw
@@ -506,9 +505,12 @@ class AnnotationPopup(private val activity: Activity) {
         setBackgroundColor(ReaderTheme.INK_12)
     }
 
+    // Default ON: tapping outside dismisses (the long-standing behaviour). The toggle
+    // lets the user turn it off for a sticky toolbar. Kept in sync with ReaderView's
+    // outsideTapDismisses() — same key, same default — so the ••• label matches behaviour.
     private fun isOutsideDismissEnabled(): Boolean =
         activity.getSharedPreferences("leamh", Context.MODE_PRIVATE)
-            .getBoolean("pref_outside_dismiss", false)
+            .getBoolean("pref_outside_dismiss", true)
 
     private fun setOutsideDismissEnabled(enabled: Boolean) {
         activity.getSharedPreferences("leamh", Context.MODE_PRIVATE)

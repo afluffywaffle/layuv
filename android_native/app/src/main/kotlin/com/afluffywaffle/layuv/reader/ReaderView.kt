@@ -196,7 +196,7 @@ class ReaderView(context: Context) : View(context) {
         override fun onDown(e: MotionEvent) = true
 
         override fun onSingleTapUp(e: MotionEvent): Boolean {
-            if (selectionStart >= 0) { cancelSelection(); return true }
+            if (selectionStart >= 0) { if (outsideTapDismisses()) cancelSelection(); return true }
             if (pageLayout == null) return false
             if (navTap(e.x, e.y)) return true
             val char = charAtPoint(e.x, e.y)
@@ -331,6 +331,17 @@ class ReaderView(context: Context) : View(context) {
         onHidePopup?.invoke()
         epd.selection(this)
     }
+
+    /**
+     * Whether a tap outside the selection should dismiss it (and its toolbar). The
+     * annotation toolbar's "Tap outside" toggle controls this. Default ON, so the
+     * long-standing dismiss-on-tap behaviour is preserved unless the user turns it off
+     * for a "sticky" toolbar that only the ✕ or a tool dismisses. Read live so the
+     * toggle (flipped from the toolbar's ••• menu) takes effect on the next tap.
+     */
+    private fun outsideTapDismisses(): Boolean =
+        context.getSharedPreferences("leamh", Context.MODE_PRIVATE)
+            .getBoolean("pref_outside_dismiss", true)
 
     /** Trigger a full EPD clear on this view. */
     fun fullClear() = epd.fullClear(this)
@@ -858,7 +869,7 @@ class ReaderView(context: Context) : View(context) {
                 if (ptrMoved) {
                     finaliseSelection()
                 } else if (selectionStart >= 0) {
-                    cancelSelection() // tap dismisses a shown selection
+                    if (outsideTapDismisses()) cancelSelection() // tap dismisses a shown selection (when enabled)
                 } else if (pageLayout != null) {
                     val char = charAtPoint(event.x, event.y)
                     val hit = if (char != null) annotationAtChar(char) else null
