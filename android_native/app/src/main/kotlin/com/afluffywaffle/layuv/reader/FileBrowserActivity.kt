@@ -33,6 +33,9 @@ class FileBrowserActivity : Activity() {
 
     private val root: File = Environment.getExternalStorageDirectory()
     private var currentDir: File = root
+    // Directory-pick mode (for choosing the AI export folder): hide .docx rows + recents,
+    // and show a "Use this folder" button that returns [currentDir] instead of a file.
+    private val pickDir: Boolean by lazy { intent.getBooleanExtra(EXTRA_PICK_DIR, false) }
     private var entries: List<Entry> = emptyList()
     private var page = 0
     private var rowsPerPage = 0
@@ -166,6 +169,7 @@ class FileBrowserActivity : Activity() {
         bottomBar.addView(prevButton)
         bottomBar.addView(pageView, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         bottomBar.addView(nextButton)
+        if (pickDir) bottomBar.addView(navButton("✓ Use folder") { returnDir() })
 
         // Recents gets weight=1 (1/3), browser gets weight=2 (2/3).
         rootView.addView(recentsSection, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
@@ -193,7 +197,18 @@ class FileBrowserActivity : Activity() {
 
     // --- Recents -------------------------------------------------------------
 
+    private fun returnDir() {
+        setResult(RESULT_OK, Intent().putExtra(EXTRA_PATH, currentDir.absolutePath))
+        finish()
+    }
+
     private fun renderRecents() {
+        // Recents are .docx files — irrelevant when picking a folder.
+        if (pickDir) {
+            recentsSection.visibility = View.GONE
+            (recentsSection.parent as? LinearLayout)?.findViewWithTag<View>("splitDivider")?.visibility = View.GONE
+            return
+        }
         recentsSection.removeAllViews()
         val cap = if (maxRecentsShown > 0) maxRecentsShown else 4
         val recents = loadRecents().take(cap)
@@ -238,10 +253,12 @@ class FileBrowserActivity : Activity() {
             ?.filter { it.isDirectory && !it.name.startsWith(".") && it.name != "Android" }
             ?.sortedBy { it.name.lowercase() }
             ?: emptyList()
-        val docs = children
-            ?.filter { it.isFile && it.name.endsWith(".docx", ignoreCase = true) && !it.name.startsWith("~$") }
-            ?.sortedByDescending { it.lastModified() }
-            ?: emptyList()
+        val docs: List<File> = if (pickDir) emptyList() else (
+            children
+                ?.filter { it.isFile && it.name.endsWith(".docx", ignoreCase = true) && !it.name.startsWith("~$") }
+                ?.sortedByDescending { it.lastModified() }
+                ?: emptyList()
+            )
         entries = dirs.map { Entry(it, true) } + docs.map { Entry(it, false) }
         render()
     }
@@ -487,6 +504,7 @@ class FileBrowserActivity : Activity() {
 
     companion object {
         const val EXTRA_PATH = "path"
+        const val EXTRA_PICK_DIR = "pick_dir"
         private const val MUTED = 0xFF6E6A62.toInt()
         private const val SUBTITLE = 0xFF33302A.toInt()
         private const val DIVIDER = 0xFFDCD7CD.toInt()

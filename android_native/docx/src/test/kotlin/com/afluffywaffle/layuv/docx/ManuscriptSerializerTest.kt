@@ -75,4 +75,38 @@ class ManuscriptSerializerTest {
         assertTrue(prompt.contains("(none)"))
         assertFalse(prompt.contains("note:"))
     }
+
+    @Test
+    fun exportBodyDropsPreambleButKeepsChapterAndAnnotations() {
+        val annotations = listOf(
+            ann(AnnotationTool.highlight, "the old man", note = "tighten this", tag = AnnotationTag.pacing),
+            ann(AnnotationTool.highlight, "the cliff", hasInk = true),
+        )
+        val body = ManuscriptSerializer.buildExportBody("Chapter body text here.", annotations)
+
+        // No in-app preamble and no RewriteProtocol markers — the user's CLAUDE.md drives.
+        assertFalse(body.text.contains("revise a manuscript chapter"), "no preamble")
+        assertFalse(body.text.contains(RewriteProtocol.BEGIN), "no rewrite markers")
+        // Same chapter + annotation rendering as the in-app prompt.
+        assertTrue(body.text.startsWith("=== CHAPTER ==="))
+        assertTrue(body.text.contains("Chapter body text here."))
+        assertTrue(body.text.contains("[Highlight] “the old man”"))
+        assertTrue(body.text.contains("note: tighten this"))
+        assertTrue(body.text.contains("tag: pacing"))
+        assertTrue(body.text.contains("handwritten note: see attached image 1"))
+        assertEquals(listOf("id-the cliff"), body.inkAnnotationIds)
+    }
+
+    @Test
+    fun buildPromptIsPreamblePlusExportBody() {
+        val annotations = listOf(ann(AnnotationTool.comment, "the door", note = "which one?"))
+        val plain = "Chapter body."
+        val prompt = ManuscriptSerializer.buildPrompt(plain, annotations)
+        val body = ManuscriptSerializer.buildExportBody(plain, annotations)
+        // The refactor that extracted buildExportBody must leave buildPrompt's output a
+        // pure preamble + body — i.e. it ends with the export body verbatim.
+        assertTrue(prompt.text.endsWith(body.text), "prompt ends with the export body")
+        assertTrue(prompt.text.contains("revise a manuscript chapter"))
+        assertEquals(body.inkAnnotationIds, prompt.inkAnnotationIds)
+    }
 }

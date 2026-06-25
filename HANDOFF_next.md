@@ -20,6 +20,42 @@ serif "L"). Those handoff sections are retired.
 
 ---
 
+## ✅ BUILT (2026-06-24) — "Export for AI" (the manual Claude Code route)
+
+**Why:** after long discussion, the chosen primary AI workflow is **manual Claude Code on the user's
+novel-project folder** (which already has references + a `CLAUDE.md`): free via their Max sub
+(*interactive* use is legit; `claude -p`/headless = separate credit pool since June 2026, so it
+neither saves money nor stays clean), richest context, reuses everything they built. Layuv's job is
+just **packaging** — export the chapter + annotations as a clean Markdown file so Claude reads a ready
+prompt instead of cracking open the `.docx` (where annotations live as Word comments). A swappable
+**sync layer** (Syncthing over LAN, or Supernote Private Cloud — user-side, not app code) carries the
+folder to the Mac. Subscriptions never grant third-party API access anywhere; cloud = a key (free
+Gemini tier or cheap paid), local (LM Studio/Ollama) = no key.
+
+**What landed (`:app:assembleDebug` clean, `:docx:test` green incl. 2 new tests):**
+- New reader overflow rows **"Export for AI…"** and **"Set AI export folder…"**.
+- Export writes, into the configured `ai_export_folder` (pref) or the chapter's own folder:
+  `<base>_for_ai.md` (chapter + annotations) + `<base>_for_ai_image_N.png` per ink note, with an
+  `=== IMAGE FILES ===` footer mapping "attached image N" → filename. **Overwrites** the prior export
+  (derived artifact). **Never touches the source `.docx`** — read-only; Word/Pages/GDocs round-trip
+  untouched.
+- **Key files:** `app/.../ai/AiExporter.kt` (NEW — pure builder, docx-deps only; returns
+  `Export(files, markdownName, imageCount)`); `docx/.../ManuscriptSerializer.kt` (added
+  `buildExportBody` = chapter+annotations WITHOUT the in-app `===REWRITE===` preamble; `buildPrompt`
+  refactored to `PREAMBLE + buildExportBody` → output byte-identical, golden stays green);
+  `app/.../reader/ReaderActivity.kt` (`exportForAi()` on the write-queue thread + menu rows + folder
+  pref + `REQ_PICK_AI_DIR`); `app/.../reader/FileBrowserActivity.kt` (directory-pick mode via
+  `EXTRA_PICK_DIR` → "✓ Use folder" returns the current dir; hides docs/recents in that mode).
+- **Verified:** engine tests green; app builds; APK installed on the Nomad; reader loads
+  `salt_road.docx` (8 annotations) without crash. **PENDING (needs a device, none on hand now):** the
+  on-device tap-through — open a chapter w/ an ink note → Export for AI… → confirm `<base>_for_ai.md`
+  + `<base>_for_ai_image_1.png` land in the folder and the `.md` reads cleanly; then `claude` on it.
+- **Not committed** (no commit without ask). Out of scope / follow-ups: the **return path** (import a
+  rewritten `.md`/`.docx` draft back = the existing ".docx import" follow-up); the sync layer
+  (user-side); the automated brain Send-button (on a key, later).
+
+---
+
 ## This session — landed + committed: the **Ask AI** feature
 
 A full in-app revision loop: annotate a chapter → in-reader chat panel → the model returns a
@@ -222,7 +258,44 @@ Note: `am start` can't deep-link `HelpActivity` (blocked) — navigate on-device
 
 ---
 
-## ⏭️ NEXT TASK — build the ③ "brain" (Phase 1 reference proxy)
+## ✅ BUILT (2026-06-24) — the ③ "brain" Phase 1 reference proxy (`brain/`)
+
+**Built and locally verified end-to-end (against a mock upstream — no Gemini key needed for that leg).**
+Lives in **`brain/`** (new top-level dir): `leamh_brain.py` (~250 lines, **Python stdlib only — zero pip
+deps**, chosen for auditability/privacy), `brain.env.example`, `.gitignore` (ignores `brain.env` +
+`references/`), `README.md`. Reference library is **external + never committed**: `~/layuv-brain/references/`
+(default; override `BRAIN_REFERENCES_DIR`) — seeded with a sample `story-bible.md` carrying canary facts.
+
+**What it does:** serves `POST /v1/chat/completions` (and bare `/chat/completions`); reads ALL `.md`/`.txt`
+reference files **fresh per request** (evolving library, no restart) and injects them **whole** as ONE
+`system` message (NO RAG); swaps in the Mac-held upstream key + model; **streams the upstream SSE back
+byte-for-byte** in the exact shape Layuv parses (`choices[0].delta.content` / `finish_reason` / `[DONE]`).
+**The Mac owns the model** (`BRAIN_UPSTREAM_MODEL`) — the device's model field is ignored (decouples the
+director). Keyless-LAN by default; optional `BRAIN_TOKEN` (device sends it as its key) for shared/remote
+nets. Privacy-safe logging (counts only — never the manuscript or key). Banner prints the exact Layuv
+settings + LAN IP on startup.
+
+**Verified locally this session:** `/health` OK; whole 1,179-char bible injected; **canary facts
+(`Call`/`siol`/`Mara Theune`) confirmed present in the forwarded system message**; SSE relayed in Layuv's
+parse shape; model override (`brain`→`test-model`); keyless path (no `Authorization` when key blank); clean
+process teardown. Run: `cd brain && python3 leamh_brain.py` (after `cp brain.env.example brain.env` + paste
+the Gemini key into `BRAIN_UPSTREAM_KEY`).
+
+**Honesty caveat (stated in README):** with a CLOUD upstream (Gemini/Claude) the references + chapter DO go
+to that provider — inherent to any cloud model. The brain protects the **key** (stays on the Mac) and the
+**architecture** (swap upstream to a local model later = one `brain.env` line, zero device rebuild).
+
+### Remaining — on-device Gemini verify (needs the key ON THE MAC)
+The only unproven leg is the real Gemini call: the Gemini key currently lives only in Layuv's encrypted
+store on the device, NOT on the Mac. Steps: (1) paste the AIza key into `brain/brain.env`
+`BRAIN_UPSTREAM_KEY`; (2) `python3 leamh_brain.py`; (3) in Layuv set Endpoint = `http://<mac-ip>:8077/v1`,
+Model = anything, Key = blank → **Test connection**; (4) send a chapter → the reply must reflect a
+bible-only fact (proves injection) → Save & Open draft still works → device prefs hold only the Mac URL
+(key never left the Mac). Quick keyless smoke without the device: the `curl` block in `brain/README.md`.
+
+---
+
+## Superseded — original NEXT TASK spec for the brain (kept for reference)
 
 **The Android side is DONE.** Layuv is a provider-agnostic OpenAI-compatible client, verified end-to-end
 on-device with Gemini this session (annotate → Send → it asked a clarifying question → full rewrite →

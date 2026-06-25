@@ -27,6 +27,7 @@ import android.widget.PopupWindow
 import android.widget.TextView
 import android.widget.Toast
 import com.afluffywaffle.layuv.R
+import com.afluffywaffle.layuv.ai.AiExporter
 import com.afluffywaffle.layuv.docx.DocxStore
 import com.afluffywaffle.layuv.docx.LoadedDocument
 import com.afluffywaffle.layuv.docx.ResolvedAnnotation
@@ -527,6 +528,21 @@ class ReaderActivity : Activity() {
             confirmFlattenInk()
         })
         root.addView(overflowMenuDivider())
+        root.addView(overflowActionRow("Export for AI…") {
+            popup?.dismiss()
+            exportForAi()
+        })
+        root.addView(overflowActionRow("Set AI export folder…") {
+            popup?.dismiss()
+            if (ensureAllFilesAccess()) {
+                startActivityForResult(
+                    Intent(this, FileBrowserActivity::class.java)
+                        .putExtra(FileBrowserActivity.EXTRA_PICK_DIR, true),
+                    REQ_PICK_AI_DIR,
+                )
+            }
+        })
+        root.addView(overflowMenuDivider())
         root.addView(overflowActionRow("Help & About") {
             popup?.dismiss()
             startActivity(Intent(this, HelpActivity::class.java))
@@ -715,6 +731,49 @@ class ReaderActivity : Activity() {
         startActivityForResult(Intent(this, FileBrowserActivity::class.java), REQ_BROWSE)
     }
 
+    /**
+     * Write a clean `<chapter>_for_ai.md` (chapter + annotations, via [AiExporter]) plus
+     * any handwritten-note PNGs into the AI export folder — the configured one if set and
+     * still a directory, otherwise the chapter's own folder. Sync layer (Syncthing /
+     * Supernote Private Cloud) carries it to a Mac, where `claude` reads it. Never touches
+     * the source `.docx`; runs on the write-queue thread so it sees the latest disk bytes.
+     */
+    private fun exportForAi() {
+        val opened = book ?: run {
+            Toast.makeText(this, "Open a document first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val configured = prefs.getString(KEY_AI_EXPORT_FOLDER, null)?.let(::File)?.takeIf { it.isDirectory }
+        val dir = configured ?: opened.file?.parentFile
+        if (dir == null) {
+            Toast.makeText(this, "No folder to export to — set an AI export folder first.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val rawName = opened.file?.name ?: opened.displayName
+        val baseName = (if (rawName.endsWith(".docx", ignoreCase = true)) rawName.dropLast(5) else rawName)
+            .ifBlank { "chapter" }
+        Toast.makeText(this, "Exporting for AI…", Toast.LENGTH_SHORT).show()
+        DocxWriteQueue.enqueueRead {
+            try {
+                val src = opened.file?.readBytes() ?: opened.bytes
+                val export = AiExporter.build(
+                    plainText = opened.doc.plainText,
+                    annotations = opened.doc.annotations.map { it.annotation },
+                    sourceDocxBytes = src,
+                    baseName = baseName,
+                )
+                export.files.forEach { DocxWriteQueue.writeAtomicDurable(File(dir, it.name), it.bytes) }
+                main.post {
+                    val imgs = if (export.imageCount > 0) " + ${export.imageCount} image(s)" else ""
+                    Toast.makeText(this, "Exported ${export.markdownName}$imgs → ${dir.name}/", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "AI export failed", e)
+                main.post { Toast.makeText(this, "Couldn’t export for AI.", Toast.LENGTH_SHORT).show() }
+            }
+        }
+    }
+
     private fun launchAnnotationsPanel() {
         val opened = book ?: run {
             Toast.makeText(this, "Open a document first.", Toast.LENGTH_SHORT).show()
@@ -820,6 +879,11 @@ class ReaderActivity : Activity() {
                 } else {
                     readerView.showHint("Couldn’t read $path")
                 }
+            }
+            REQ_PICK_AI_DIR -> if (resultCode == RESULT_OK) {
+                val dir = data?.getStringExtra(FileBrowserActivity.EXTRA_PATH) ?: return
+                prefs.edit().putString(KEY_AI_EXPORT_FOLDER, dir).apply()
+                Toast.makeText(this, "AI exports will go to: $dir", Toast.LENGTH_LONG).show()
             }
             REQ_NOTE -> {
                 Log.d(TAG, "REQ_NOTE: resultCode=$resultCode note=${data?.getStringExtra(NoteActivity.EXTRA_NOTE)}")
@@ -1530,7 +1594,9 @@ class ReaderActivity : Activity() {
         private const val REQ_RETOOL_NOTE = 1005
         private const val REQ_INK = 1007
         private const val REQ_SEARCH = 1008
+        private const val REQ_PICK_AI_DIR = 1009
         private const val PREFS = "leamh"
+        private const val KEY_AI_EXPORT_FOLDER = "ai_export_folder"
         private const val KEY_LAST_PATH = "last_path"
         private const val KEY_COLUMNS = "columns"
         private const val KEY_NAV_SIDE = "eink_nav_side"

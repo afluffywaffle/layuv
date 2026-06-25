@@ -38,9 +38,20 @@ object ManuscriptSerializer {
     data class Prompt(val text: String, val inkAnnotationIds: List<String>)
 
     fun buildPrompt(plainText: String, annotations: List<Annotation>): Prompt {
+        val body = buildExportBody(plainText, annotations)
+        return Prompt(PREAMBLE + "\n\n" + body.text, body.inkAnnotationIds)
+    }
+
+    /**
+     * The chapter + annotations body WITHOUT the in-app preamble (no [RewriteProtocol]
+     * `===REWRITE===` markers). Used by the "Export for AI" file path, where the user's
+     * OWN project instructions (e.g. a Claude Code `CLAUDE.md`) drive the rewrite rather
+     * than the in-app chat protocol. Same [Prompt] shape: the body text plus the
+     * ink-annotation ids in their "attached image N" order.
+     */
+    fun buildExportBody(plainText: String, annotations: List<Annotation>): Prompt {
         val sb = StringBuilder()
         val inkIds = mutableListOf<String>()
-        sb.append(PREAMBLE).append("\n\n")
         sb.append("=== CHAPTER ===\n")
         sb.append(plainText.trim()).append("\n\n")
         sb.append("=== ANNOTATIONS (").append(annotations.size).append(") ===\n")
