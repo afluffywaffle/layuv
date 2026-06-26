@@ -30,6 +30,7 @@ public enum DocxStore {
 
     private static let annotationsPath  = "leamh/annotations.json"
     private static let positionPath     = "leamh/position.json"
+    private static let aiChatPath       = "leamh/aichat.json"
     private static let documentPath     = "word/document.xml"
     private static let cleanPath        = "leamh/document_clean.xml"
     private static let commentsPath     = "word/comments.xml"
@@ -191,6 +192,36 @@ public enum DocxStore {
         let archive = try DocxArchive.read(docxData)
         var entries = archive.toMutableEntries()
         entries[positionPath] = Data(JsonWriter.encode(position.toMap() as Any?).utf8)
+        return try DocxArchive.write(entries)
+    }
+
+    // MARK: - Ask-AI transcript (leamh/aichat.json)
+    //
+    // Persisted IN the chapter DOCX (same convention as annotations) so an in-app "Ask AI"
+    // thread suspends/resumes across leaving the panel, process death, and reboot. writeAiChat
+    // touches ONLY this part, so it coexists with annotation writes.
+
+    /// Reads the persisted Ask-AI transcript, or empty if absent/garbage (load contract).
+    public static func readAiChat(_ docxData: Data) -> [AiTurn] {
+        do {
+            let archive = try DocxArchive.read(docxData)
+            guard let raw = archive.text(named: aiChatPath) else { return [] }
+            let parsed = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [[String: Any]] ?? []
+            return parsed.map { AiTurn.fromMap($0 as [String: Any?]) }
+        } catch {
+            return []
+        }
+    }
+
+    /// Writes/replaces leamh/aichat.json; leaves every other part untouched. Ensures the json
+    /// default content-type exists (a never-annotated chapter may lack it) so Word accepts it.
+    public static func writeAiChat(_ docxData: Data, turns: [AiTurn]) throws -> Data {
+        let archive = try DocxArchive.read(docxData)
+        var entries = archive.toMutableEntries()
+        entries[aiChatPath] = Data(JsonWriter.encode(turns.map { $0.toMap() }).utf8)
+        if let ct = entries[contentTypesPath], let s = String(data: ct, encoding: .utf8) {
+            entries[contentTypesPath] = Data(ContentTypes.ensure(s).utf8)
+        }
         return try DocxArchive.write(entries)
     }
 }
