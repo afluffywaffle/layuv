@@ -41,12 +41,15 @@ struct ReaderTextView: UIViewControllerRepresentable {
     let documentURL: URL?
     var navMode: NavMode = .scroll
     var findTrigger: Int = 0
+    /// Set to an annotation ID to scroll the reader to that annotation (one-shot; stays set).
+    var scrollToAnnotationId: String? = nil
     @EnvironmentObject var store: DocumentStore
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     final class Coordinator {
         var lastFindTrigger = 0
+        var lastScrollAnnotationId: String? = nil
     }
 
     func makeUIViewController(context: Context) -> ReaderViewController {
@@ -65,6 +68,10 @@ struct ReaderTextView: UIViewControllerRepresentable {
         if findTrigger != context.coordinator.lastFindTrigger {
             context.coordinator.lastFindTrigger = findTrigger
             vc.activateFind()
+        }
+        if let id = scrollToAnnotationId, id != context.coordinator.lastScrollAnnotationId {
+            context.coordinator.lastScrollAnnotationId = id
+            vc.scrollToAnnotation(id: id)
         }
     }
 
@@ -232,6 +239,15 @@ final class ReaderViewController: UIViewController, UITextViewDelegate, UIGestur
 
     func activateFind() {
         textView.findInteraction?.presentFindNavigator(showingReplace: false)
+    }
+
+    // MARK: - Scroll to annotation (used by the Bookmarks sidebar tab)
+
+    func scrollToAnnotation(id: String) {
+        guard let resolved = currentAnnotations.first(where: { $0.annotation.id == id }),
+              let span = resolved.span, span.start >= 0 else { return }
+        let length = max(1, min(span.end - span.start, 80))
+        textView.scrollRangeToVisible(NSRange(location: span.start, length: length))
     }
 
     // MARK: - Nav mode
