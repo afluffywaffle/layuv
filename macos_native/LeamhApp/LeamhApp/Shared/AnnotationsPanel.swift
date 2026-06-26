@@ -1,16 +1,35 @@
 import SwiftUI
 
+// MARK: - Sort order
+
+enum AnnotationSortOrder: String, CaseIterable {
+    case position = "position"  // document order (default)
+    case dateAdded = "date"     // newest first
+    case byTool  = "tool"       // grouped by tool then position
+
+    var label: String {
+        switch self {
+        case .position: return "Document Order"
+        case .dateAdded: return "Newest First"
+        case .byTool:   return "By Tool"
+        }
+    }
+}
+
+// MARK: - Panel
+
 struct AnnotationsPanel: View {
     @EnvironmentObject var store: DocumentStore
 
-    @State private var searchText = ""
+    @State private var searchText  = ""
     @State private var activeTags: Set<AnnotationTag> = []
+    @State private var sortOrder: AnnotationSortOrder = .position
 
     // All four tags in display order.
     private let allTags: [AnnotationTag] = [.voice, .pacing, .continuity, .query]
 
     private var filtered: [ResolvedAnnotation] {
-        store.annotations.filter { resolved in
+        let base = store.annotations.filter { resolved in
             let a = resolved.annotation
             let matchesSearch = searchText.isEmpty
                 || a.selectedText.localizedCaseInsensitiveContains(searchText)
@@ -18,6 +37,19 @@ struct AnnotationsPanel: View {
             let matchesTag = activeTags.isEmpty
                 || (a.tag.map { activeTags.contains($0) } ?? false)
             return matchesSearch && matchesTag
+        }
+        switch sortOrder {
+        case .position:
+            return base.sorted { $0.annotation.position < $1.annotation.position }
+        case .dateAdded:
+            return base.sorted { $0.annotation.timestamp > $1.annotation.timestamp }
+        case .byTool:
+            return base.sorted {
+                if $0.annotation.tool.rawValue != $1.annotation.tool.rawValue {
+                    return $0.annotation.tool.rawValue < $1.annotation.tool.rawValue
+                }
+                return $0.annotation.position < $1.annotation.position
+            }
         }
     }
 
@@ -43,6 +75,33 @@ struct AnnotationsPanel: View {
         .navigationTitle(isFiltering
             ? "Annotations (\(filtered.count) / \(store.annotations.count))"
             : "Annotations")
+        .toolbar {
+            ToolbarItem(placement: sortButtonPlacement) {
+                Menu {
+                    ForEach(AnnotationSortOrder.allCases, id: \.rawValue) { order in
+                        Button {
+                            sortOrder = order
+                        } label: {
+                            if sortOrder == order {
+                                Label(order.label, systemImage: "checkmark")
+                            } else {
+                                Text(order.label)
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "arrow.up.arrow.down")
+                }
+            }
+        }
+    }
+
+    private var sortButtonPlacement: ToolbarItemPlacement {
+        #if os(iOS)
+        return .topBarTrailing
+        #else
+        return .automatic
+        #endif
     }
 
     // MARK: Search bar

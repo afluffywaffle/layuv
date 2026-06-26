@@ -94,27 +94,68 @@ private struct ReaderScreen: View {
     let document: LoadedDocument
     let onAskAi: () -> Void
     let onExport: ([Any]) -> Void
+
     @State private var showAnnotations = false
+    @State private var findTrigger     = 0
+    @AppStorage("com.afluffywaffle.layuv.navMode") private var navModeRaw = NavMode.scroll.rawValue
+    private var navMode: NavMode { NavMode(rawValue: navModeRaw) ?? .scroll }
 
     var body: some View {
-        ReaderTextView(document: document, annotations: store.annotations, documentURL: store.currentURL)
+        ReaderTextView(document: document,
+                       annotations: store.annotations,
+                       documentURL: store.currentURL,
+                       navMode: navMode,
+                       findTrigger: findTrigger)
             .ignoresSafeArea(.container, edges: .bottom)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Find in text
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        findTrigger += 1
+                    } label: {
+                        Image(systemName: "magnifyingglass")
+                    }
+                    .accessibilityLabel("Find")
+                }
+                // Navigation mode picker
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        ForEach(NavMode.allCases, id: \.rawValue) { mode in
+                            Button {
+                                navModeRaw = mode.rawValue
+                            } label: {
+                                if navModeRaw == mode.rawValue {
+                                    Label(mode.label, systemImage: "checkmark")
+                                } else {
+                                    Label(mode.label, systemImage: mode.icon)
+                                }
+                            }
+                        }
+                    } label: {
+                        Image(systemName: navMode.icon)
+                    }
+                    .accessibilityLabel("Navigation mode: \(navMode.label)")
+                }
+                // Annotations panel toggle
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showAnnotations.toggle()
                     } label: {
-                        Label("Annotations", systemImage: "list.bullet.rectangle")
+                        Image(systemName: "list.bullet.rectangle")
                     }
+                    .accessibilityLabel("Annotations")
                 }
+                // Ask AI
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         onAskAi()
                     } label: {
-                        Label("Ask AI", systemImage: "sparkles")
+                        Image(systemName: "sparkles")
                     }
+                    .accessibilityLabel("Ask AI")
                 }
+                // Export for AI
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         Task {
@@ -128,13 +169,16 @@ private struct ReaderScreen: View {
                             onExport(urls)
                         }
                     } label: {
-                        Label("Export for AI", systemImage: "square.and.arrow.up")
+                        Image(systemName: "square.and.arrow.up")
                     }
+                    .accessibilityLabel("Export for AI")
                 }
             }
             .inspector(isPresented: $showAnnotations) {
-                AnnotationsPanel()
-                    .inspectorColumnWidth(min: 280, ideal: 340, max: 460)
+                NavigationStack {
+                    AnnotationsPanel()
+                }
+                .inspectorColumnWidth(min: 280, ideal: 340, max: 460)
             }
     }
 
