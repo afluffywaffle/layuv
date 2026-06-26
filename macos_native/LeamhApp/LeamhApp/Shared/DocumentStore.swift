@@ -1,5 +1,7 @@
 import Foundation
+#if os(macOS)
 import AppKit
+#endif
 
 // App-layer Identifiable conformance so Annotation can be used as .sheet(item:).
 extension Annotation: Identifiable {}
@@ -21,10 +23,21 @@ final class DocumentStore: ObservableObject {
     private let recentsKey  = "com.afluffywaffle.layuv.recentFiles"
     private let bookmarksKey = "com.afluffywaffle.layuv.bookmarks"
 
+    // Security-scoped bookmarks: macOS app-sandbox needs the .withSecurityScope option;
+    // iOS uses plain bookmarks for document-picker URLs (still wrapped in start/stopAccessing…).
+    #if os(macOS)
+    private static let bookmarkCreationOptions: URL.BookmarkCreationOptions = .withSecurityScope
+    private static let bookmarkResolutionOptions: URL.BookmarkResolutionOptions = .withSecurityScope
+    #else
+    private static let bookmarkCreationOptions: URL.BookmarkCreationOptions = []
+    private static let bookmarkResolutionOptions: URL.BookmarkResolutionOptions = []
+    #endif
+
     init() { loadRecents() }
 
     // MARK: - File access
 
+    #if os(macOS)
     func openFilePanel() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.init(filenameExtension: "docx")].compactMap { $0 }
@@ -33,6 +46,7 @@ final class DocumentStore: ObservableObject {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Task { await load(url: url) }
     }
+    #endif
 
     func load(url: URL) async {
         isLoading = true
@@ -130,10 +144,10 @@ final class DocumentStore: ObservableObject {
         recentURLs = paths.compactMap { resolveURL(forPath: $0) }
     }
 
-    // Creates/refreshes a security-scoped bookmark for url.
+    // Creates/refreshes a (security-scoped on macOS) bookmark for url.
     private func storeBookmark(for url: URL) {
         guard let data = try? url.bookmarkData(
-            options: .withSecurityScope,
+            options: Self.bookmarkCreationOptions,
             includingResourceValuesForKeys: nil,
             relativeTo: nil
         ) else { return }
@@ -152,7 +166,7 @@ final class DocumentStore: ObservableObject {
         var isStale = false
         guard let resolved = try? URL(
             resolvingBookmarkData: data,
-            options: .withSecurityScope,
+            options: Self.bookmarkResolutionOptions,
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
         ) else {
