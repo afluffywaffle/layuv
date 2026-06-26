@@ -95,7 +95,8 @@ class FileBrowserActivity : Activity() {
         val screenH = resources.displayMetrics.heightPixels
         maxRecentsShown = recentsCapFromHeight((screenH - dp(56f)) / 3)
         renderRecents()
-        listDir(root)
+        val startDir = intent.getStringExtra(EXTRA_START_DIR)?.let(::File)?.takeIf { it.isDirectory }
+        listDir(startDir ?: root)
     }
 
     // --- UI ------------------------------------------------------------------
@@ -169,6 +170,7 @@ class FileBrowserActivity : Activity() {
         bottomBar.addView(prevButton)
         bottomBar.addView(pageView, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         bottomBar.addView(nextButton)
+        bottomBar.addView(navButton("+ Folder") { showNewFolderDialog() })
         if (pickDir) bottomBar.addView(navButton("✓ Use folder") { returnDir() })
 
         // Recents gets weight=1 (1/3), browser gets weight=2 (2/3).
@@ -177,6 +179,75 @@ class FileBrowserActivity : Activity() {
         rootView.addView(browserSection, LinearLayout.LayoutParams(MATCH_PARENT, 0, 2f))
         rootView.addView(bottomBar, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         return rootView
+    }
+
+    private fun showNewFolderDialog() {
+        var popup: PopupWindow? = null
+
+        val editText = android.widget.EditText(this).apply {
+            typeface = ReaderTheme.body(this@FileBrowserActivity)
+            setTextColor(ReaderTheme.INK)
+            setHintTextColor(0xFF9E998F.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            hint = "Folder name"
+            background = null // remove underline
+            val h = dp(16f); val v = dp(10f)
+            setPadding(h, v, h, v)
+        }
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(ReaderTheme.PAPER)
+                setStroke(dp(2f), ReaderTheme.INK_87)
+            }
+        }
+
+        val titleRow = TextView(this).apply {
+            text = "New folder in ${currentDir.name}"
+            typeface = ReaderTheme.bodyBold(this@FileBrowserActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+            setTextColor(ReaderTheme.INK)
+            val h = dp(16f)
+            setPadding(h, dp(14f), h, dp(8f))
+        }
+
+        val divider = View(this).apply {
+            setBackgroundColor(ReaderTheme.INK_12)
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, dp(1f).coerceAtLeast(1))
+        }
+
+        val buttonRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+            val p = dp(8f)
+            setPadding(p, p, p, p)
+        }
+        buttonRow.addView(navButton("Cancel") { popup?.dismiss() })
+        buttonRow.addView(navButton("Create") {
+            val name = editText.text.toString().trim()
+            if (name.isBlank()) return@navButton
+            val newDir = File(currentDir, name)
+            if (newDir.exists() || newDir.mkdirs()) { popup?.dismiss(); listDir(newDir) }
+        })
+
+        container.addView(titleRow)
+        container.addView(editText)
+        container.addView(divider)
+        container.addView(buttonRow)
+
+        val popupW = (resources.displayMetrics.widthPixels * 0.75f).toInt()
+        container.measure(
+            View.MeasureSpec.makeMeasureSpec(popupW, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        popup = PopupWindow(container, popupW, WRAP_CONTENT, true).apply {
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0))
+            elevation = 0f
+            isOutsideTouchable = true
+        }
+        popup.showAtLocation(window.decorView, Gravity.CENTER, 0, 0)
+        editText.requestFocus()
     }
 
     /** TextView styled like a nav button — Material Button overrides typeface; TextView doesn't. */
@@ -505,6 +576,7 @@ class FileBrowserActivity : Activity() {
     companion object {
         const val EXTRA_PATH = "path"
         const val EXTRA_PICK_DIR = "pick_dir"
+        const val EXTRA_START_DIR = "start_dir"
         private const val MUTED = 0xFF6E6A62.toInt()
         private const val SUBTITLE = 0xFF33302A.toInt()
         private const val DIVIDER = 0xFFDCD7CD.toInt()

@@ -2,7 +2,38 @@
   "permissions": {
     "allow": [
       "Read(//tmp/**)",
-      "Read(//private/tmp/**)"
+      "Read(//private/tmp/**)",
+      "Bash(./gradlew :docx:test)",
+      "Bash(./gradlew :docx:test --tests \"*ManuscriptSerializerTest\" --tests \"*DocxFromTextTest\" --tests \"*DocxStoreAiChatTest\")",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb connect *)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb devices *)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s 192.168.138.234:5555 shell am start -n com.afluffywaffle.layuv.dev/com.afluffywaffle.layuv.reader.ReaderActivity)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s 192.168.138.234:5555 logcat -c)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s 192.168.138.234:5555 logcat -s AI:* ReaderTheme:* DocxWriteQueue:*)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s 192.168.138.234:5555 logcat -s AI,DocxWriteQueue)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s 192.168.138.234:5555 shell screencap -p /sdcard/leamh_screen.png)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s 192.168.138.234:5555 pull /sdcard/leamh_screen.png /tmp/leamh_screen.png)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s 192.168.138.234:5555 logcat -d -s AI)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s 192.168.138.234:5555 shell screencap -p /sdcard/leamh_icon.png)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s 192.168.138.234:5555 pull /sdcard/leamh_icon.png /tmp/leamh_icon.png)",
+      "Bash(./gradlew :docx:test -q)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s 192.168.138.234:5555 install -r app/build/outputs/apk/debug/app-debug.apk)",
+      "Bash(./gradlew :docx:test :app:assembleDebug)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb install *)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb logcat*)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s * logcat*)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb devices*)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb exec-out screencap*)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s * exec-out screencap*)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb shell cat*)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s * shell cat*)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb shell dumpsys*)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s * shell dumpsys*)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s SN078C10005528 install -r /Users/jayromacorda/Develop/layuv/android_native/app/build/outputs/apk/debug/app-debug.apk)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s SN078C10005528 shell ls /sdcard/Document/)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s SN078C10005528 shell ls /sdcard/Document/TRANSFER_TEST_v1_export/)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s SN078C10005528 shell ls /sdcard/Document/Skies/)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s SN078C10005528 install -r app/build/outputs/apk/debug/app-debug.apk)"
     ]
   }
 }

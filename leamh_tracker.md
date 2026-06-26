@@ -266,6 +266,12 @@ The four Dart tools in `android_native/tools/golden_gen/` import `package:layuv/
 
 - [ ] **Pen dragging text selection handles renders dashed lasso lines** — `EinkPen.configureLasso()` sets drawPath to dotted lasso mode at startup; any stylus drag (including handle-drag) renders the lasso visual. Need to switch drawPath pen mode to a non-lasso config when handles are being dragged, and restore lasso mode after drag ends.
 - [ ] **Text selection highlight in annotations panel is unreadable on e-ink** — system selection colour is a dark filled rect; on greyscale e-ink it renders near-black, making selected text invisible. Override the selection colour to a light dotted underline or low-opacity tint that is legible on e-ink.
+
+### Android AI menu — next-up polish (2026-06-26)
+
+- [ ] **Import rewrite with no import folder set opens the browser at storage root** — after removing the "Set an import folder first" guard toast, tapping "Import rewrite…" with neither import folder nor AI export folder configured drops the user at `/sdcard` with no context. Consider a brief non-animated top-of-screen status label (no toast, no animation — static overlay that auto-hides after 2.5s using a Handler) saying "No folder set — pick one below", or redirect directly to the "Set import folder…" flow instead.
+- [ ] **`ai_create_subfolder` SharedPreferences orphan** — the "create subfolder per export" checkbox was removed and its preference key `KEY_AI_CREATE_SUBFOLDER` deleted from code, but any device that had it checked retains the stale key in `leamh` prefs. Harmless, but a future "Reset AI settings" action should include it in the clear set.
+- [ ] **AI menu button always visible in toolbar pill** — previously the AI Chat bubble was hidden when AI wasn't configured (`updateAiButtonVisibility()`). Now it always shows (the button opens the submenu which contains Export/Import/Set folder — all useful without AI configured). Worth a UX review pass to confirm this is the intended behaviour; if not, restore the gate but show a dimmed version that still reaches the folder-setting items.
 - [x] ✅ **Comment tool (toolbar) didn't save annotations** — `commitAnnotationFromPanel` was missing the optimistic update that `commitAnnotation` has; the smart-merge in `saveAnnotations.onSuccess` saw a stale `currentBook.doc` and fell into the mismatch branch, never calling `readerView.updateAnnotations`. Fixed 2026-06-21: added optimistic `book` + `readerView.updateAnnotations` before `saveAnnotations`. `ReaderActivity.kt:1082–1130`.
 - [x] ✅ **Ink annotations displayed in panel with thumbnail + tap-to-edit** — `AnnotationsPanelActivity` now decodes ink PNGs in the IO thread (`loadAnnotations`) and stores them in `inkBitmaps`. `buildRow` shows a 96dp greyscale thumbnail for any annotation with `hasInk=true`. Tapping an ink row returns `EXTRA_OPEN_INK_ID` to `ReaderActivity`, which calls `editAnnotationNote` to open the ink editor. Fixed 2026-06-21.
 
@@ -310,17 +316,18 @@ Currently ink PNG lives inside `word/comments.xml` via `<w:drawing>` — Word re
 - [ ] Clipboard format as a structured Claude prompt
 - Needs design discussion before implementation
 
-### Swift/SwiftUI rewrite (macOS + iOS)
-- Replace Flutter with native Swift — better PencilKit, TextKit 2, sandboxing, iCloud
-- Dart `DocxStore` is the reference implementation for the Swift DOCX engine (`ZipFoundation` + `XMLDocument`)
-- `BookmarkChannel.swift` expands into full app; method channel removed
-- Three reader modes → `ScrollView`, `TabView(.page)`, custom page-flip with `UIPageViewController`
-- [ ] Project scaffold — SwiftUI app target, shared Package for DOCX engine
-- [ ] DOCX engine port (Swift) — `ZipFoundation`, `XMLDocument`, annotation round-trip
-- [ ] Reader views (scroll, page)
-- [ ] Annotation panel + PencilKit canvas (replaces Flutter placeholder)
-- [ ] Annotations panel list view
-- [ ] iCloud Drive / security-scoped bookmark handling (native, no method channel)
+### Swift/SwiftUI rewrite (macOS + iOS/iPad)
+- Two targets in one Xcode project (`macos_native/LeamhApp/`): `LeamhApp` (macOS) + `LeamhApp-iOS` (iPad/iPhone)
+- Shared pure-Swift `LeamhDocx` engine unchanged across both targets
+- [x] M1 — open DOCX + TextKit 2 render (commit `c14c089`) ✅
+- [x] M2 — selection annotations, tap-to-edit, annotations panel (commit `5d0edde`) ✅
+- [x] M3 — Apple Pencil ink notes via PencilKit (commit `e891351`) ✅
+- [x] M3.5 — icon toolbar, full-text search, nav mode picker, panel sort ✅
+- [x] M4a — engine port: `ManuscriptSerializer`, `RewriteProtocol`, `DocxFromText`, aichat r/w (commit `ca5ea07`) ✅
+- [x] M4b–M4d — provider stack (`OpenAiCompatibleProvider`, `CleartextPolicy`, `SecureKeyStore`), `AskAiView`, `AiSettingsView`, Export for AI (commit `7c9fa9f`) ✅
+- [ ] **AI submenu parity** — add the AI Chat bubble button to the iOS toolbar (mirrors Android `aiMenuButton`); tap opens a sheet/popover with: AI Chat (gated, dimmed when not configured + "Configure in Settings" subtitle), Export for AI…, Import rewrite…, Set AI export folder… (with `parent/folder` subtitle), Set import folder… (with subtitle). Matches the refined Android submenu structure from 2026-06-26.
+- [ ] Font fix — PostScript names in `AppTheme` don't match bundled font files; text falls back to system font on both targets. Fix: correct names + bundle real weights OR `CTFontManagerRegisterFontsForURL` at launch.
+- [ ] `ThreadEntry` parity — `ManuscriptSerializer` is note-only; full thread-folding round-trip with Android-threaded annotations still pending.
 
 ### App icon
 - [x] Icon designed in Affinity and generated via `flutter_launcher_icons` ✅

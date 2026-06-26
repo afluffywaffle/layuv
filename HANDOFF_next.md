@@ -346,6 +346,57 @@ holds the key + library and forwards to a real model** — ③ is the goal.)
 - **Confirm scope first:** where the server lives (new `brain/` dir in the repo?), Python vs Node (user
   has python3/pipx/mlx), reference-folder convention, Gemini-first upstream.
 
+---
+
+## ✅ REFINED (2026-06-26) — Export for AI + Import Rewrite UX + AI submenu
+
+All changes on branch `native-port-drawpath-ink`. Build clean; installed on Nomad.
+
+### What landed
+
+**Export for AI — version continuity:**
+- Version is now always `fileVersion + 1` (deterministic from the open file's `_draft_vN` suffix — no scanning). `draft_v3.docx` always exports to `v4`, no ambiguity on re-export.
+- On every export, a `${cleanBase}_draft_v${N}.docx` copy is created alongside the source and the reader opens it immediately — the user is always on the new draft before Claude rewrites.
+- Draft archive: keeps the 3 newest `_draft_vN.docx` files in the source folder; older ones move to `${cleanBase} archive/` (e.g. `salt_road archive/`).
+- Subfolder structure is now always on (no checkbox): `AI_exports/salt_road/salt_road_v4_for_ai.md` (or `…/salt_road_v4_export/chapter.md` for ink).
+
+**Import rewrite:**
+- Auto-detects the rewrite DOCX in the configured import folder and AI export folder (multiple candidate paths).
+- Falls back to the file browser pre-navigated to the configured folder if not found.
+- If neither folder is configured, opens browser at storage root (known gap — see tracker).
+- "Set import folder…" remembers the chosen folder and shows `parent/folder` subtitle in the AI menu.
+
+**AI submenu (pill button → submenu):**
+- Removed AI Chat bubble from the toolbar pill; replaced with `aiMenuButton` (`AiChatButton`) whose tap opens `showAiMenu()` instead of toggling the chat panel.
+- Main overflow `...` menu is clean again — no AI items.
+- `showAiMenu()` popup: AI Chat (tappable only when `isAiConfigured()`; otherwise dimmed with "Configure in Help & About" subtitle), Export for AI…, Import rewrite…, Set AI export folder…, Set import folder…
+- "Set AI export folder…" and "Set import folder…" each show their configured `parent/folder` as a subtitle.
+- Popup uses `R.drawable.popup_bg` (same border/background as main overflow), `elevation = ReaderTheme.dp(ctx, 6f)`.
+
+**FileBrowserActivity — folder creation:**
+- Removed the "create subfolder per export" checkbox entirely (was confusing in both export and import pickers).
+- Added `+ Folder` button in the bottom bar (all modes): opens a custom `PopupWindow` (no system `AlertDialog` — no drop shadow, `elevation = 0f`, `GradientDrawable` black border, ReaderTheme fonts). Typing a name and tapping "Create" creates the folder and navigates into it.
+
+**Toasts — removed:**
+- All AI-workflow toasts removed: export/import progress, folder-set confirmations, "Exporting…", "Imported — reloading.", etc.
+- Pre-existing read-only/error/guard toasts (`File is read-only`, `Open a document first`, etc.) are untouched.
+- Export-with-no-folder: instead of toast, redirects to the export folder picker.
+
+### Key files touched this session
+
+| File | What changed |
+|---|---|
+| `app/.../reader/ReaderActivity.kt` | `aiMenuButton` (pill), `showAiMenu()`, `overflowActionRowWithSubtitle()`, export/import toast removal, `REQ_SET_IMPORT_FOLDER`, import redirect logic, subfolder always-on |
+| `app/.../reader/FileBrowserActivity.kt` | Removed subfolder checkbox + `buildSubfolderRow()` + `EXTRA_HAS_INK`/`EXTRA_CREATE_SUBFOLDER`; added `showNewFolderDialog()` (custom PopupWindow), `+ Folder` button |
+| `app/.../ai/AiExporter.kt` | Single `version: Int` param (was split export/nextDraft) |
+
+### Open follow-ups (→ tracker)
+1. Import rewrite with no folder configured opens browser at storage root (no context) — see tracker.
+2. `ai_create_subfolder` SharedPreferences orphan — harmless but should be cleared in a future "Reset" action.
+3. `aiMenuButton` always visible (previously gated) — confirm this is intended.
+
+---
+
 ## Handoff prompt for a new conversation (current as of 2026-06-26)
 
 > I'm working on the Léamh/Layuv project (`/Users/jayromacorda/Develop/layuv`), branch
@@ -353,33 +404,30 @@ holds the key + library and forwards to a real model** — ③ is the goal.)
 > index — especially `native_android_port.md`, `project_ai_workflow_and_export.md`, `project_brain_proxy.md`,
 > `project_ai_networking.md`, and `ios_ipad_port.md`.
 >
-> **State: Android is FEATURE-COMPLETE.** Reader + annotations + ink + a full **AI layer**:
-> provider-agnostic **Ask AI** (one OpenAI-compatible client → Gemini / Claude / OpenAI / local
-> (LM Studio/Ollama/MLX) / the Mac brain; verified on-device on Gemini + local MLX), **Export for AI**
-> (chapter + annotations → `<chapter>_for_ai.md` + ink PNGs, for the manual Claude Code route), a
-> code-enforced cleartext guard (`ai/CleartextPolicy.kt`) + GMS-free `SecureKeyStore`, and the Mac-side
-> **`brain/`** Phase-1 reference proxy (repo root; built + locally verified, on-device Gemini run pending).
-> Latest fix: the annotation toolbar **"Tap outside"** toggle now gates dismissal (commit `f426001`;
-> default on, **off = sticky**). Engine `:docx:test` is green.
+> **State: Android is FEATURE-COMPLETE + AI UX refined (2026-06-26).** Reader + annotations + ink + a full
+> **AI layer**: provider-agnostic **Ask AI** (one OpenAI-compatible client → Gemini / Claude / OpenAI /
+> local / Mac brain; verified on-device), **Export for AI** (versioned DOCX copy auto-opened, chapter.md +
+> ink PNGs exported to `AI_exports/<chapter>/<chapter>_v<N>_export/`), **Import rewrite** (auto-detect +
+> file browser fallback), and the **AI submenu** (pill button opens popup with AI Chat / Export for AI… /
+> Import rewrite… / Set AI export folder… / Set import folder…; folder paths shown as subtitles).
+> Code-enforced cleartext guard + GMS-free `SecureKeyStore`. Mac-side `brain/` Phase-1 proxy built +
+> locally verified (on-device Gemini run pending). Engine `:docx:test` green (54 tests).
 >
-> **Primary AI workflow = manual Claude Code on my novel-project folder** (free via my Max sub; richest
-> context — it reads my CLAUDE.md + references natively). Layuv's role is annotate + **Export for AI** (the
-> clean file that folder consumes). The brain is the optional *automated* path on an API key. Subscriptions
-> never grant third-party API access (cloud = a key — free Gemini tier or paid; local = no key); see
-> `project_ai_workflow_and_export.md`.
+> **Primary AI workflow = manual Claude Code on my novel-project folder** (free via Max sub; reads
+> CLAUDE.md + references natively). Layuv's role: annotate + Export for AI (the clean file that folder
+> consumes). Brain is the optional automated path on an API key.
 >
-> **Current direction = the iPad Swift port** (reuses `macos_native/Packages/LeamhDocx` unchanged; Apple
-> Pencil instead of Ratta/Onyx; e-ink constraints dropped). State + milestones live in memory
-> `ios_ipad_port.md`. Android is in maintenance — touch it only for the follow-ups below.
+> **Current direction = the iPad Swift port** (M1–M4d all DONE; AI layer complete as of commit `7c9fa9f`;
+> milestones in memory `ios_ipad_port.md`). Android is in maintenance — the open follow-ups are in
+> `leamh_tracker.md` under "Android AI menu — next-up polish".
 >
-> **Open Android follow-ups (not urgent):** (1) **fully gate "Tap outside: off"** — a stray non-tap
-> (swipe / slight drag) still reaches `cancelSelection()` after a few touches; audit every
-> `cancelSelection`/`onHidePopup` site in `ReaderView.kt` and gate the ones that should respect the sticky
-> pref (a real page-turn swipe SHOULD still cancel). (2) On-device verifies still pending: the
-> **Export-for-AI tap-through** and the **brain's real Gemini call** (key not yet on the Mac —
-> `brain/brain.env`). (3) Older queued UX: prominent "Test connection" button, a "Settings" shortcut in the
-> Ask AI pane, reply-from-expanded-viewer, and the text-only-endpoint error/fallback
-> (`ai_text_only_endpoint_images.md`).
+> **Open Android follow-ups (see tracker for detail):**
+> (1) Import rewrite with no folder set opens browser at storage root — consider a non-animated status label or redirect to "Set import folder…" flow.
+> (2) `ai_create_subfolder` pref orphan in SharedPreferences — include in any future "Reset AI settings" action.
+> (3) `aiMenuButton` always visible in pill (previously gated) — confirm intended.
+> (4) **fully gate "Tap outside: off"** — stray non-tap still reaches `cancelSelection()` after ~3 touches; audit every call site in `ReaderView.kt`.
+> (5) On-device verifies still pending: Export-for-AI tap-through and brain's real Gemini call (`brain/brain.env` needs the AIza key on the Mac).
+> (6) Older queued UX: prominent "Test connection" button, "Settings" shortcut in Ask AI pane, reply-from-expanded-viewer, text-only-endpoint error/fallback (`ai_text_only_endpoint_images.md`).
 >
 > Build: `cd android_native && ./gradlew :app:assembleDebug` (run `:docx:test` after any `docx/` change).
 > Devices: **Nomad** `SN078C10005528` (USB) / **Manta** `SN100C10008955`; adb at

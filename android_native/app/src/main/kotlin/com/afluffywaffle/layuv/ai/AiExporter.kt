@@ -24,7 +24,7 @@ object AiExporter {
     /** The full export: the markdown + any ink PNGs, plus a summary for the toast. */
     class Export(val files: List<Artifact>, val markdownName: String, val imageCount: Int)
 
-    private const val HEADER =
+    private const val BODY_HEADER =
         "This is a manuscript chapter exported from Léamh for revision. Below is the " +
         "chapter text, then the author's annotations on specific passages. Rewrite the " +
         "chapter to address every annotation while preserving the author's voice and " +
@@ -32,19 +32,31 @@ object AiExporter {
         "Handwritten notes are referenced as \"attached image N\" — the matching image " +
         "files are listed at the end of this document."
 
+    private fun buildHeader(cleanBase: String, version: Int): String =
+        "Export v$version of \"$cleanBase\". " +
+        "When returning the rewrite as a .docx file, name it ${cleanBase}_draft_v${version}.docx.\n\n" +
+        BODY_HEADER
+
     /**
-     * @param baseName the chapter's filename stem (e.g. "salt_road") — output is
-     *   `<baseName>_for_ai.md` (+ `<baseName>_for_ai_image_N.png`).
+     * @param mdName the output markdown filename (e.g. "chapter.md" in subfolder mode,
+     *   or "salt_road_v3_for_ai.md" in flat mode).
+     * @param pngPrefix prefix for ink PNG filenames — output is `<pngPrefix>_N.png`
+     *   (e.g. "ink" → "ink_1.png", "ink_2.png" in subfolder mode).
+     * @param cleanBase chapter name without draft suffix (e.g. "salt_road"), used in the header.
+     * @param version export version — always fileVersion + 1. Used both for the folder label
+     *   and for the next-draft filename suggestion in the prompt header.
      * @param sourceDocxBytes current `.docx` bytes, for reading ink PNGs.
      */
     fun build(
         plainText: String,
         annotations: List<Annotation>,
         sourceDocxBytes: ByteArray,
-        baseName: String,
+        mdName: String,
+        pngPrefix: String,
+        cleanBase: String,
+        version: Int,
     ): Export {
         val body = ManuscriptSerializer.buildExportBody(plainText, annotations)
-        val stem = "${baseName}_for_ai"
         val files = ArrayList<Artifact>()
 
         // Each ink PNG is numbered to match the body's "attached image N" references.
@@ -54,13 +66,13 @@ object AiExporter {
         body.inkAnnotationIds.forEachIndexed { i, id ->
             val png = DocxStore.readInkPng(sourceDocxBytes, id) ?: return@forEachIndexed
             val n = i + 1
-            val name = "${stem}_image_$n.png"
+            val name = "${pngPrefix}_$n.png"
             files.add(Artifact(name, png))
             images.add(n to name)
         }
 
         val md = StringBuilder()
-        md.append(HEADER).append("\n\n")
+        md.append(buildHeader(cleanBase, version)).append("\n\n")
         md.append(body.text)
         if (images.isNotEmpty()) {
             md.append("\n=== IMAGE FILES ===\n")
@@ -68,7 +80,6 @@ object AiExporter {
                 md.append("attached image ").append(n).append(" = ").append(name).append('\n')
             }
         }
-        val mdName = "$stem.md"
         files.add(Artifact(mdName, md.toString().toByteArray(Charsets.UTF_8)))
         return Export(files, mdName, images.size)
     }

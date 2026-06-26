@@ -74,8 +74,7 @@ class ReaderActivity : Activity() {
     // Bookmark button — inside the pill; dimmed when current page has no bookmark.
     private lateinit var bookmarkButton: ChromeIconButton
     private lateinit var searchButton: ChromeIconButton
-    private lateinit var aiChatButton: AiChatButton
-    private lateinit var aiChatDivider: View
+    private lateinit var aiMenuButton: AiChatButton
 
     // Title/filename label — bottom right of toolbar.
     private lateinit var titleLabel: TextView
@@ -236,6 +235,7 @@ class ReaderActivity : Activity() {
                     anchor = this,
                     anchorX = anchorX,
                     anchorY = anchorY,
+                    penMode = readerView.lastSelectionWasPen,
                     onTool = { tool ->
                         when (tool) {
                             AnnotationTool.comment -> startActivityForResult(
@@ -291,6 +291,7 @@ class ReaderActivity : Activity() {
                     anchor = this,
                     anchorX = anchorX,
                     anchorY = anchorY,
+                    penMode = readerView.lastSelectionWasPen,
                     onComment = {
                         Log.d(TAG, "action popup: Comment tapped for ${resolved.annotation.id}")
                         editAnnotationNote(resolved)
@@ -337,18 +338,16 @@ class ReaderActivity : Activity() {
         }
         moreButton = ChromeIconButton(this, R.drawable.ic_more_horiz) { showOverflowMenu() }
         searchButton = ChromeIconButton(this, R.drawable.ic_search) { launchSearch() }
-        aiChatButton = AiChatButton(this) { toggleAiChat() }
-        aiChatDivider = divider()
+        aiMenuButton = AiChatButton(this) { showAiMenu() }
         pill.addView(annotationsButton)
         pill.addView(divider())
         pill.addView(bookmarkButton)
         pill.addView(divider())
         pill.addView(searchButton)
-        pill.addView(aiChatDivider)
-        pill.addView(aiChatButton)
+        pill.addView(divider())
+        pill.addView(aiMenuButton)
         pill.addView(divider())
         pill.addView(moreButton)
-        updateAiButtonVisibility()
         return pill
     }
 
@@ -528,21 +527,6 @@ class ReaderActivity : Activity() {
             confirmFlattenInk()
         })
         root.addView(overflowMenuDivider())
-        root.addView(overflowActionRow("Export for AI…") {
-            popup?.dismiss()
-            exportForAi()
-        })
-        root.addView(overflowActionRow("Set AI export folder…") {
-            popup?.dismiss()
-            if (ensureAllFilesAccess()) {
-                startActivityForResult(
-                    Intent(this, FileBrowserActivity::class.java)
-                        .putExtra(FileBrowserActivity.EXTRA_PICK_DIR, true),
-                    REQ_PICK_AI_DIR,
-                )
-            }
-        })
-        root.addView(overflowMenuDivider())
         root.addView(overflowActionRow("Help & About") {
             popup?.dismiss()
             startActivity(Intent(this, HelpActivity::class.java))
@@ -564,6 +548,79 @@ class ReaderActivity : Activity() {
             isOutsideTouchable = true
         }
         popup = pw
+        pw.showAtLocation(readerView, Gravity.TOP or Gravity.START, x, y)
+    }
+
+    private fun showAiMenu() {
+        var aiPopup: PopupWindow? = null
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundResource(R.drawable.popup_bg)
+        }
+        if (isAiConfigured()) {
+            root.addView(overflowActionRow("AI Chat") { aiPopup?.dismiss(); toggleAiChat() })
+        } else {
+            root.addView(overflowActionRowWithSubtitle(
+                label = "AI Chat",
+                subtitle = "Configure in Help & About",
+                dimmed = true,
+            ))
+        }
+        root.addView(overflowMenuDivider())
+        root.addView(overflowActionRow("Export for AI…") { aiPopup?.dismiss(); exportForAi() })
+        root.addView(overflowActionRow("Import rewrite…") { aiPopup?.dismiss(); importRewrite() })
+        root.addView(overflowMenuDivider())
+        val exportFolderName = prefs.getString(KEY_AI_EXPORT_FOLDER, null)?.let { p ->
+            val f = File(p); "${f.parentFile?.name ?: ""}/${f.name}"
+        }
+        root.addView(overflowActionRowWithSubtitle(
+            label = "Set AI export folder…",
+            subtitle = exportFolderName,
+        ) {
+            aiPopup?.dismiss()
+            if (ensureAllFilesAccess()) {
+                startActivityForResult(
+                    Intent(this, FileBrowserActivity::class.java)
+                        .putExtra(FileBrowserActivity.EXTRA_PICK_DIR, true),
+                    REQ_PICK_AI_DIR,
+                )
+            }
+        })
+        val importFolderName = prefs.getString(KEY_IMPORT_FOLDER, null)?.let { p ->
+            val f = File(p); "${f.parentFile?.name ?: ""}/${f.name}"
+        }
+        root.addView(overflowActionRowWithSubtitle(
+            label = "Set import folder…",
+            subtitle = importFolderName,
+        ) {
+            aiPopup?.dismiss()
+            if (ensureAllFilesAccess()) {
+                val startDir = prefs.getString(KEY_IMPORT_FOLDER, null)?.let(::File)?.takeIf { it.isDirectory }
+                    ?: prefs.getString(KEY_AI_EXPORT_FOLDER, null)?.let(::File)?.takeIf { it.isDirectory }
+                startActivityForResult(
+                    Intent(this, FileBrowserActivity::class.java)
+                        .putExtra(FileBrowserActivity.EXTRA_PICK_DIR, true)
+                        .apply { if (startDir != null) putExtra(FileBrowserActivity.EXTRA_START_DIR, startDir.absolutePath) },
+                    REQ_SET_IMPORT_FOLDER,
+                )
+            }
+        })
+        val popupW = dp(310f)
+        root.measure(
+            View.MeasureSpec.makeMeasureSpec(popupW, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        val popupH = root.measuredHeight
+        val loc = IntArray(2)
+        moreButton.getLocationInWindow(loc)
+        val x = (loc[0] + moreButton.width - popupW).coerceAtLeast(dp(8f))
+        val y = (loc[1] - popupH - dp(4f)).coerceAtLeast(dp(8f))
+        val pw = PopupWindow(root, popupW, WRAP_CONTENT, true).apply {
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0))
+            elevation = ReaderTheme.dp(this@ReaderActivity, 6f)
+            isOutsideTouchable = true
+        }
+        aiPopup = pw
         pw.showAtLocation(readerView, Gravity.TOP or Gravity.START, x, y)
     }
 
@@ -627,6 +684,41 @@ class ReaderActivity : Activity() {
             stateListAnimator = null
             setOnTouchListener(PenTapListener(this@ReaderActivity) { onClick() })
         }
+
+    private fun overflowActionRowWithSubtitle(
+        label: String,
+        subtitle: String?,
+        dimmed: Boolean = false,
+        onClick: (() -> Unit)? = null,
+    ): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        minimumHeight = dp(58f)
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(16f), dp(10f), dp(16f), dp(10f))
+        if (onClick != null) {
+            isClickable = true
+            isFocusable = true
+            stateListAnimator = null
+            setOnTouchListener(PenTapListener(this@ReaderActivity) { onClick() })
+        }
+        if (dimmed) alpha = 0.45f
+        addView(TextView(this@ReaderActivity).apply {
+            text = label
+            typeface = ReaderTheme.bodyBold(this@ReaderActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+            setTextColor(ReaderTheme.INK)
+        })
+        if (!subtitle.isNullOrBlank()) {
+            addView(TextView(this@ReaderActivity).apply {
+                text = subtitle
+                typeface = ReaderTheme.chrome(this@ReaderActivity)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setTextColor(ReaderTheme.INK)
+                alpha = 0.6f
+                setPadding(0, dp(2f), 0, 0)
+            })
+        }
+    }
 
     private fun overflowMenuDivider(): View = View(this).apply {
         setBackgroundColor(ReaderTheme.INK_12)
@@ -744,15 +836,42 @@ class ReaderActivity : Activity() {
             return
         }
         val configured = prefs.getString(KEY_AI_EXPORT_FOLDER, null)?.let(::File)?.takeIf { it.isDirectory }
-        val dir = configured ?: opened.file?.parentFile
-        if (dir == null) {
-            Toast.makeText(this, "No folder to export to — set an AI export folder first.", Toast.LENGTH_LONG).show()
+        val dir = configured ?: opened.file?.parentFile ?: run {
+            if (ensureAllFilesAccess()) {
+                startActivityForResult(
+                    Intent(this, FileBrowserActivity::class.java)
+                        .putExtra(FileBrowserActivity.EXTRA_PICK_DIR, true),
+                    REQ_PICK_AI_DIR,
+                )
+            }
             return
         }
         val rawName = opened.file?.name ?: opened.displayName
         val baseName = (if (rawName.endsWith(".docx", ignoreCase = true)) rawName.dropLast(5) else rawName)
             .ifBlank { "chapter" }
-        Toast.makeText(this, "Exporting for AI…", Toast.LENGTH_SHORT).show()
+        // Strip _draft_vN suffix so all passes for the same chapter share one container.
+        val draftVersionMatch = Regex("""_draft_v(\d+)$""", RegexOption.IGNORE_CASE).find(baseName)
+        val fileVersion = draftVersionMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        val cleanBase = (if (draftVersionMatch != null) baseName.substring(0, draftVersionMatch.range.first)
+                         else baseName).ifBlank { "chapter" }
+        // Version is always fileVersion + 1. The source file is bumped to this version on export,
+        // so it’s always deterministic — no scanning needed.
+        val version = fileVersion + 1
+        val hasInkAnnotations = opened.doc.annotations.any { it.annotation.hasInk }
+
+        val chapterDir = File(dir, cleanBase).also { it.mkdirs() }
+        val outputDir: File
+        val mdName: String
+        val pngPrefix: String
+        if (hasInkAnnotations) {
+            outputDir = File(chapterDir, "${cleanBase}_v${version}_export").also { it.mkdirs() }
+            mdName = "chapter.md"
+            pngPrefix = "ink"
+        } else {
+            outputDir = chapterDir
+            mdName = "${cleanBase}_v${version}_for_ai.md"
+            pngPrefix = "${cleanBase}_v${version}_for_ai_image"
+        }
         DocxWriteQueue.enqueueRead {
             try {
                 val src = opened.file?.readBytes() ?: opened.bytes
@@ -760,16 +879,101 @@ class ReaderActivity : Activity() {
                     plainText = opened.doc.plainText,
                     annotations = opened.doc.annotations.map { it.annotation },
                     sourceDocxBytes = src,
-                    baseName = baseName,
+                    mdName = mdName,
+                    pngPrefix = pngPrefix,
+                    cleanBase = cleanBase,
+                    version = version,
                 )
-                export.files.forEach { DocxWriteQueue.writeAtomicDurable(File(dir, it.name), it.bytes) }
+                export.files.forEach { DocxWriteQueue.writeAtomicDurable(File(outputDir, it.name), it.bytes) }
+
+                // Bump the working file: create draft_vN copy alongside source, then open it.
+                // Keep at most 3 draft_vN files in the working folder; archive the rest.
+                val nextDraftFile: File? = opened.file?.parent?.let { parentPath ->
+                    val parent = File(parentPath)
+                    val nextFile = File(parent, "${cleanBase}_draft_v${version}.docx")
+                    if (!nextFile.exists()) {
+                        val tmp = File(parent, nextFile.name + ".tmp")
+                        tmp.writeBytes(src)
+                        tmp.renameTo(nextFile)
+                    }
+                    val draftRe = Regex(
+                        """${Regex.escape(cleanBase)}_draft_v(\d+)\.docx$""",
+                        RegexOption.IGNORE_CASE,
+                    )
+                    val draftFiles = parent.listFiles()
+                        ?.mapNotNull { f ->
+                            draftRe.find(f.name)?.groupValues?.get(1)?.toIntOrNull()?.let { v -> v to f }
+                        }
+                        ?.sortedByDescending { (v, _) -> v } ?: emptyList()
+                    val toArchive = draftFiles.drop(3)
+                    if (toArchive.isNotEmpty()) {
+                        val archiveDir = File(parent, "$cleanBase archive").also { it.mkdirs() }
+                        toArchive.forEach { (_, f) ->
+                            val dest = File(archiveDir, f.name)
+                            if (!dest.exists()) f.renameTo(dest)
+                        }
+                    }
+                    nextFile
+                }
+
                 main.post {
-                    val imgs = if (export.imageCount > 0) " + ${export.imageCount} image(s)" else ""
-                    Toast.makeText(this, "Exported ${export.markdownName}$imgs → ${dir.name}/", Toast.LENGTH_LONG).show()
+                    if (nextDraftFile != null) loadFromFile(nextDraftFile)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "AI export failed", e)
-                main.post { Toast.makeText(this, "Couldn’t export for AI.", Toast.LENGTH_SHORT).show() }
+            }
+        }
+    }
+
+    private fun importRewrite() {
+        val workingFile = book?.file ?: run {
+            Toast.makeText(this, "Open a document first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val rawName = workingFile.name
+        val baseName = if (rawName.endsWith(".docx", ignoreCase = true)) rawName.dropLast(5) else rawName
+        val draftVersionMatch = Regex("""_draft_v(\d+)$""", RegexOption.IGNORE_CASE).find(baseName)
+        val aiDir = prefs.getString(KEY_AI_EXPORT_FOLDER, null)?.let(::File)?.takeIf { it.isDirectory }
+        val importFolder = prefs.getString(KEY_IMPORT_FOLDER, null)?.let(::File)?.takeIf { it.isDirectory }
+
+        // Build candidate list: saved import folder first (most likely place Claude put the file),
+        // then derived locations from the AI export folder.
+        val autoFound: File? = if (draftVersionMatch != null) {
+            val v = draftVersionMatch.groupValues[1].toIntOrNull() ?: 0
+            val base = baseName.substring(0, draftVersionMatch.range.first)
+            val rewriteName = "${base}_draft_v${v}.docx"
+            buildList {
+                if (importFolder != null) add(File(importFolder, rewriteName))
+                if (aiDir != null) {
+                    add(File(aiDir, "$base/$rewriteName"))
+                    add(File(aiDir, rewriteName))
+                    add(File(aiDir, "$base/${base}_v${v}_export/$rewriteName"))
+                }
+            }.firstOrNull { it.exists() }
+        } else null
+
+        if (autoFound != null) {
+            doImportRewrite(autoFound, workingFile)
+        } else {
+            // No rewrite found (or no folder set) — open the browser pre-navigated to the import/AI folder.
+            val startDir = importFolder ?: aiDir
+            val intent = Intent(this, FileBrowserActivity::class.java)
+            if (startDir != null) intent.putExtra(FileBrowserActivity.EXTRA_START_DIR, startDir.absolutePath)
+            startActivityForResult(intent, REQ_IMPORT_REWRITE)
+        }
+    }
+
+    private fun doImportRewrite(rewriteFile: File, workingFile: File) {
+        DocxWriteQueue.enqueueRead {
+            try {
+                val rewriteBytes = rewriteFile.readBytes()
+                val tmp = File(workingFile.parent!!, workingFile.name + ".tmp")
+                tmp.writeBytes(rewriteBytes)
+                tmp.renameTo(workingFile)
+                main.post { loadFromFile(workingFile) }
+            } catch (e: Exception) {
+                Log.e(TAG, "Import rewrite failed", e)
             }
         }
     }
@@ -821,11 +1025,6 @@ class ReaderActivity : Activity() {
 
     /** Keep the AI chat button (+ its divider) hidden until Ask AI is set up, so it isn't
      *  an idle affordance for users who haven't opted in. Re-checked in onResume. */
-    private fun updateAiButtonVisibility() {
-        val vis = if (isAiConfigured()) View.VISIBLE else View.GONE
-        aiChatButton.visibility = vis
-        aiChatDivider.visibility = vis
-    }
 
     /** Open a just-saved AI draft like a freshly browsed file (updates last-path + recents). */
     private fun openDraft(file: File) {
@@ -880,10 +1079,23 @@ class ReaderActivity : Activity() {
                     readerView.showHint("Couldn’t read $path")
                 }
             }
+            REQ_IMPORT_REWRITE -> if (resultCode == RESULT_OK) {
+                val path = data?.getStringExtra(FileBrowserActivity.EXTRA_PATH) ?: return
+                val rewriteFile = File(path)
+                val workingFile = book?.file ?: return
+                // Remember the folder so future auto-detect checks here first.
+                rewriteFile.parent?.let { parent ->
+                    prefs.edit().putString(KEY_IMPORT_FOLDER, parent).apply()
+                }
+                doImportRewrite(rewriteFile, workingFile)
+            }
             REQ_PICK_AI_DIR -> if (resultCode == RESULT_OK) {
                 val dir = data?.getStringExtra(FileBrowserActivity.EXTRA_PATH) ?: return
                 prefs.edit().putString(KEY_AI_EXPORT_FOLDER, dir).apply()
-                Toast.makeText(this, "AI exports will go to: $dir", Toast.LENGTH_LONG).show()
+            }
+            REQ_SET_IMPORT_FOLDER -> if (resultCode == RESULT_OK) {
+                val dir = data?.getStringExtra(FileBrowserActivity.EXTRA_PATH) ?: return
+                prefs.edit().putString(KEY_IMPORT_FOLDER, dir).apply()
             }
             REQ_NOTE -> {
                 Log.d(TAG, "REQ_NOTE: resultCode=$resultCode note=${data?.getStringExtra(NoteActivity.EXTRA_NOTE)}")
@@ -1422,8 +1634,6 @@ class ReaderActivity : Activity() {
         // if the user changed it in Settings while this activity was paused.
         pageJumpOverlay?.dismiss()
         pageJumpOverlay = null
-        // Reflect any AI setup/removal done in Help/Settings while we were paused.
-        updateAiButtonVisibility()
         readerView.post { initDrawPathLasso() }
     }
 
@@ -1595,6 +1805,9 @@ class ReaderActivity : Activity() {
         private const val REQ_INK = 1007
         private const val REQ_SEARCH = 1008
         private const val REQ_PICK_AI_DIR = 1009
+        private const val REQ_IMPORT_REWRITE = 1010
+        private const val REQ_SET_IMPORT_FOLDER = 1011
+        private const val KEY_IMPORT_FOLDER = "ai_import_folder"
         private const val PREFS = "leamh"
         private const val KEY_AI_EXPORT_FOLDER = "ai_export_folder"
         private const val KEY_LAST_PATH = "last_path"

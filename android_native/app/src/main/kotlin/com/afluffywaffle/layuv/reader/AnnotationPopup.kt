@@ -83,12 +83,14 @@ class AnnotationPopup(private val activity: Activity) {
         lockedTool: AnnotationTool? = null,
         onLockTool: ((AnnotationTool) -> Unit)? = null,
         onUnlock: (() -> Unit)? = null,
+        penMode: Boolean = false,
     ) {
         dismiss()
 
-        val btnSize = dp(64f)
-        val hPad = dp(8f)
-        val vPad = dp(8f)
+        val btnSize = dp(if (penMode) 48f else 64f)
+        val hPad = dp(if (penMode) 6f else 8f)
+        val vPad = dp(if (penMode) 6f else 8f)
+        val iconSz = ReaderTheme.dp(activity, if (penMode) 20f else ReaderTheme.ICON_DP)
         val hasOverflow = true // ••• always shows for outside-dismiss toggle
         val toolsBtnW = (tools.size + (if (hasOverflow) 1 else 0)) * btnSize
         // 1dp divider + 1 dismiss-X button appended after all tool/overflow buttons
@@ -138,7 +140,7 @@ class AnnotationPopup(private val activity: Activity) {
         if (hasOverflow) {
             toolRow.addView(object : View(activity) {
                 override fun onDraw(canvas: Canvas) =
-                    renderer.drawOverflow(canvas, width / 2f, height / 2f, ReaderTheme.dp(activity, ReaderTheme.ICON_DP))
+                    renderer.drawOverflow(canvas, width / 2f, height / 2f, iconSz)
             }.apply {
                 layoutParams = LinearLayout.LayoutParams(btnSize, btnSize)
                 isClickable = true; isFocusable = true
@@ -160,7 +162,7 @@ class AnnotationPopup(private val activity: Activity) {
         })
         toolRow.addView(object : View(activity) {
             override fun onDraw(canvas: Canvas) =
-                renderer.drawVecIcon(canvas, R.drawable.ic_close, width / 2f, height / 2f, ReaderTheme.dp(activity, ReaderTheme.ICON_DP))
+                renderer.drawVecIcon(canvas, R.drawable.ic_close, width / 2f, height / 2f, iconSz)
         }.apply {
             layoutParams = LinearLayout.LayoutParams(btnSize, btnSize)
             isClickable = true; isFocusable = true
@@ -252,15 +254,16 @@ class AnnotationPopup(private val activity: Activity) {
         anchorY: Int,
         onComment: () -> Unit,
         onDelete: () -> Unit,
+        penMode: Boolean = false,
     ) {
         dismiss()
 
-        val btnSize = dp(64f)
-        val hPad = dp(8f)
-        val vPad = dp(8f)
+        val btnSize = dp(if (penMode) 48f else 64f)
+        val hPad = dp(if (penMode) 6f else 8f)
+        val vPad = dp(if (penMode) 6f else 8f)
         // [chat] [1dp] [delete] [1dp] [X]
         val popupW = btnSize * 3 + dp(2f) + hPad * 2
-        val iconExtent = ReaderTheme.dp(activity, ReaderTheme.ICON_DP)
+        val iconExtent = ReaderTheme.dp(activity, if (penMode) 20f else ReaderTheme.ICON_DP)
 
         fun iconButton(iconRes: Int, label: String, onClick: () -> Unit): View =
             object : View(activity) {

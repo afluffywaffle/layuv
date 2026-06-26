@@ -114,6 +114,10 @@ class ReaderView(context: Context) : View(context) {
     // cancelSelection() rather than re-entering selection mode.
     private var isSelecting = false
 
+    // True when the most recent finaliseSelection() or onAnnotationTapped was
+    // triggered by a stylus event — lets the host show a pen-sized popup.
+    var lastSelectionWasPen: Boolean = false
+
     // Pointer-drag selection — Down = anchor word; drag past slop = live
     // word-level selection; tap = page turn (or dismiss a shown selection).
     private var ptrDownX = 0f
@@ -203,6 +207,7 @@ class ReaderView(context: Context) : View(context) {
             if (char != null) {
                 val hit = annotationAtChar(char)
                 if (hit != null) {
+                    lastSelectionWasPen = false
                     val pt = charPointInView(char, bottom = false)
                     onAnnotationTapped?.invoke(
                         hit,
@@ -784,7 +789,7 @@ class ReaderView(context: Context) : View(context) {
         if (isSelecting) {
             when (event.actionMasked) {
                 MotionEvent.ACTION_MOVE -> { extendSelectionTo(event.x, event.y); return true }
-                MotionEvent.ACTION_UP -> { finaliseSelection(); return true }
+                MotionEvent.ACTION_UP -> { lastSelectionWasPen = false; finaliseSelection(); return true }
                 MotionEvent.ACTION_CANCEL -> { cancelSelection(); return true }
             }
         }
@@ -867,6 +872,7 @@ class ReaderView(context: Context) : View(context) {
             }
             MotionEvent.ACTION_UP -> {
                 if (ptrMoved) {
+                    lastSelectionWasPen = true
                     finaliseSelection()
                 } else if (selectionStart >= 0) {
                     if (outsideTapDismisses()) cancelSelection() // tap dismisses a shown selection (when enabled)
@@ -874,6 +880,7 @@ class ReaderView(context: Context) : View(context) {
                     val char = charAtPoint(event.x, event.y)
                     val hit = if (char != null) annotationAtChar(char) else null
                     if (hit != null) {
+                        lastSelectionWasPen = true
                         val pt = charPointInView(char!!, bottom = false)
                         onAnnotationTapped?.invoke(
                             hit,
