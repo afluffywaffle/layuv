@@ -7,6 +7,11 @@ struct HomeView: View {
     @EnvironmentObject var store: DocumentStore
     @State private var selectedURL: URL?
     @State private var showImporter = false
+    // AI sheets — hosted at the split-view root so they don't conflict with the
+    // inspector (which renders as a sheet in compact width / multitasking).
+    @State private var showAskAi     = false
+    @State private var exportItems: [Any] = []
+    @State private var showExport    = false
 
     private var docxType: UTType { UTType(filenameExtension: "docx") ?? .data }
 
@@ -28,7 +33,12 @@ struct HomeView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(AppTheme.warmPaper)
             } else if let doc = store.document {
-                ReaderScreen(document: doc)
+                ReaderScreen(document: doc,
+                             onAskAi: { showAskAi = true },
+                             onExport: { items in
+                                 exportItems = items
+                                 showExport = true
+                             })
             } else {
                 emptyState
             }
@@ -44,8 +54,7 @@ struct HomeView: View {
             guard let url else { return }
             Task { await store.load(url: url) }
         }
-        // Hosted at the split-view root (not on the reader) so it doesn't collide with the
-        // annotations inspector, which renders as a sheet in compact width / iPad multitasking.
+        // Annotation edit sheet + ink cover hosted at the root (see M2 review notes).
         .sheet(item: $store.editingAnnotation) { annotation in
             AnnotationEditSheet(annotation: annotation)
                 .environmentObject(store)
@@ -53,6 +62,14 @@ struct HomeView: View {
         .fullScreenCover(item: $store.inkEditingAnnotation) { annotation in
             InkEditorView(annotation: annotation)
                 .environmentObject(store)
+        }
+        // AI panels
+        .sheet(isPresented: $showAskAi) {
+            AskAiView()
+                .environmentObject(store)
+        }
+        .sheet(isPresented: $showExport) {
+            ShareSheet(items: exportItems)
         }
     }
 
@@ -75,6 +92,8 @@ struct HomeView: View {
 private struct ReaderScreen: View {
     @EnvironmentObject var store: DocumentStore
     let document: LoadedDocument
+    let onAskAi: () -> Void
+    let onExport: ([Any]) -> Void
     @State private var showAnnotations = false
 
     var body: some View {
@@ -89,10 +108,38 @@ private struct ReaderScreen: View {
                         Label("Annotations", systemImage: "list.bullet.rectangle")
                     }
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        onAskAi()
+                    } label: {
+                        Label("Ask AI", systemImage: "sparkles")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Task {
+                            let (text, images) = await store.buildAiExportItems()
+                            var urls: [Any] = []
+                            if let mdURL = writeTmp(text.data(using: .utf8) ?? Data(),
+                                                    filename: "leamh_export.md") { urls.append(mdURL) }
+                            for (name, data) in images {
+                                if let imgURL = writeTmp(data, filename: name) { urls.append(imgURL) }
+                            }
+                            onExport(urls)
+                        }
+                    } label: {
+                        Label("Export for AI", systemImage: "square.and.arrow.up")
+                    }
+                }
             }
             .inspector(isPresented: $showAnnotations) {
                 AnnotationsPanel()
                     .inspectorColumnWidth(min: 280, ideal: 340, max: 460)
             }
+    }
+
+    private func writeTmp(_ data: Data, filename: String) -> URL? {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+        return (try? data.write(to: url)) != nil ? url : nil
     }
 }

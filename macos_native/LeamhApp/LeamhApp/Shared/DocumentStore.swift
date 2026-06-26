@@ -281,4 +281,63 @@ final class DocumentStore: ObservableObject {
     private func bookmarkMap() -> [String: Data] {
         UserDefaults.standard.dictionary(forKey: bookmarksKey) as? [String: Data] ?? [:]
     }
+
+    // MARK: - AI chat
+
+    func loadAiChat() async -> [AiTurn] {
+        guard let url = currentURL else { return [] }
+        return await Task.detached(priority: .userInitiated) {
+            guard let data = try? Data(contentsOf: url) else { return [] }
+            return DocxStore.readAiChat(data)
+        }.value
+    }
+
+    func saveAiChat(_ turns: [AiTurn]) async {
+        guard let url = currentURL else { return }
+        await enqueueWrite(url: url) { base in
+            try DocxStore.writeAiChat(base, turns: turns)
+        }
+    }
+
+    /// Builds a clean draft DOCX from the given rewrite prose and writes it to a temp file.
+    /// The caller is responsible for presenting a share/save sheet with the returned URL.
+    func saveAiDraft(rewrite: String) async throws -> URL {
+        guard let url = currentURL else {
+            throw DocumentStoreError("No document is open.")
+        }
+        let draftData = try await Task.detached(priority: .userInitiated) {
+            let base = try Data(contentsOf: url)
+            return try DocxFromText.build(sourceDocx: base, text: rewrite)
+        }.value
+        let docName  = url.deletingPathExtension().lastPathComponent
+        let draftURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(docName) Draft.docx")
+        try draftData.write(to: draftURL)
+        return draftURL
+    }
+
+    /// Builds the export body (chapter + annotations text) and loads ink PNG files.
+    /// Returns raw data so callers (iOS-only) can write temp files and present a share sheet.
+    func buildAiExportItems() async -> (text: String, images: [(name: String, data: Data)]) {
+        guard let doc = document else { return ("", []) }
+        let annotations = self.annotations.map(\.annotation)
+        let body = ManuscriptSerializer.buildExportBody(plainText: doc.plainText,
+                                                        annotations: annotations)
+        var images: [(String, Data)] = []
+        for (i, id) in body.inkAnnotationIds.enumerated() {
+            if let png = await loadInkPng(id) {
+                images.append(("ink_\(i + 1).png", png))
+            }
+        }
+        let docName  = currentURL?.deletingPathExtension().lastPathComponent ?? "Document"
+        let header   = "=== EXPORT FOR AI — Léamh ===\n\(docName)\n\n"
+        let footer   = images.isEmpty ? "" :
+            "\n=== IMAGE FILES ===\n" + images.map(\.0).joined(separator: "\n") + "\n"
+        return (header + body.text + footer, images)
+    }
+}
+
+private struct DocumentStoreError: LocalizedError {
+    let errorDescription: String?
+    init(_ message: String) { errorDescription = message }
 }
