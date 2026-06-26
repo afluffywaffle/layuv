@@ -346,39 +346,44 @@ holds the key + library and forwards to a real model** — ③ is the goal.)
 - **Confirm scope first:** where the server lives (new `brain/` dir in the repo?), Python vs Node (user
   has python3/pipx/mlx), reference-folder convention, Gemini-first upstream.
 
-## Handoff prompt for a new conversation
+## Handoff prompt for a new conversation (current as of 2026-06-26)
 
 > I'm working on the Léamh/Layuv project (`/Users/jayromacorda/Develop/layuv`), branch
-> `native-port-drawpath-ink`. Read `CLAUDE.md` and `HANDOFF_next.md` in full first, and read
-> `~/.claude/plans/rewrite-if-this-was-rustling-comet.md` → "NEXT ARCHITECTURE" for the brain design.
+> `native-port-drawpath-ink`. Read `CLAUDE.md` and this `HANDOFF_next.md` in full first, plus the memory
+> index — especially `native_android_port.md`, `project_ai_workflow_and_export.md`, `project_brain_proxy.md`,
+> `project_ai_networking.md`, and `ios_ipad_port.md`.
 >
-> **State:** the in-app Ask AI feature is done and **provider-agnostic** — Layuv is a pure
-> OpenAI-compatible client (no provider list; one endpoint + model + optional key, Paste on every
-> field). It's **verified end-to-end on-device** with **Gemini** (free tier): annotate → Send → it even
-> asked a clarifying question → complete rewrite → Save & Open as a clean versioned draft. The cleartext
-> guard (`CleartextPolicy`) allows plain HTTP to private/LAN hosts and refuses it to the public internet,
-> all verified. **The device side is complete — no Android changes needed for what's next.**
+> **State: Android is FEATURE-COMPLETE.** Reader + annotations + ink + a full **AI layer**:
+> provider-agnostic **Ask AI** (one OpenAI-compatible client → Gemini / Claude / OpenAI / local
+> (LM Studio/Ollama/MLX) / the Mac brain; verified on-device on Gemini + local MLX), **Export for AI**
+> (chapter + annotations → `<chapter>_for_ai.md` + ink PNGs, for the manual Claude Code route), a
+> code-enforced cleartext guard (`ai/CleartextPolicy.kt`) + GMS-free `SecureKeyStore`, and the Mac-side
+> **`brain/`** Phase-1 reference proxy (repo root; built + locally verified, on-device Gemini run pending).
+> Latest fix: the annotation toolbar **"Tap outside"** toggle now gates dismissal (commit `f426001`;
+> default on, **off = sticky**). Engine `:docx:test` is green.
 >
-> **Next task: build the ③ "brain" — Phase 1 reference proxy** (a small server on my MacBook Pro M3 Pro
-> for now). It exposes an OpenAI-compatible `/chat/completions` SSE endpoint, **holds the API key** (start
-> with my Gemini free key; Claude later for quality), reads **all** my project reference files from a
-> folder and **injects them whole** into every request (**NO RAG** — whole-context), forwards to the
-> upstream model, and streams the reply back. **LAN-first, plain HTTP** (Layuv's guard already allows
-> private LAN). Then I just re-point Layuv's endpoint at the Mac's URL — no app rebuild. **Confirm scope
-> with me before building** (where the code lives, Python vs Node, reference-folder layout, Gemini-first).
+> **Primary AI workflow = manual Claude Code on my novel-project folder** (free via my Max sub; richest
+> context — it reads my CLAUDE.md + references natively). Layuv's role is annotate + **Export for AI** (the
+> clean file that folder consumes). The brain is the optional *automated* path on an API key. Subscriptions
+> never grant third-party API access (cloud = a key — free Gemini tier or paid; local = no key); see
+> `project_ai_workflow_and_export.md`.
 >
-> **Verify it works:** from Layuv, send a chapter → the reply must reflect a fact that exists **only** in
-> the reference files (proves the library is injected) → the rewrite card + Save still work → confirm the
-> key never leaves the Mac.
+> **Current direction = the iPad Swift port** (reuses `macos_native/Packages/LeamhDocx` unchanged; Apple
+> Pencil instead of Ratta/Onyx; e-ink constraints dropped). State + milestones live in memory
+> `ios_ipad_port.md`. Android is in maintenance — touch it only for the follow-ups below.
 >
-> Context: I'm on the **MacBook Pro M3 Pro 18GB** (python3/pipx/mlx installed; `mlx_lm.server` gives a
-> local OpenAI-compat `/v1` if you want a free test upstream). My Gemini key is validated and already in
-> Layuv (endpoint `https://generativelanguage.googleapis.com/v1beta/openai`, model `gemini-2.5-flash`).
+> **Open Android follow-ups (not urgent):** (1) **fully gate "Tap outside: off"** — a stray non-tap
+> (swipe / slight drag) still reaches `cancelSelection()` after a few touches; audit every
+> `cancelSelection`/`onHidePopup` site in `ReaderView.kt` and gate the ones that should respect the sticky
+> pref (a real page-turn swipe SHOULD still cancel). (2) On-device verifies still pending: the
+> **Export-for-AI tap-through** and the **brain's real Gemini call** (key not yet on the Mac —
+> `brain/brain.env`). (3) Older queued UX: prominent "Test connection" button, a "Settings" shortcut in the
+> Ask AI pane, reply-from-expanded-viewer, and the text-only-endpoint error/fallback
+> (`ai_text_only_endpoint_images.md`).
+>
+> Build: `cd android_native && ./gradlew :app:assembleDebug` (run `:docx:test` after any `docx/` change).
 > Devices: **Nomad** `SN078C10005528` (USB) / **Manta** `SN100C10008955`; adb at
-> `$HOME/Library/Android/sdk/platform-tools/adb`; app id `com.afluffywaffle.layuv.dev`. Android build
-> (only if you touch it): `cd android_native && ./gradlew :app:assembleDebug`. Memory:
-> `project_ai_networking.md` (agnostic client + home/work/hotspot/remote trust model),
-> `project_ask_ai.md`, `ai_text_only_endpoint_images.md` (text-only upstreams reject ink-note images —
-> relevant if the brain ever targets one), `native_android_sequencedcollection_trap.md`. Queued Android
-> UX follow-ups (NOT for now, just be aware): prominent "Test connection" button, a "Settings" shortcut
-> in the Ask AI pane, reply-from-expanded-viewer, and the text-only-endpoint error/fallback.
+> `$HOME/Library/Android/sdk/platform-tools/adb`; app id `com.afluffywaffle.layuv.dev`. **Heed
+> `native_android_sequencedcollection_trap.md`** (no `List.removeLast()`/`removeFirst()`/`getFirst()` etc.
+> — JDK21 binds to API-35 `SequencedCollection` → runtime crash on the Supernote). Commit/push only when
+> asked.

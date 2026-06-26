@@ -9,6 +9,17 @@ Google Docs.
 
 Bundle ID `com.afluffywaffle.layuv` · GPL v3.
 
+> **⚠ CURRENT STATE (2026-06-26) — the "App status" / "Remaining work" sections lower down predate the
+> AI work. `HANDOFF_next.md` (repo root) is the authoritative, up-to-date log + live follow-ups.**
+> Since 2026-06-24 a full **AI layer** landed on top of the reader/annotation/ink stack: in-reader
+> **Ask AI** (provider-agnostic OpenAI-compatible client → Gemini/Claude/OpenAI/local/the Mac brain),
+> **Export for AI** (chapter+annotations → clean `.md` for the manual Claude Code route), a code-enforced
+> **cleartext guard** (`ai/CleartextPolicy.kt`) + GMS-free `SecureKeyStore`, and the Mac-side **brain/**
+> reference proxy (at repo root, not under `android_native/`). Latest fix: the annotation toolbar
+> **"Tap outside"** toggle now genuinely gates dismissal (commit `f426001`; off = sticky). The **iPad
+> Swift port** is now underway (reusing `macos_native/Packages/LeamhDocx`). See `HANDOFF_next.md` + the
+> memory index for everything below the "shipped features" list.
+
 ## The one idea everything hangs on
 
 There is exactly **one canonical plain-text string `P`**, used for *both*
@@ -86,6 +97,19 @@ android_native/
     reader/RattaEink.kt              ✅ EinkManager reflection wrapper (sendOneFullFrame, screenRefresh)
     reader/BookLoader.kt             ✅ bytes → DocxStore.load (off-main)
     reader/ReaderTheme.kt            ✅ typography + colour constants
+    reader/DocxWriteQueue.kt         ✅ single-thread serialized atomic+durable writer — the ONLY write path
+    reader/AskAiPanel.kt             ✅ in-reader Ask AI chat panel (seed prompt, ink images, rewrite-as-draft)
+    reader/AiSettingsActivity.kt     ✅ agnostic AI form — Endpoint + Model + optional Key (Paste per field)
+    reader/AiReplyActivity.kt        ✅ full-screen reply viewer (EdgeNavView rail)
+    reader/EdgeNavView.kt            ✅ shared reader-consistent edge-nav (both/left/right)
+  ai/     — AI layer (Ask AI + Export for AI); networking/crypto live here, NOT in docx/
+    OpenAiCompatibleProvider.kt      ✅ sole client: {baseUrl}/chat/completions SSE, optional Bearer, multimodal ink
+    AiProviderFactory.kt             ✅ baseUrl/model prefs → provider; host → displayName
+    AiExporter.kt                    ✅ chapter+annotations → <base>_for_ai.md (+ ink PNGs) for manual Claude Code
+    CleartextPolicy.kt               ✅ code-enforced private-host guard — the trust boundary (template for Swift ports)
+    SecureKeyStore.kt                ✅ EncryptedSharedPreferences (GMS-free Tink) key store
+    AiMessage / AiResult / AiProvider ✅
+  (engine AI pieces in docx/: ManuscriptSerializer, RewriteProtocol, DocxFromText, DocxStore.read/writeAiChat)
   tools/golden_gen/                  — Dart reference generators (archived; use Kotlin generator instead)
 ```
 
@@ -158,6 +182,26 @@ core reader and annotation features are complete as of 2026-06-21:
 - **App icon:** mipmap PNGs from `layuv.icon` SVG.
 - **RattaEink:** `EinkManager` reflection wrapper (`sendOneFullFrame`, `screenRefresh`).
 
+### AI layer — landed 2026-06-24 → 2026-06-26 (the part this README predated)
+
+- **Ask AI (`reader/AskAiPanel.kt` + `ai/`):** in-reader chat panel — seeds from the chapter + structured
+  annotations (handwritten ink notes sent as images a vision model OCRs), discusses, returns a rewrite saved
+  as a clean **versioned draft** (`<root>_draft_vN.docx`). Provider-**agnostic**: one OpenAI-compatible
+  client (`OpenAiCompatibleProvider`) → Gemini / Claude / OpenAI / local (LM Studio/Ollama/MLX) / the Mac
+  **brain** — endpoint + model + optional key, no provider list. Verified on-device (Gemini + local MLX).
+- **Export for AI (`ai/AiExporter.kt`; reader overflow "Export for AI…"):** writes `<chapter>_for_ai.md`
+  (chapter + tidy annotation list) + one PNG per ink note into a chosen/synced folder, for the **manual
+  Claude Code** workflow (sync to a Mac → run `claude` on the project). **Read-only on the source `.docx`**.
+- **Trust model (`ai/CleartextPolicy.kt`):** code-enforced — plain HTTP only to private / LAN / Tailscale
+  hosts, HTTPS to the public internet. NSC grants the capability; this file is the real boundary. The
+  TEMPLATE for the Swift ports (re-implemented over ATS). `SecureKeyStore` = GMS-free EncryptedSharedPreferences.
+- **Mac "brain" (`brain/` at REPO ROOT, not under `android_native/`):** ~250-line Python-stdlib
+  OpenAI-compatible proxy that injects a whole reference library (no RAG) + holds the upstream key; Layuv
+  just re-points its endpoint at the Mac. Built + locally verified; on-device Gemini run pending.
+- **Latest fix (`f426001`):** annotation toolbar **"Tap outside"** toggle now genuinely gates dismissal
+  (default on = old behaviour; **off = sticky** for palm rejection). Open follow-up in `HANDOFF_next.md`:
+  fully gate the sticky path — a stray non-tap (swipe/slight drag) still dismisses after a few touches.
+
 ## Remaining work
 
 - **De-Onyx `Epd.kt` (TODO):** `reader/Epd.kt` wraps the Boox `EpdController` — wrong SDK
@@ -176,9 +220,12 @@ core reader and annotation features are complete as of 2026-06-21:
 - **Style-based formatting:** headings/rStyle → bold/italic not yet resolved.
 - **RTL nav direction setting:** reverse nav strips for RTL texts (tracker item).
 
-**Status (2026-06-21): this native port IS the product — the active, primary codebase.**
-The Flutter app is archived to `archive/flutter/` as reference only. A future macOS/iOS
-app is a Swift port (this Kotlin engine as reference), not a Flutter revival.
+**Status (2026-06-26): Android is feature-complete — reader + annotations + ink + a full AI layer.**
+This native port IS the product for Supernote; the Flutter app is archived to `archive/flutter/`
+(reference only). The **iPad Swift port is now underway** (`macos_native/Packages/LeamhDocx` engine reuse
++ Apple Pencil), tracked separately. `HANDOFF_next.md` (repo root) is the authoritative live state +
+follow-ups; the "Remaining work" list above is the older e-ink/de-Onyx engine backlog, not the current
+priorities.
 
 **Build environment:** AGP 8.13.2 on the Gradle 9.1 wrapper. The machine's default JDK is
 26, which AGP rejects — `gradle.properties` pins `org.gradle.java.home` to Android Studio's
