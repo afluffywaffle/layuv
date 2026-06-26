@@ -396,6 +396,8 @@ Currently ink PNG lives inside `word/comments.xml` via `<w:drawing>` — Word re
 - App icon: mipmap PNGs from `layuv.icon` SVG
 - Bug fix: comment tool wasn't saving — `commitAnnotationFromPanel` missing optimistic update; fixed 2026-06-21
 - Bug fix: ink annotation thumbnails in panel + tap-to-open-ink-editor; fixed 2026-06-21
+- **Pen-optimised annotation toolbar (2026-06-26):** `AnnotationPopup.show/showActions` accept `penMode` — 48dp buttons / 20dp icons for stylus, 64dp / 28dp for finger. `ReaderView.lastSelectionWasPen` tracks input device at `finaliseSelection()` and `onAnnotationTapped`; `ReaderActivity` passes it through.
+- **"Tap outside: off" hardened (2026-06-26):** stylus slop raised 3× (24dp) when pref=off + committed selection — pen wobble no longer starts a new drag and accidentally cancels selection. Stylus taps now always dismiss (pen is always intentional); only finger/palm taps are gated by the pref.
 
 ---
 

@@ -861,7 +861,11 @@ class ReaderView(context: Context) : View(context) {
             MotionEvent.ACTION_MOVE -> {
                 val dx = event.x - ptrDownX
                 val dy = event.y - ptrDownY
-                if (!ptrMoved && dx * dx + dy * dy > tapSlopPx * tapSlopPx) {
+                // With pref=off and a committed selection, require 3× the normal slop
+                // before a new pen drag supersedes it — absorbs accidental pen wobble
+                // without blocking real selection drags (typically > 50dp).
+                val slopPx = if (selectionStart >= 0 && !isSelecting && !outsideTapDismisses()) tapSlopPx * 3 else tapSlopPx
+                if (!ptrMoved && dx * dx + dy * dy > slopPx * slopPx) {
                     ptrMoved = true
                     isSelecting = true
                     onHidePopup?.invoke() // a new drag supersedes any shown selection's popup
@@ -875,7 +879,7 @@ class ReaderView(context: Context) : View(context) {
                     lastSelectionWasPen = true
                     finaliseSelection()
                 } else if (selectionStart >= 0) {
-                    if (outsideTapDismisses()) cancelSelection() // tap dismisses a shown selection (when enabled)
+                    cancelSelection() // stylus tap is always intentional — dismiss regardless of pref
                 } else if (pageLayout != null) {
                     val char = charAtPoint(event.x, event.y)
                     val hit = if (char != null) annotationAtChar(char) else null

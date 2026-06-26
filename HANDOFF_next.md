@@ -56,24 +56,35 @@ Gemini tier or cheap paid), local (LM Studio/Ollama) = no key.
 
 ---
 
-## ✅ FIXED (2026-06-25, committed `f426001`) — annotation toolbar "Tap outside" toggle
+## ✅ FIXED (2026-06-25 + 2026-06-26) — annotation toolbar "Tap outside" toggle
 
 The toggle never gated anything: the reader's `cancelSelection()` (→ `onHidePopup`) dismissed the
 toolbar on ANY tap, and the Supernote's window manager never delivers `ACTION_OUTSIDE` to
 `PopupWindow`s (verified on-device with a probe — so the popup-side `isOutsideTouchable` was dead).
-Fix: gate the reader's tap-dismiss on the pref — `ReaderView.onSingleTapUp` + the stylus tap path
-call `cancelSelection()` only when `outsideTapDismisses()` (reads `pref_outside_dismiss`, **default
-ON** so dismiss-on-tap is unchanged for everyone; **OFF = sticky** toolbar, dismissed only by ✕ or a
-tool — the user's palm-rejection case). `AnnotationPopup` default aligned to ON so the ••• label
-matches. Superseded the wrong first attempt `5db7d39` (focusable change, reverted).
+Fix: gate the reader's tap-dismiss on the pref — `ReaderView.onSingleTapUp` calls `cancelSelection()`
+only when `outsideTapDismisses()` (reads `pref_outside_dismiss`, **default ON**).
 
-> ⏳ **FOLLOW-UP — fully audit the sticky/blocking gate.** With "Tap outside: off" the toolbar still
-> dismisses after ~3 stray touches: a NON-tap path still reaches `cancelSelection()`/`onHidePopup`
-> (candidates: the finger-swipe `cancelSelection()` at `ReaderView.kt` ~L798; a slight stylus drag
-> that flips `isSelecting`; `ACTION_CANCEL`). Enumerate EVERY `cancelSelection()` / `onHidePopup`
-> call site, decide which should respect the sticky pref vs. always fire (a real page-turn swipe
-> SHOULD still cancel — the selection is on the old page), and gate accordingly so "off" reliably
-> blocks accidental dismissal. "Good enough" for palm-rejection today; this makes it bulletproof.
+**2026-06-26 audit + hardening** — two remaining dismissal leaks closed:
+
+1. **Stylus slop** (`handleStylusEvent ACTION_MOVE`): a pen drift > 8dp was enough to start a new
+   drag, fire `onHidePopup`, and if the scrub landed on blank space → invalid selection →
+   `cancelSelection()`. With pref=off and a committed selection, the activation slop is now **3×**
+   (24dp vs 8dp). Accidental wobble doesn't trigger a new drag; real selection drags (> 50dp) still
+   work fine.
+
+2. **Stylus tap semantics**: the original fix also gated the stylus tap path (line 878) with
+   `outsideTapDismisses()`, which meant the pen couldn't dismiss an accidental selection.
+   Corrected — **stylus taps always dismiss** (pen is always intentional on Supernote); only
+   *finger/palm* taps are gated.
+
+**Final dismiss behaviour with pref=off:**
+
+| Gesture | Dismisses? |
+|---|---|
+| Stray palm/finger tap | ✗ blocked |
+| Deliberate stylus tap | ✓ always |
+| Finger swipe > 60dp | ✓ always |
+| ✕ button or tool pick | ✓ always |
 
 ---
 
