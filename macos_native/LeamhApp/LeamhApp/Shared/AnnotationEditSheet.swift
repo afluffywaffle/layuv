@@ -100,6 +100,10 @@ struct AnnotationEditSheet: View {
             }
         }
         .padding(20)
+        #if os(macOS)
         .frame(width: 440, height: 380)
+        #else
+        .presentationDetents([.medium, .large])
+        #endif
     }
 }

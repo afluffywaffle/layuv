@@ -9,6 +9,15 @@ enum AppTheme {
     // CLAUDE.md: warm paper background #F5F0E8
     static let warmPaper = Color(red: 245/255, green: 240/255, blue: 232/255)
 
+    // Neutral surfaces used by shared panels — map to native system colours per platform.
+    #if os(macOS)
+    static let controlFieldBackground = Color(nsColor: .textBackgroundColor)
+    static let panelBackground        = Color(nsColor: .windowBackgroundColor)
+    #elseif os(iOS)
+    static let controlFieldBackground = Color(uiColor: .systemBackground)
+    static let panelBackground        = Color(uiColor: .secondarySystemBackground)
+    #endif
+
     static let bodySize:   CGFloat = 17
     static let chromeSize: CGFloat = 13
 

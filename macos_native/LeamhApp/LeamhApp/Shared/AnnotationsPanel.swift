@@ -71,12 +71,12 @@ struct AnnotationsPanel: View {
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(Color(nsColor: .textBackgroundColor))
+                .fill(AppTheme.controlFieldBackground)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25)))
         )
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(AppTheme.panelBackground)
     }
 
     // MARK: Tag chips
@@ -113,7 +113,11 @@ struct AnnotationsPanel: View {
             }
             .buttonStyle(.plain)
         }
+        #if os(macOS)
         .listStyle(.sidebar)
+        #else
+        .listStyle(.plain)
+        #endif
         .overlay {
             if store.annotations.isEmpty {
                 ContentUnavailableView("No Annotations",

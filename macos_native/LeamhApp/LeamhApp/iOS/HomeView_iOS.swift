@@ -1,9 +1,8 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// iPad root: a NavigationSplitView with a recents sidebar and the reader in the detail
-/// pane. Files-app open via .fileImporter (UIDocumentPicker under the hood). Mirrors the
-/// macOS HomeView behaviourally; selection/annotation chrome arrives in M2.
+/// iPad root: a NavigationSplitView with a recents sidebar and the reader in the detail pane.
+/// Files-app open via .fileImporter (UIDocumentPicker under the hood). Mirrors the macOS HomeView.
 struct HomeView: View {
     @EnvironmentObject var store: DocumentStore
     @State private var selectedURL: URL?
@@ -24,7 +23,15 @@ struct HomeView: View {
                 }
             }
         } detail: {
-            detail
+            if store.isLoading {
+                ProgressView("Loading…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(AppTheme.warmPaper)
+            } else if let doc = store.document {
+                ReaderScreen(document: doc)
+            } else {
+                emptyState
+            }
         }
         .fileImporter(isPresented: $showImporter,
                       allowedContentTypes: [docxType],
@@ -37,27 +44,51 @@ struct HomeView: View {
             guard let url else { return }
             Task { await store.load(url: url) }
         }
+        // Hosted at the split-view root (not on the reader) so it doesn't collide with the
+        // annotations inspector, which renders as a sheet in compact width / iPad multitasking.
+        .sheet(item: $store.editingAnnotation) { annotation in
+            AnnotationEditSheet(annotation: annotation)
+                .environmentObject(store)
+        }
     }
 
-    @ViewBuilder private var detail: some View {
-        if store.isLoading {
-            ProgressView("Loading…")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(AppTheme.warmPaper)
-        } else if let doc = store.document {
-            ReaderTextView(document: doc, annotations: store.annotations)
-                .ignoresSafeArea(.container, edges: .bottom)
-        } else {
-            ContentUnavailableView {
-                Label("No Document Open", systemImage: "doc.text")
-            } description: {
-                Text("Open a DOCX file to begin reading.")
-            } actions: {
-                Button("Open…") { showImporter = true }
-                    .buttonStyle(.borderedProminent)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(AppTheme.warmPaper)
+    private var emptyState: some View {
+        ContentUnavailableView {
+            Label("No Document Open", systemImage: "doc.text")
+        } description: {
+            Text("Open a DOCX file to begin reading.")
+        } actions: {
+            Button("Open…") { showImporter = true }
+                .buttonStyle(.borderedProminent)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(AppTheme.warmPaper)
+    }
+}
+
+// MARK: - Reader + annotations layout
+
+private struct ReaderScreen: View {
+    @EnvironmentObject var store: DocumentStore
+    let document: LoadedDocument
+    @State private var showAnnotations = false
+
+    var body: some View {
+        ReaderTextView(document: document, annotations: store.annotations, documentURL: store.currentURL)
+            .ignoresSafeArea(.container, edges: .bottom)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showAnnotations.toggle()
+                    } label: {
+                        Label("Annotations", systemImage: "list.bullet.rectangle")
+                    }
+                }
+            }
+            .inspector(isPresented: $showAnnotations) {
+                AnnotationsPanel(editingAnnotation: $store.editingAnnotation)
+                    .inspectorColumnWidth(min: 280, ideal: 340, max: 460)
+            }
     }
 }

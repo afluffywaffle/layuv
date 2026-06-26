@@ -16,7 +16,7 @@ final class DocumentStore: ObservableObject {
     /// Set to open the annotation edit sheet from anywhere (VC tap, panel row, comment creation).
     @Published var editingAnnotation: Annotation?
 
-    private var currentURL: URL?
+    @Published private(set) var currentURL: URL?
     // Track the URL whose security scope we're holding so we can release on next load.
     private var accessedURL: URL?
 
