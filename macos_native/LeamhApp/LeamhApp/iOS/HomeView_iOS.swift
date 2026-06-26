@@ -50,6 +50,10 @@ struct HomeView: View {
             AnnotationEditSheet(annotation: annotation)
                 .environmentObject(store)
         }
+        .fullScreenCover(item: $store.inkEditingAnnotation) { annotation in
+            InkEditorView(annotation: annotation)
+                .environmentObject(store)
+        }
     }
 
     private var emptyState: some View {
@@ -87,7 +91,7 @@ private struct ReaderScreen: View {
                 }
             }
             .inspector(isPresented: $showAnnotations) {
-                AnnotationsPanel(editingAnnotation: $store.editingAnnotation)
+                AnnotationsPanel()
                     .inspectorColumnWidth(min: 280, ideal: 340, max: 460)
             }
     }

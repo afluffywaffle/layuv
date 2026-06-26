@@ -2,7 +2,6 @@ import SwiftUI
 
 struct AnnotationsPanel: View {
     @EnvironmentObject var store: DocumentStore
-    @Binding var editingAnnotation: Annotation?
 
     @State private var searchText = ""
     @State private var activeTags: Set<AnnotationTag> = []
@@ -108,7 +107,9 @@ struct AnnotationsPanel: View {
     private var annotationList: some View {
         // Button wrapping is required on macOS — onTapGesture is swallowed by the List.
         List(filtered, id: \.annotation.id) { resolved in
-            Button { editingAnnotation = resolved.annotation } label: {
+            // Route by kind: ink rows open the ink canvas; others the note sheet (openAnnotation
+            // falls back to the note sheet on macOS, which has no ink editor).
+            Button { store.openAnnotation(resolved.annotation) } label: {
                 AnnotationRow(resolved: resolved)
             }
             .buttonStyle(.plain)

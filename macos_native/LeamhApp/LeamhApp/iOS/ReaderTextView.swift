@@ -24,6 +24,8 @@ struct ReaderTextView: UIViewControllerRepresentable {
         // Opening the edit sheet is centralised on the store (set from VC tap or comment creation).
         vc.onAnnotationTapped  = { [weak store] annotation in store?.editingAnnotation = annotation }
         vc.onDeleteAnnotation  = { [weak store] id in store?.deleteAnnotation(id: id) }
+        vc.onInkAnnotationRequested = { [weak store] annotation in store?.beginInkAnnotation(annotation) }
+        vc.onEditInk           = { [weak store] annotation in store?.editInkAnnotation(annotation) }
         return vc
     }
 
@@ -90,7 +92,8 @@ struct ReaderTextView: UIViewControllerRepresentable {
                 str.addAttribute(.backgroundColor,
                                  value: UIColor.systemGreen.withAlphaComponent(0.1), range: r)
             case .inkAnnotation:
-                break   // ink is shown as an embedded image; M3
+                str.addAttribute(.backgroundColor,
+                                 value: UIColor.systemPurple.withAlphaComponent(0.12), range: r)
             }
         }
         return str
@@ -108,6 +111,8 @@ final class ReaderViewController: UIViewController, UITextViewDelegate, UIGestur
     var onAnnotationCreated: ((Annotation) -> Void)?
     var onAnnotationTapped:  ((Annotation) -> Void)?
     var onDeleteAnnotation:  ((String) -> Void)?
+    var onInkAnnotationRequested: ((Annotation) -> Void)?
+    var onEditInk:           ((Annotation) -> Void)?
 
     /// The 6 selection tools, matching the macOS ToolPickerView. Ink is M3 (PencilKit).
     private let tools: [(tool: AnnotationTool, title: String, icon: String)] = [
@@ -117,6 +122,7 @@ final class ReaderViewController: UIViewController, UITextViewDelegate, UIGestur
         (.strikethrough,   "Strikethrough",     "strikethrough"),
         (.comment,         "Comment",           "text.bubble"),
         (.bookmark,        "Bookmark",          "bookmark.fill"),
+        (.inkAnnotation,   "Ink note",          "pencil.tip.crop.circle"),
     ]
 
     override func viewDidLoad() {
@@ -209,10 +215,12 @@ final class ReaderViewController: UIViewController, UITextViewDelegate, UIGestur
             position:     position
         )
 
-        onAnnotationCreated?(annotation)
-        // Comment annotations open the editor immediately so the user can add a note.
-        if tool == .comment {
-            onAnnotationTapped?(annotation)
+        if tool == .inkAnnotation {
+            onInkAnnotationRequested?(annotation)   // adds in-memory + opens the ink editor
+        } else {
+            onAnnotationCreated?(annotation)
+            // Comment annotations open the editor immediately so the user can add a note.
+            if tool == .comment { onAnnotationTapped?(annotation) }
         }
         textView.selectedTextRange = nil
     }
@@ -254,9 +262,15 @@ final class ReaderViewController: UIViewController, UITextViewDelegate, UIGestur
         let raw = annotation.selectedText
         let preview = raw.count > 80 ? String(raw.prefix(80)) + "…" : raw
         let sheet = UIAlertController(title: nil, message: preview, preferredStyle: .actionSheet)
-        sheet.addAction(UIAlertAction(title: "Comment", style: .default) { [weak self] _ in
-            self?.onAnnotationTapped?(annotation)
-        })
+        if annotation.hasInk {
+            sheet.addAction(UIAlertAction(title: "Edit Ink", style: .default) { [weak self] _ in
+                self?.onEditInk?(annotation)
+            })
+        } else {
+            sheet.addAction(UIAlertAction(title: "Comment", style: .default) { [weak self] _ in
+                self?.onAnnotationTapped?(annotation)
+            })
+        }
         sheet.addAction(UIAlertAction(title: "Delete", style: .destructive) { [weak self] _ in
             self?.onDeleteAnnotation?(annotation.id)
         })

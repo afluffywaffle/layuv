@@ -58,7 +58,7 @@ struct ReaderScreen: View {
                 .frame(minWidth: 440)
 
             if showAnnotations {
-                AnnotationsPanel(editingAnnotation: $store.editingAnnotation)
+                AnnotationsPanel()
                     .frame(width: 300)
             }
         }

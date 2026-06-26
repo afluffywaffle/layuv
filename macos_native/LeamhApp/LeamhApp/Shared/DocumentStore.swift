@@ -71,22 +71,38 @@ final class DocumentStore: ObservableObject {
 
     // MARK: - Save
 
+    /// Serializes ALL DOCX writes so they never overlap on disk — the macOS/iPad analogue of
+    /// Android's DocxWriteQueue (CLAUDE.md invariant #2). Each write reads base bytes fresh from
+    /// disk, transforms, and atomic-renames; the next write awaits the previous.
+    private var writeChain: Task<Void, Never> = Task {}
+
     // Reads base bytes fresh from disk per CLAUDE.md invariant, then writes atomically.
     func save() async {
         guard let url = currentURL else { return }
         let annotationsToWrite = annotations.map(\.annotation)
-        do {
-            try await Task.detached(priority: .userInitiated) {
-                let base    = try Data(contentsOf: url)
-                let updated = try DocxStore.write(base, annotations: annotationsToWrite)
-                let tmpURL  = url.deletingLastPathComponent()
-                    .appendingPathComponent(".\(url.lastPathComponent).tmp")
-                try updated.write(to: tmpURL)
-                _ = try FileManager.default.replaceItemAt(url, withItemAt: tmpURL)
-            }.value
-        } catch {
-            print("[DocumentStore] save failed: \(error)")
+        await enqueueWrite(url: url) { base in
+            try DocxStore.write(base, annotations: annotationsToWrite)
         }
+    }
+
+    /// The single serialized write path. Reads from disk inside the chained task so each write
+    /// sees the previous write's result (never a stale in-memory base).
+    private func enqueueWrite(url: URL, _ transform: @escaping @Sendable (Data) throws -> Data) async {
+        let previous = writeChain
+        let task = Task {
+            await previous.value
+            await Task.detached(priority: .userInitiated) {
+                do {
+                    let base = try Data(contentsOf: url)
+                    let out  = try transform(base)
+                    try Self.atomicReplace(out, at: url)
+                } catch {
+                    print("[DocumentStore] write failed: \(error)")
+                }
+            }.value
+        }
+        writeChain = task
+        await task.value
     }
 
     // MARK: - Annotation mutations
@@ -123,6 +139,92 @@ final class DocumentStore: ObservableObject {
     func deleteAnnotation(id: String) {
         annotations.removeAll { $0.annotation.id == id }
         Task { await save() }
+    }
+
+    // MARK: - Ink (Apple Pencil)
+
+    /// Set to present the ink editor (iPad). Annotation: Identifiable drives .fullScreenCover(item:).
+    @Published var inkEditingAnnotation: Annotation?
+
+    /// Add a new ink annotation to the in-memory list (NO disk write yet) and open the ink editor.
+    /// The DOCX write happens in finishInk; cancelInk discards an unsaved brand-new annotation.
+    /// Deferring the write avoids racing the editor's atomic PNG+strokes+annotations save.
+    func beginInkAnnotation(_ annotation: Annotation) {
+        let span = document.map {
+            Anchoring.locateInPlain($0.plainText, selectedText: annotation.selectedText,
+                                    prefix: annotation.prefix, suffix: annotation.suffix,
+                                    positionHint: annotation.position)
+        } ?? nil
+        annotations.append(ResolvedAnnotation(annotation: annotation, span: span))
+        inkEditingAnnotation = annotation
+    }
+
+    /// Re-open an existing ink annotation for editing.
+    func editInkAnnotation(_ annotation: Annotation) {
+        inkEditingAnnotation = annotation
+    }
+
+    /// Route a tapped/selected annotation to the right editor: ink canvas vs note sheet.
+    /// macOS has no ink editor, so ink rows fall back to the note sheet there.
+    func openAnnotation(_ annotation: Annotation) {
+        #if os(macOS)
+        editingAnnotation = annotation
+        #else
+        if annotation.hasInk { inkEditingAnnotation = annotation }
+        else { editingAnnotation = annotation }
+        #endif
+    }
+
+    /// Cancel the ink editor. A brand-new annotation with no committed ink is discarded;
+    /// an existing ink annotation is left untouched.
+    func cancelInk(_ annotation: Annotation) {
+        if !annotation.hasInk {
+            annotations.removeAll { $0.annotation.id == annotation.id }
+        }
+    }
+
+    /// Persist a finished ink drawing: PNG + re-editable strokes blob + the annotation list
+    /// (with hasInk=true), in one atomic read-from-disk → write.
+    func finishInk(annotationId: String, png: Data, strokesJSON: String) async {
+        guard let url = currentURL else { return }
+        if let idx = annotations.firstIndex(where: { $0.annotation.id == annotationId }),
+           !annotations[idx].annotation.hasInk {
+            let updated = annotations[idx].annotation.copy(hasInk: true)
+            annotations[idx] = ResolvedAnnotation(annotation: updated, span: annotations[idx].span)
+        }
+        let annotationsToWrite = annotations.map(\.annotation)
+        await enqueueWrite(url: url) { base in
+            var b = try DocxStore.saveInkPng(base, annotationId: annotationId, pngData: png)
+            b = try DocxStore.saveInkStrokes(b, annotationId: annotationId, json: strokesJSON)
+            return try DocxStore.write(b, annotations: annotationsToWrite)
+        }
+    }
+
+    /// Reads the re-editable stroke blob for an ink annotation (nil if none).
+    func loadInkStrokesJSON(_ annotationId: String) async -> String? {
+        guard let url = currentURL else { return nil }
+        return try? await Task.detached(priority: .userInitiated) {
+            let base = try Data(contentsOf: url)
+            return try DocxStore.readInkStrokes(base, annotationId: annotationId)
+        }.value
+    }
+
+    /// Reads the flattened ink PNG for an annotation (used as a view-only backdrop when the
+    /// re-editable strokes blob is absent or from another platform).
+    func loadInkPng(_ annotationId: String) async -> Data? {
+        guard let url = currentURL else { return nil }
+        return try? await Task.detached(priority: .userInitiated) {
+            let base = try Data(contentsOf: url)
+            return try DocxStore.readInkPng(base, annotationId: annotationId)
+        }.value
+    }
+
+    // Unique tmp name per write so even an accidental overlap can't collide on a shared path.
+    private nonisolated static func atomicReplace(_ data: Data, at url: URL) throws {
+        let tmpURL = url.deletingLastPathComponent()
+            .appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
+        try data.write(to: tmpURL)
+        _ = try FileManager.default.replaceItemAt(url, withItemAt: tmpURL)
     }
 
     // MARK: - Recents (security-scoped bookmarks)
