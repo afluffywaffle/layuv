@@ -1,0 +1,8 @@
+# GitHub Linguist overrides — keep the Languages bar reflecting the
+# active native codebases (Kotlin / Swift), not vendored or archived code.
+
+# Archived Flutter prototype — reference only, not part of the product.
+archive/**                                linguist-vendored
+
+# Vendored third-party dependency (ZIPFoundation), not our code.
+macos_native/Packages/ZIPFoundation/**    linguist-vendored
