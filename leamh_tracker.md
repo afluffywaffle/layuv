@@ -325,9 +325,14 @@ Currently ink PNG lives inside `word/comments.xml` via `<w:drawing>` — Word re
 - [x] M3.5 — icon toolbar, full-text search, nav mode picker, panel sort ✅
 - [x] M4a — engine port: `ManuscriptSerializer`, `RewriteProtocol`, `DocxFromText`, aichat r/w (commit `ca5ea07`) ✅
 - [x] M4b–M4d — provider stack (`OpenAiCompatibleProvider`, `CleartextPolicy`, `SecureKeyStore`), `AskAiView`, `AiSettingsView`, Export for AI (commit `7c9fa9f`) ✅
+- [x] **iPhone parity** — size-class-adaptive root: iPad keeps NavigationSplitView; iPhone (compact) = reader-first NavigationStack, 3-tab panel as a sheet, secondary actions in an overflow menu; recents in the empty state (commit `349f783`) ✅
+- [x] **Font system** — dropped the broken bundled Literata/Source Sans 3 (fell back to system). Reader body = user-selectable **New York (serif) / San Francisco (sans)** picker; default New York; UI chrome stays San Francisco. Also **reader text size** S/M/L (15/17/20pt, reader-only) (commits `267096d`, `19551bf`, `393c9b9`) ✅
+- [x] **Light-appearance lock** — warm-paper reader pinned to light so dark mode doesn't wash out ink/chrome (commit `377971b`) ✅
+- [x] **macOS sidebar = iPad 3-tab panel** — `SidebarPanelView` promoted to Shared; macOS sidebar is Annotations/Bookmarks/Find; recents → empty state; macOS reader find + scroll-to-annotation via `ReaderCoordinator` (commit `b17024f`) ✅
+- [x] **Paginated reader + page-curl** — `TextPaginator` + `AnnotatingTextSurface` (offset-aware selection/annotation on every page); **Page Turn = UIPageViewController(.pageCurl)**, **Screen Flip = .vertical scroll**; **two columns** on iPad (avail width ≥ 380pt), one on iPhone (commits `679db3a`, `db82e25`) ✅
 - [ ] **AI submenu parity** — add the AI Chat bubble button to the iOS toolbar (mirrors Android `aiMenuButton`); tap opens a sheet/popover with: AI Chat (gated, dimmed when not configured + "Configure in Settings" subtitle), Export for AI…, Import rewrite…, Set AI export folder… (with `parent/folder` subtitle), Set import folder… (with subtitle). Matches the refined Android submenu structure from 2026-06-26.
-- [ ] Font fix — PostScript names in `AppTheme` don't match bundled font files; text falls back to system font on both targets. Fix: correct names + bundle real weights OR `CTFontManagerRegisterFontsForURL` at launch.
 - [ ] `ThreadEntry` parity — `ManuscriptSerializer` is note-only; full thread-folding round-trip with Android-threaded annotations still pending.
+- [ ] Paged-mode polish — Find searches the current page only in paged modes (works fully in scroll); cross-column selection doesn't span the gap (each column is its own text view).
 
 ### App icon
 - [x] Icon designed in Affinity and generated via `flutter_launcher_icons` ✅
