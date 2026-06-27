@@ -40,6 +40,7 @@ struct ReaderTextView: UIViewControllerRepresentable {
     let annotations: [ResolvedAnnotation]
     let documentURL: URL?
     var bodyPointSize: CGFloat = AppTheme.bodySize
+    var twoColumnPaged: Bool = true
     var navMode: NavMode = .scroll
     var findTrigger: Int = 0
     /// Set to an annotation ID to scroll the reader to that annotation (one-shot; stays set).
@@ -66,6 +67,10 @@ struct ReaderTextView: UIViewControllerRepresentable {
     func updateUIViewController(_ vc: ReaderViewController, context: Context) {
         vc.update(document: document, annotations: annotations,
                   documentURL: documentURL, bodySize: bodyPointSize)
+        if vc.twoColumnEnabled != twoColumnPaged {
+            vc.twoColumnEnabled = twoColumnPaged
+            vc.invalidatePagination()
+        }
         vc.navMode = navMode
         if findTrigger != context.coordinator.lastFindTrigger {
             context.coordinator.lastFindTrigger = findTrigger
@@ -164,6 +169,13 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
 
     var navMode: NavMode = .scroll {
         didSet { guard oldValue != navMode else { return }; installMode() }
+    }
+    /// iPad-only two-column preference (set from the representable). iPhone is always 1 column.
+    var twoColumnEnabled = true
+
+    func invalidatePagination() {
+        paginatedSize = .zero
+        view.setNeedsLayout()
     }
 
     // Scroll mode
@@ -289,7 +301,9 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
         guard size.width > 10, size.height > 10, size != paginatedSize else { return }
         paginatedSize = size
 
-        let columnCount = availW >= twoColumnMinWidth ? 2 : 1
+        // Two columns only on iPad, when the user enables it, and there's enough width.
+        let isPad = traitCollection.userInterfaceIdiom == .pad
+        let columnCount = (twoColumnEnabled && isPad && availW >= twoColumnMinWidth) ? 2 : 1
         let colW = (availW - columnGap * CGFloat(columnCount - 1)) / CGFloat(columnCount)
         // Paginate to a hair under the column height so sub-pixel rounding never clips the last line.
         let colH = availH - 4

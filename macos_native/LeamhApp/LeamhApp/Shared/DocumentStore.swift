@@ -36,6 +36,17 @@ final class DocumentStore: ObservableObject {
         }
     }
 
+    private let twoColumnKey = "com.afluffywaffle.layuv.twoColumnPaged"
+
+    /// iPad-only preference: use two columns in the paged reader modes (default on). iPhone is
+    /// always single-column. Honoured by the reader together with an idiom + min-width guard.
+    @Published var twoColumnPaged: Bool {
+        didSet {
+            guard oldValue != twoColumnPaged else { return }
+            UserDefaults.standard.set(twoColumnPaged, forKey: twoColumnKey)
+        }
+    }
+
     /// The app-wide font. Mirrors Android's single `body_font` pref: changing it flips the
     /// reader AND all chrome. The @Published is the SwiftUI invalidation trigger; the didSet
     /// also pushes the value into the `AppTheme.current` static the font helpers read.
@@ -72,6 +83,7 @@ final class DocumentStore: ObservableObject {
         fontChoice = choice
         bodyTextSize = UserDefaults.standard.string(forKey: fontSizeKey)
             .flatMap(BodyTextSize.init(rawValue:)) ?? .medium
+        twoColumnPaged = (UserDefaults.standard.object(forKey: twoColumnKey) as? Bool) ?? true
         applyFontChoice(choice)
         loadRecents()
     }

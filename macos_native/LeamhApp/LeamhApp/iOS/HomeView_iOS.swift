@@ -25,8 +25,18 @@ struct HomeView: View {
     // and the Bookmarks tab can scroll the reader to a tapped annotation.
     @State private var findTrigger            = 0
     @State private var scrollToAnnotationId: String? = nil
+    // System find is per-text-view, so it can't search across the discrete pages of a paged mode.
+    // Tapping Find in a paged mode transiently drops the reader to scroll (full-document system
+    // find); picking a nav mode from the menu clears the override and returns to pages.
+    @AppStorage("com.afluffywaffle.layuv.navMode") private var navModeRaw = NavMode.scroll.rawValue
+    @State private var searchScrollOverride   = false
 
     private var docxType: UTType { UTType(filenameExtension: "docx") ?? .data }
+
+    private func triggerFind() {
+        if NavMode(rawValue: navModeRaw) != .scroll { searchScrollOverride = true }
+        findTrigger += 1
+    }
 
     var body: some View {
         Group {
@@ -71,7 +81,7 @@ struct HomeView: View {
     private var regularRoot: some View {
         NavigationSplitView {
             SidebarPanelView(
-                onFind:      { findTrigger += 1 },
+                onFind:      { triggerFind() },
                 onScrollTo:  { ann in scrollToAnnotationId = ann.id },
                 onOpenFile:  { showImporter = true }
             )
@@ -89,7 +99,7 @@ struct HomeView: View {
         .sheet(isPresented: $showPanel) {
             NavigationStack {
                 SidebarPanelView(
-                    onFind:      { findTrigger += 1 },
+                    onFind:      { triggerFind() },
                     onScrollTo:  { ann in
                         showPanel = false
                         scrollToAnnotationId = ann.id
@@ -124,12 +134,14 @@ struct HomeView: View {
                          findTrigger: findTrigger,
                          scrollToAnnotationId: scrollToAnnotationId,
                          onShowPanel: onShowPanel,
-                         onFind:   { findTrigger += 1 },
+                         onFind:   { triggerFind() },
                          onAskAi:  { showAskAi = true },
                          onExport: { items in
                              exportItems = items
                              showExport  = true
-                         })
+                         },
+                         searchScrollOverride: searchScrollOverride,
+                         onClearSearch: { searchScrollOverride = false })
         } else {
             emptyState
         }
@@ -192,9 +204,14 @@ private struct ReaderScreen: View {
     let onFind: () -> Void
     let onAskAi: () -> Void
     let onExport: ([Any]) -> Void
+    /// While searching in a paged mode the reader is forced to scroll (global system find);
+    /// `onClearSearch` returns to the saved nav mode.
+    let searchScrollOverride: Bool
+    let onClearSearch: () -> Void
 
     @AppStorage("com.afluffywaffle.layuv.navMode") private var navModeRaw = NavMode.scroll.rawValue
     private var navMode: NavMode { NavMode(rawValue: navModeRaw) ?? .scroll }
+    private var effectiveNavMode: NavMode { searchScrollOverride ? .scroll : navMode }
 
     private var isCompact: Bool { onShowPanel != nil }
     private var docTitle: String {
@@ -206,7 +223,8 @@ private struct ReaderScreen: View {
                        annotations: store.annotations,
                        documentURL: store.currentURL,
                        bodyPointSize: store.bodyTextSize.points,
-                       navMode: navMode,
+                       twoColumnPaged: store.twoColumnPaged,
+                       navMode: effectiveNavMode,
                        findTrigger: findTrigger,
                        scrollToAnnotationId: scrollToAnnotationId)
             .ignoresSafeArea(.container, edges: .bottom)
@@ -241,6 +259,7 @@ private struct ReaderScreen: View {
                                 ForEach(NavMode.allCases, id: \.rawValue) { mode in
                                     Button {
                                         navModeRaw = mode.rawValue
+                                        onClearSearch()
                                     } label: {
                                         if navModeRaw == mode.rawValue {
                                             Label(mode.label, systemImage: "checkmark")
@@ -268,6 +287,16 @@ private struct ReaderScreen: View {
                         Menu {
                             Menu("Font") { fontMenuItems }
                             Menu("Text Size") { sizeMenuItems }
+                            Divider()
+                            Button {
+                                store.twoColumnPaged.toggle()
+                            } label: {
+                                if store.twoColumnPaged {
+                                    Label("Two Columns", systemImage: "checkmark")
+                                } else {
+                                    Text("Two Columns")
+                                }
+                            }
                         } label: {
                             Image(systemName: "textformat")
                         }
