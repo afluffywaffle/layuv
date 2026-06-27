@@ -20,6 +20,14 @@ struct LeamhAppApp: App {
                 Button("Save") { Task { await store.save() } }
                     .keyboardShortcut("s")
             }
+            CommandMenu("Format") {
+                Picker("Font", selection: $store.fontChoice) {
+                    ForEach(FontChoice.allCases, id: \.rawValue) { choice in
+                        Text(choice.label).tag(choice)
+                    }
+                }
+                .pickerStyle(.inline)
+            }
         }
     }
 }

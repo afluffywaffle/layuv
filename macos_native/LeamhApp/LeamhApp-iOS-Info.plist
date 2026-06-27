@@ -22,10 +22,6 @@
     <string>$(CURRENT_PROJECT_VERSION)</string>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2024 Jayrom Acorda. GPL v3.</string>
-    <!-- Custom fonts: synced group flattens to bundle root, so Fonts/ subdir doesn't register.
-         Listed here for correctness; fix the actual font loading in the typography pass. -->
-    <key>ATSApplicationFontsPath</key>
-    <string>Fonts</string>
     <!-- ATS: NSAllowsArbitraryLoads enables plain HTTP connections.
          CleartextPolicy.swift is the actual security gate — only local/private hosts pass. -->
     <key>NSAppTransportSecurity</key>

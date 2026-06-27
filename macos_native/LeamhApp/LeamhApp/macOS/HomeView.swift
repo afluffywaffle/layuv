@@ -38,6 +38,7 @@ struct HomeView: View {
                 .background(AppTheme.warmPaper)
             }
         }
+        .appFont(store.fontChoice)   // flip all SwiftUI chrome to the chosen family
         .onChange(of: selectedURL) { _, url in
             guard let url else { return }
             Task { await store.load(url: url) }
@@ -76,6 +77,7 @@ struct ReaderScreen: View {
         .sheet(item: $store.editingAnnotation) { annotation in
             AnnotationEditSheet(annotation: annotation)
                 .environmentObject(store)
+                .appFont(store.fontChoice)
         }
     }
 }

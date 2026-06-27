@@ -1,6 +1,8 @@
 import Foundation
 #if os(macOS)
 import AppKit
+#elseif os(iOS)
+import UIKit
 #endif
 
 // App-layer Identifiable conformance so Annotation can be used as .sheet(item:).
@@ -22,6 +24,28 @@ final class DocumentStore: ObservableObject {
 
     private let recentsKey  = "com.afluffywaffle.layuv.recentFiles"
     private let bookmarksKey = "com.afluffywaffle.layuv.bookmarks"
+    private let fontKey      = "com.afluffywaffle.layuv.bodyFont"
+
+    /// The app-wide font. Mirrors Android's single `body_font` pref: changing it flips the
+    /// reader AND all chrome. The @Published is the SwiftUI invalidation trigger; the didSet
+    /// also pushes the value into the `AppTheme.current` static the font helpers read.
+    @Published var fontChoice: FontChoice {
+        didSet {
+            guard oldValue != fontChoice else { return }
+            applyFontChoice(fontChoice)
+            UserDefaults.standard.set(fontChoice.rawValue, forKey: fontKey)
+        }
+    }
+
+    /// Pushes the choice into the process-wide static and (iOS) the nav-bar title appearance,
+    /// which `\.font` does not reach. Called from both `init` (seed) and `fontChoice.didSet`.
+    private func applyFontChoice(_ choice: FontChoice) {
+        AppTheme.current = choice
+        #if os(iOS)
+        UINavigationBar.appearance().titleTextAttributes      = [.font: AppTheme.uiSystemFont(17, .semibold)]
+        UINavigationBar.appearance().largeTitleTextAttributes = [.font: AppTheme.uiSystemFont(34, .bold)]
+        #endif
+    }
 
     // Security-scoped bookmarks: macOS app-sandbox needs the .withSecurityScope option;
     // iOS uses plain bookmarks for document-picker URLs (still wrapped in start/stopAccessing…).
@@ -33,7 +57,15 @@ final class DocumentStore: ObservableObject {
     private static let bookmarkResolutionOptions: URL.BookmarkResolutionOptions = []
     #endif
 
-    init() { loadRecents() }
+    init() {
+        // Seed the font BEFORE the first UI build. The initial property assignment does NOT
+        // fire didSet, so apply the static + appearance explicitly here.
+        let choice = UserDefaults.standard.string(forKey: fontKey)
+            .flatMap(FontChoice.init(rawValue:)) ?? .serif
+        fontChoice = choice
+        applyFontChoice(choice)
+        loadRecents()
+    }
 
     // MARK: - File access
 

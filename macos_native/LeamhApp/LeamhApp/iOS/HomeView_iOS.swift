@@ -36,6 +36,7 @@ struct HomeView: View {
                 regularRoot
             }
         }
+        .appFont(store.fontChoice)   // flip all SwiftUI chrome to the chosen family
         .fileImporter(isPresented: $showImporter,
                       allowedContentTypes: [docxType],
                       allowsMultipleSelection: false) { result in
@@ -48,15 +49,18 @@ struct HomeView: View {
         .sheet(item: $store.editingAnnotation) { annotation in
             AnnotationEditSheet(annotation: annotation)
                 .environmentObject(store)
+                .appFont(store.fontChoice)
         }
         .fullScreenCover(item: $store.inkEditingAnnotation) { annotation in
             InkEditorView(annotation: annotation)
                 .environmentObject(store)
+                .appFont(store.fontChoice)
         }
         // AI panels
         .sheet(isPresented: $showAskAi) {
             AskAiView()
                 .environmentObject(store)
+                .appFont(store.fontChoice)
         }
         .sheet(isPresented: $showExport) {
             ShareSheet(items: exportItems)
@@ -230,6 +234,7 @@ private struct ReaderScreen: View {
                     // iPhone: fold the secondary actions into one overflow menu to fit the nav bar.
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
+                            Menu("Font") { fontMenuItems }
                             Menu("Navigation Mode") {
                                 ForEach(NavMode.allCases, id: \.rawValue) { mode in
                                     Button {
@@ -256,7 +261,15 @@ private struct ReaderScreen: View {
                         .accessibilityLabel("More")
                     }
                 } else {
-                    // iPad: nav mode, Ask AI, Export as individual toolbar items.
+                    // iPad: font, nav mode, Ask AI, Export as individual toolbar items.
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            fontMenuItems
+                        } label: {
+                            Image(systemName: "textformat")
+                        }
+                        .accessibilityLabel("Font: \(store.fontChoice.label)")
+                    }
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
                             ForEach(NavMode.allCases, id: \.rawValue) { mode in
@@ -289,6 +302,20 @@ private struct ReaderScreen: View {
                     }
                 }
             }
+    }
+
+    @ViewBuilder private var fontMenuItems: some View {
+        ForEach(FontChoice.allCases, id: \.rawValue) { choice in
+            Button {
+                store.fontChoice = choice
+            } label: {
+                if store.fontChoice == choice {
+                    Label(choice.label, systemImage: "checkmark")
+                } else {
+                    Text(choice.label)
+                }
+            }
+        }
     }
 
     private func exportForAi() {

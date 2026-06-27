@@ -429,7 +429,6 @@
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_ATSApplicationFontsPath = Fonts;
 				INFOPLIST_KEY_CFBundleDisplayName = "Léamh";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2024 Jayrom Acorda. GPL v3.";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
@@ -459,7 +458,6 @@
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_ATSApplicationFontsPath = Fonts;
 				INFOPLIST_KEY_CFBundleDisplayName = "Léamh";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2024 Jayrom Acorda. GPL v3.";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;

@@ -5,6 +5,28 @@ import AppKit
 import UIKit
 #endif
 
+/// The user-selectable app-wide font. Mirrors Android's single `body_font` preference:
+/// ONE family applies to the entire UI (reader body AND all chrome); only weight varies.
+/// Backed by Apple system fonts — New York (the system serif) and San Francisco (the
+/// system default) — so there are no bundled font files to register.
+enum FontChoice: String, CaseIterable {
+    case serif   // New York
+    case sans    // San Francisco
+
+    var label: String {
+        switch self {
+        case .serif: return "New York"
+        case .sans:  return "San Francisco"
+        }
+    }
+    var design: Font.Design {
+        switch self {
+        case .serif: return .serif
+        case .sans:  return .default
+        }
+    }
+}
+
 enum AppTheme {
     // CLAUDE.md: warm paper background #F5F0E8
     static let warmPaper = Color(red: 245/255, green: 240/255, blue: 232/255)
@@ -21,46 +43,69 @@ enum AppTheme {
     static let bodySize:   CGFloat = 17
     static let chromeSize: CGFloat = 13
 
-    // SwiftUI fonts — rely on the bundled .ttf files (ATSApplicationFontsPath = "Fonts").
-    // PostScript names: adjust here if the font validator shows different names at first launch.
-    static func body(size: CGFloat = bodySize) -> Font       { .custom("Literata", size: size) }
-    static func bodyItalic(size: CGFloat = bodySize) -> Font { .custom("Literata-Italic", size: size) }
-    static func chrome(size: CGFloat = chromeSize) -> Font   { .custom("SourceSans3", size: size) }
-    // SourceSans3.ttf is a variable font; "SourceSans3-Bold" activates the bold axis if present.
-    static func chromeBold(size: CGFloat = chromeSize) -> Font { .custom("SourceSans3-Bold", size: size) }
+    /// Process-wide active font (Android `ReaderTheme.bodyFont` analogue). The font
+    /// helpers below read this; `DocumentStore.fontChoice`'s didSet keeps it in sync and
+    /// seeds it at launch. The @Published on DocumentStore is what actually re-renders
+    /// SwiftUI — this static alone invalidates nothing.
+    static var current: FontChoice = .serif
+
+    // SwiftUI fonts — body and chrome share the SAME family (only weight differs), so the
+    // whole app flips together when `current` changes.
+    static func body(size: CGFloat = bodySize) -> Font       { .system(size: size, design: current.design) }
+    static func bodyItalic(size: CGFloat = bodySize) -> Font { .system(size: size, design: current.design).italic() }
+    static func chrome(size: CGFloat = chromeSize) -> Font   { .system(size: size, design: current.design) }
+    static func chromeBold(size: CGFloat = chromeSize) -> Font {
+        .system(size: size, weight: .bold, design: current.design)
+    }
 
     #if os(macOS)
     static let warmPaperNS  = NSColor(red: 245/255, green: 240/255, blue: 232/255, alpha: 1)
     // CLAUDE.md: highlight is dotted underline, black at ~15% opacity
     static let highlightNS  = NSColor.black.withAlphaComponent(0.15)
 
-    // NSFont equivalents for TextKit layout in ReaderViewController.
-    static func nsBody(size: CGFloat = bodySize) -> NSFont {
-        NSFont(name: "Literata", size: size) ?? .systemFont(ofSize: size)
+    /// System NSFont in the active design; serif resolves to New York, sans to San Francisco.
+    /// Falls back to the plain system font if the serif descriptor is unavailable.
+    static func nsSystemFont(_ size: CGFloat, _ weight: NSFont.Weight) -> NSFont {
+        let base = NSFont.systemFont(ofSize: size, weight: weight)
+        guard current == .serif,
+              let d = base.fontDescriptor.withDesign(.serif),
+              let f = NSFont(descriptor: d, size: size) else { return base }
+        return f
     }
+    static func nsBody(size: CGFloat = bodySize) -> NSFont       { nsSystemFont(size, .regular) }
+    static func nsBodyBold(size: CGFloat = bodySize) -> NSFont   { nsSystemFont(size, .bold) }
+    static func nsChromeBold(size: CGFloat = chromeSize) -> NSFont { nsSystemFont(size, .bold) }
     static func nsBodyItalic(size: CGFloat = bodySize) -> NSFont {
-        NSFont(name: "Literata-Italic", size: size) ?? .systemFont(ofSize: size)
-    }
-    static func nsBodyBold(size: CGFloat = bodySize) -> NSFont {
-        NSFont(name: "Literata-Bold", size: size) ?? .boldSystemFont(ofSize: size)
-    }
-    static func nsChromeBold(size: CGFloat = chromeSize) -> NSFont {
-        NSFont(name: "SourceSans3-Bold", size: size) ?? .boldSystemFont(ofSize: size)
+        let b = nsSystemFont(size, .regular)
+        let d = b.fontDescriptor.withSymbolicTraits(.italic)
+        return NSFont(descriptor: d, size: size) ?? b
     }
     #endif
 
     #if os(iOS)
     static let warmPaperUI  = UIColor(red: 245/255, green: 240/255, blue: 232/255, alpha: 1)
 
-    // UIFont equivalents for TextKit layout in the iPad UITextView reader.
-    static func uiBody(size: CGFloat = bodySize) -> UIFont {
-        UIFont(name: "Literata", size: size) ?? .systemFont(ofSize: size)
+    /// System UIFont in the active design; serif resolves to New York, sans to San Francisco.
+    static func uiSystemFont(_ size: CGFloat, _ weight: UIFont.Weight) -> UIFont {
+        let base = UIFont.systemFont(ofSize: size, weight: weight)
+        guard current == .serif, let d = base.fontDescriptor.withDesign(.serif) else { return base }
+        return UIFont(descriptor: d, size: size)
     }
+    static func uiBody(size: CGFloat = bodySize) -> UIFont     { uiSystemFont(size, .regular) }
+    static func uiBodyBold(size: CGFloat = bodySize) -> UIFont { uiSystemFont(size, .bold) }
     static func uiBodyItalic(size: CGFloat = bodySize) -> UIFont {
-        UIFont(name: "Literata-Italic", size: size) ?? .italicSystemFont(ofSize: size)
-    }
-    static func uiBodyBold(size: CGFloat = bodySize) -> UIFont {
-        UIFont(name: "Literata-Bold", size: size) ?? .boldSystemFont(ofSize: size)
+        let b = uiSystemFont(size, .regular)
+        let d = b.fontDescriptor.withSymbolicTraits(.traitItalic) ?? b.fontDescriptor
+        return UIFont(descriptor: d, size: size)
     }
     #endif
+}
+
+extension View {
+    /// Flips the entire SwiftUI subtree to the chosen font family while preserving Dynamic
+    /// Type sizing. Attach where `store` is observed so it re-applies when the choice changes;
+    /// re-apply on every sheet/cover root (sheets don't inherit \.font from the presenter).
+    func appFont(_ choice: FontChoice) -> some View {
+        environment(\.font, .system(.body, design: choice.design))
+    }
 }
