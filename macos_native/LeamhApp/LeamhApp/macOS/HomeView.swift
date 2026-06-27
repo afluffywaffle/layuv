@@ -27,7 +27,6 @@ struct HomeView: View {
                 emptyState
             }
         }
-        .appFont(store.fontChoice)
     }
 
     private var emptyState: some View {
@@ -93,7 +92,6 @@ struct ReaderScreen: View {
             .sheet(item: $store.editingAnnotation) { annotation in
                 AnnotationEditSheet(annotation: annotation)
                     .environmentObject(store)
-                    .appFont(store.fontChoice)
                     .preferredColorScheme(.light)
             }
     }

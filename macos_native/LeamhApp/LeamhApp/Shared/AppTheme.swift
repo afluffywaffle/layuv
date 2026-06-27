@@ -64,19 +64,20 @@ enum AppTheme {
     static let bodySize:   CGFloat = 17
     static let chromeSize: CGFloat = 13
 
-    /// Process-wide active font (Android `ReaderTheme.bodyFont` analogue). The font
-    /// helpers below read this; `DocumentStore.fontChoice`'s didSet keeps it in sync and
-    /// seeds it at launch. The @Published on DocumentStore is what actually re-renders
-    /// SwiftUI — this static alone invalidates nothing.
+    /// Process-wide active READER font (Android `ReaderTheme.bodyFont` analogue). ONLY the
+    /// reader body honours this (the ui*/ns* helpers below); all SwiftUI chrome stays on San
+    /// Francisco for a consistent UI. `DocumentStore.fontChoice`'s didSet keeps this in sync and
+    /// seeds it at launch; the @Published is what re-renders the reader (this static alone
+    /// invalidates nothing).
     static var current: FontChoice = .serif
 
-    // SwiftUI fonts — body and chrome share the SAME family (only weight differs), so the
-    // whole app flips together when `current` changes.
-    static func body(size: CGFloat = bodySize) -> Font       { .system(size: size, design: current.design) }
-    static func bodyItalic(size: CGFloat = bodySize) -> Font { .system(size: size, design: current.design).italic() }
-    static func chrome(size: CGFloat = chromeSize) -> Font   { .system(size: size, design: current.design) }
+    // SwiftUI chrome fonts — always San Francisco (system default), independent of the reader
+    // font choice. The serif/sans selection applies to the reader body only.
+    static func body(size: CGFloat = bodySize) -> Font       { .system(size: size) }
+    static func bodyItalic(size: CGFloat = bodySize) -> Font { .system(size: size).italic() }
+    static func chrome(size: CGFloat = chromeSize) -> Font   { .system(size: size) }
     static func chromeBold(size: CGFloat = chromeSize) -> Font {
-        .system(size: size, weight: .bold, design: current.design)
+        .system(size: size, weight: .bold)
     }
 
     #if os(macOS)
@@ -122,11 +123,3 @@ enum AppTheme {
     #endif
 }
 
-extension View {
-    /// Flips the entire SwiftUI subtree to the chosen font family while preserving Dynamic
-    /// Type sizing. Attach where `store` is observed so it re-applies when the choice changes;
-    /// re-apply on every sheet/cover root (sheets don't inherit \.font from the presenter).
-    func appFont(_ choice: FontChoice) -> some View {
-        environment(\.font, .system(.body, design: choice.design))
-    }
-}

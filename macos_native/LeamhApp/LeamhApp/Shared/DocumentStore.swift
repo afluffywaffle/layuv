@@ -47,14 +47,11 @@ final class DocumentStore: ObservableObject {
         }
     }
 
-    /// Pushes the choice into the process-wide static and (iOS) the nav-bar title appearance,
-    /// which `\.font` does not reach. Called from both `init` (seed) and `fontChoice.didSet`.
+    /// Pushes the reader font choice into the process-wide static the reader helpers read.
+    /// Chrome (incl. nav-bar titles) stays on San Francisco, so nothing else needs updating.
+    /// Called from both `init` (seed) and `fontChoice.didSet`.
     private func applyFontChoice(_ choice: FontChoice) {
         AppTheme.current = choice
-        #if os(iOS)
-        UINavigationBar.appearance().titleTextAttributes      = [.font: AppTheme.uiSystemFont(17, .semibold)]
-        UINavigationBar.appearance().largeTitleTextAttributes = [.font: AppTheme.uiSystemFont(34, .bold)]
-        #endif
     }
 
     // Security-scoped bookmarks: macOS app-sandbox needs the .withSecurityScope option;

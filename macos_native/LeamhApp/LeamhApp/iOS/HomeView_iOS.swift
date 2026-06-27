@@ -36,7 +36,6 @@ struct HomeView: View {
                 regularRoot
             }
         }
-        .appFont(store.fontChoice)   // flip all SwiftUI chrome to the chosen family
         .fileImporter(isPresented: $showImporter,
                       allowedContentTypes: [docxType],
                       allowsMultipleSelection: false) { result in
@@ -49,20 +48,17 @@ struct HomeView: View {
         .sheet(item: $store.editingAnnotation) { annotation in
             AnnotationEditSheet(annotation: annotation)
                 .environmentObject(store)
-                .appFont(store.fontChoice)
                 .preferredColorScheme(.light)
         }
         .fullScreenCover(item: $store.inkEditingAnnotation) { annotation in
             InkEditorView(annotation: annotation)
                 .environmentObject(store)
-                .appFont(store.fontChoice)
                 .preferredColorScheme(.light)
         }
         // AI panels
         .sheet(isPresented: $showAskAi) {
             AskAiView()
                 .environmentObject(store)
-                .appFont(store.fontChoice)
                 .preferredColorScheme(.light)
         }
         .sheet(isPresented: $showExport) {
