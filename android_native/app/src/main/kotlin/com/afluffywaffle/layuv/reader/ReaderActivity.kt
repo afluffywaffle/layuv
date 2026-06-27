@@ -109,6 +109,7 @@ class ReaderActivity : Activity() {
         ReaderTheme.seedBodyFont(this)
         setContentView(buildUi())
         readerView.setNavSide(prefs.getString(KEY_NAV_SIDE, "both") ?: "both")
+        readerView.setNavReversed(prefs.getBoolean(KEY_NAV_REVERSED, false))
         applyTypographyPrefs()
         Log.i(TAG, "smallestScreenWidthDp=${resources.configuration.smallestScreenWidthDp} (auto 2-col >= $AUTO_TWO_COL_MIN_DP)")
         reopenLastOrPrompt()
@@ -510,7 +511,11 @@ class ReaderActivity : Activity() {
             "RIGHT TO LEFT",
             if (prefs.getBoolean(KEY_NAV_REVERSED, false)) "true" else "false",
             listOf("false" to "Off", "true" to "On"),
-        ) { value -> prefs.edit().putBoolean(KEY_NAV_REVERSED, value == "true").apply() })
+        ) { value ->
+            val reversed = value == "true"
+            prefs.edit().putBoolean(KEY_NAV_REVERSED, reversed).apply()
+            readerView.setNavReversed(reversed)
+        })
         root.addView(overflowMenuDivider())
         root.addView(overflowCycleRow(
             "FONT FAMILY",

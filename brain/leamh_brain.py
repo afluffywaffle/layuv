@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Léamh brain — Phase 1 reference proxy.
+Léamh reference library — Phase 1 reference proxy.
 
 A small OpenAI-compatible /chat/completions proxy that gives Layuv *continuity*:
 it injects your project's whole reference library into every request, then
@@ -10,8 +10,8 @@ straight back.
 Why it exists (the architecture):
   - Layuv (the Supernote / any device) = the *director*. It only knows this
     Mac's address. It never holds the API key or the reference library.
-  - This brain (on your Mac) = the *library + the key*. It is the only thing
-    that talks to the upstream model.
+  - This reference-library server (on your Mac) = the *library + the key*. It is
+    the only thing that talks to the upstream model.
 
 Privacy/security notes — read these, they are the whole point:
   - The upstream API key lives ONLY on this Mac (brain.env / env var). It is
@@ -22,7 +22,7 @@ Privacy/security notes — read these, they are the whole point:
     the way retrieval can.
   - Honesty caveat: when the upstream is a CLOUD model (Gemini/Claude), your
     references + chapter ARE sent to that provider — that is inherent to using
-    a cloud model and the brain does not change it. What the brain protects is
+    a cloud model and this server does not change it. What it protects is
     your *key* (stays here) and your *architecture*: pointing the upstream at a
     local model later (so nothing leaves your network) is a one-line edit here,
     with zero device rebuild.
@@ -33,7 +33,7 @@ Privacy/security notes — read these, they are the whole point:
 Zero Android changes. Layuv just points its endpoint at this Mac:
     Endpoint (base URL):  http://<this-mac-LAN-ip>:<port>/v1
     Model:                anything (the Mac decides the real model)
-    Key:                  blank on a trusted LAN, or your brain token if set
+    Key:                  blank on a trusted LAN, or your access token if set
 """
 
 import json
@@ -161,12 +161,12 @@ class BrainHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": {"message": "unknown endpoint"}})
             return
 
-        # Optional device auth: if a brain token is configured, the device must
+        # Optional device auth: if an access token is configured, the device must
         # send it as its API key (Authorization: Bearer <token>).
         token = CFG.get("BRAIN_TOKEN", "").strip()
         if token and self.headers.get("Authorization", "") != f"Bearer {token}":
             self._send_json(401, {"error": {"message":
-                "Unauthorized — set the brain token as the API key in Layuv's AI settings."}})
+                "Unauthorized — set the access token as the API key in Layuv's AI settings."}})
             return
 
         try:
@@ -225,7 +225,7 @@ class BrainHandler(BaseHTTPRequestHandler):
         except Exception as e:
             print(f"[brain] upstream unreachable: {type(e).__name__}", flush=True)
             self._send_json(502, {"error": {"message":
-                f"The brain couldn't reach the upstream model ({type(e).__name__}). "
+                f"The reference-library server couldn't reach the upstream model ({type(e).__name__}). "
                 "Check BRAIN_UPSTREAM_URL / the network."}})
             return
 
@@ -289,7 +289,7 @@ def main():
     has_token = bool(CFG.get("BRAIN_TOKEN", "").strip())
 
     print("=" * 68)
-    print("Léamh brain — Phase 1 reference proxy")
+    print("Léamh reference library — Phase 1 reference proxy")
     print("=" * 68)
     print(f"  Upstream model : {CFG['BRAIN_UPSTREAM_MODEL']}")
     print(f"  Upstream URL   : {CFG['BRAIN_UPSTREAM_URL']}")
@@ -297,12 +297,12 @@ def main():
     print(f"  References     : {CFG['BRAIN_REFERENCES_DIR']}")
     print(f"                   {len(files)} file(s), {total_chars:,} chars"
           + ("" if files else "  <-- empty! add files or set BRAIN_REFERENCES_DIR"))
-    print(f"  Device auth    : {'brain token required' if has_token else 'none (trusted LAN)'}")
+    print(f"  Device auth    : {'access token required' if has_token else 'none (trusted LAN)'}")
     print("-" * 68)
     print("  Point Layuv's AI settings here:")
     print(f"    Endpoint (base URL):  http://{ip}:{port}/v1")
-    print(f"    Model             :  brain        (anything — the Mac decides)")
-    print(f"    Key               :  {'<your brain token>' if has_token else '(leave blank)'}")
+    print(f"    Model             :  anything     (the Mac decides the real model)")
+    print(f"    Key               :  {'<your access token>' if has_token else '(leave blank)'}")
     print(f"  Health check:  curl http://{ip}:{port}/health")
     print("=" * 68, flush=True)
 

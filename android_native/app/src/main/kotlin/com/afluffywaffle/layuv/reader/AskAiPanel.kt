@@ -257,7 +257,9 @@ class AskAiPanel(
         scrollToBottom()
     }
 
-    private fun callProvider(b: OpenBook) {
+    // omitInk = true on the one-shot fallback after a text-only model rejects the ink
+    // images: re-send without them, substituting a placeholder so the rest still rewrites.
+    private fun callProvider(b: OpenBook, omitInk: Boolean = false) {
         val key = SecureKeyStore.read(activity)
         if (key.isNullOrBlank()) {
             showBanner("Set up AI in Help & About → Ask AI.", actionLabel = "Open") {
@@ -274,13 +276,19 @@ class AskAiPanel(
         val turns = messages.map { it.role to it.text }  // snapshot off the main thread
         io.execute {
             // Load the handwritten-note PNGs (read by vision models) and attach them to the seed turn.
-            val imgs = if (inkIds.isEmpty()) emptyList() else {
+            // On the text-only fallback (omitInk) we skip the images entirely.
+            val imgs = if (omitInk || inkIds.isEmpty()) emptyList() else {
                 val docBytes = try { b.file?.readBytes() } catch (e: Exception) { null } ?: b.bytes
                 inkIds.mapNotNull { DocxStore.readInkPng(docBytes, it) }
             }
             val history = turns.mapIndexed { i, pair ->
-                if (i == 0 && imgs.isNotEmpty()) AiMessage(pair.first, pair.second, imgs)
-                else AiMessage(pair.first, pair.second)
+                when {
+                    i == 0 && imgs.isNotEmpty() -> AiMessage(pair.first, pair.second, imgs)
+                    // Fallback: the seed referenced ink notes as images, but they were dropped —
+                    // tell the model so it doesn't expect an attachment it can't see.
+                    i == 0 && omitInk && inkIds.isNotEmpty() -> AiMessage(pair.first, pair.second + INK_OMITTED_NOTE)
+                    else -> AiMessage(pair.first, pair.second)
+                }
             }
             val res = provider.send(key, history)
             main.post {
@@ -293,7 +301,16 @@ class AskAiPanel(
                         render()
                         scrollToBottom()
                     }
-                    is AiResult.Error -> showBanner(res.userMessage, actionLabel = "Retry") { callProvider(b) }
+                    // Text-only model rejected the ink images: re-send once without them.
+                    // If we were ALREADY omitting (shouldn't reach a vision error), show it as an error.
+                    is AiResult.NeedsTextOnlyRetry ->
+                        if (!omitInk) {
+                            showBanner(res.userMessage, actionLabel = null, action = null)
+                            callProvider(b, omitInk = true)
+                        } else {
+                            showBanner(res.userMessage, actionLabel = "Retry") { callProvider(b, omitInk = true) }
+                        }
+                    is AiResult.Error -> showBanner(res.userMessage, actionLabel = "Retry") { callProvider(b, omitInk) }
                 }
             }
         }
@@ -816,6 +833,10 @@ class AskAiPanel(
         // Above this many chars the chapter is likely a whole manuscript — warn before sending.
         private const val LARGE_INPUT_CHARS = 45000
         private const val MAX_CONTINUATIONS = 3
+        // Appended to the seed turn when a text-only model forced us to drop the ink images.
+        private const val INK_OMITTED_NOTE =
+            "\n\n[Note: this model can't read images, so the handwritten note(s) referenced above " +
+                "were not included. Work from the text only.]"
         private const val CONTINUE_PROMPT =
             "Continue the rewrite from exactly where the previous message was cut off. " +
                 "Do not repeat any text; continue mid-sentence if needed."

@@ -65,6 +65,10 @@ class ReaderView(context: Context) : View(context) {
     // top (= next) / bottom (= prev). navSide is "both" | "left" | "right".
     private val navStripWidth = ReaderTheme.dp(context, NAV_STRIP_DP)
     private var navSide = "both"
+    // When true (RTL texts), every page-turn gesture is flipped: the gesture that
+    // normally advances goes back and vice versa — strip top/bottom, finger swipe,
+    // and fling all route through pageForward()/pageBackward().
+    private var navReversed = false
     private val navPath = Path()
     // Faint, finely dotted line used for BOTH the inner-edge rail (hints the whole
     // column is a tap zone) and the midline that meets it to split top/bottom — so
@@ -234,8 +238,8 @@ class ReaderView(context: Context) : View(context) {
             if (selectionStart >= 0) return false // don't navigate while selection is shown
             val threshold = ReaderTheme.dp(context, 200f) // ~200 dp/s — lenient for e-ink
             return when {
-                velocityX < -threshold -> { next(); true } // left-fling = next page
-                velocityX >  threshold -> { prev(); true } // right-fling = prev page
+                velocityX < -threshold -> { pageForward(); true } // left-fling = next page (flipped in RTL)
+                velocityX >  threshold -> { pageBackward(); true } // right-fling = prev page (flipped in RTL)
                 else -> false
             }
         }
@@ -294,6 +298,15 @@ class ReaderView(context: Context) : View(context) {
         // The strips inset the text, so the content width changed → repaginate.
         if (text != null) repaginate(fullClear = true) else invalidate()
     }
+
+    /** Reverse page-turn direction for RTL texts. Layout is unchanged, only nav mapping. */
+    fun setNavReversed(reversed: Boolean) {
+        navReversed = reversed
+    }
+
+    /** The page-turn direction a "forward" gesture should produce (flipped when [navReversed]). */
+    private fun pageForward() = if (navReversed) prev() else next()
+    private fun pageBackward() = if (navReversed) next() else prev()
 
     /** Update the annotation list; refreshes highlight colour spans and redraws. */
     fun updateAnnotations(annotations: List<ResolvedAnnotation>) {
@@ -812,7 +825,7 @@ class ReaderView(context: Context) : View(context) {
                 fingerSwipeDownY = -1f
                 if (hadDown && Math.abs(dx) > swipeMin && Math.abs(dx) > Math.abs(dy)) {
                     cancelSelection()
-                    if (dx < 0) next() else prev()
+                    if (dx < 0) pageForward() else pageBackward()
                     return true
                 }
             }
@@ -835,7 +848,7 @@ class ReaderView(context: Context) : View(context) {
         val inLeft = leftStripActive() && x < navStripWidth
         val inRight = rightStripActive() && x > width - navStripWidth
         if (!inLeft && !inRight) return false
-        if (y < height / 2f) next() else prev()
+        if (y < height / 2f) pageForward() else pageBackward()
         return true
     }
 

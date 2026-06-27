@@ -12,7 +12,7 @@ import java.net.URL
  *     Gemini (`https://generativelanguage.googleapis.com/v1beta/openai`),
  *     OpenAI (`https://api.openai.com/v1`);
  *   - the user's own server — Ollama / LM Studio / llama.cpp / vLLM, or a Mac
- *     "brain" exposing `/chat/completions` (the planned reference proxy).
+ *     reference-library server exposing `/chat/completions` (the reference proxy).
  *
  * Connection config lives in the plain `"leamh"` prefs (`ai_base_url`, `ai_model`);
  * the API key — optional, since a local server may need none — lives in

@@ -29,7 +29,7 @@ import java.util.concurrent.Executors
  * the OpenAI-compatible endpoint (base URL), the model name, and an optional API
  * key (blank for a keyless local server). No provider list — the same form reaches
  * Claude / Gemini / OpenAI via their OpenAI-compatible URLs or the user's own
- * server / Mac "brain". Config lives in the plain `"leamh"` prefs; the key lives in
+ * server / Mac reference-library server. Config lives in the plain `"leamh"` prefs; the key lives in
  * [SecureKeyStore] and is never displayed. Gated behind the Help & About → Ask AI
  * disclosures. Intentionally bare — the target user is technical.
  */
@@ -426,6 +426,9 @@ class AiSettingsActivity : Activity() {
                 when (res) {
                     is AiResult.Ok -> showStatus("Connection OK.")
                     is AiResult.Error -> showStatus(res.userMessage)
+                    // The test message carries no images, so this is unreachable; show its
+                    // message anyway to keep the branch exhaustive.
+                    is AiResult.NeedsTextOnlyRetry -> showStatus(res.userMessage)
                 }
             }
         }

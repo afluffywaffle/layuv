@@ -29,7 +29,7 @@ import java.net.URL
  *  - **A shared/untrusted network** (work or café Wi-Fi) → technically local, but
  *    others on it could see plain HTTP, and client isolation may block it outright
  *    → use HTTPS or reach the machine over a VPN (Tailscale) instead.
- *  - **The brain is somewhere you aren't** (you're remote / on cellular) → the
+ *  - **The server is somewhere you aren't** (you're remote / on cellular) → the
  *    connection crosses the public internet → plain HTTP is REFUSED here → use
  *    Tailscale, which makes the machine reachable as a trusted address (100.64/10,
  *    `*.ts.net`) AND encrypts the tunnel end-to-end even though the server only

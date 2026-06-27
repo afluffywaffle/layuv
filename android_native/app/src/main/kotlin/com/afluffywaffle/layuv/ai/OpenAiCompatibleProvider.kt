@@ -15,7 +15,7 @@ import java.net.UnknownHostException
  * OpenAI-compatible chat-completions client (`POST {baseUrl}/chat/completions`,
  * Bearer auth, SSE) — covers OpenAI, Google Gemini (via its OpenAI-compat
  * endpoint), and local servers (Ollama / LM Studio / llama.cpp / vLLM, or a Mac
- * "brain"). The sole AI client in Layuv — streams for timeout safety, renders
+ * reference-library server). The sole AI client in Layuv — streams for timeout safety, renders
  * once, and logs minimally (never the key or the request body / manuscript).
  */
 class OpenAiCompatibleProvider(
@@ -46,7 +46,8 @@ class OpenAiCompatibleProvider(
             conn.outputStream.use { it.write(buildBody(messages).toByteArray(Charsets.UTF_8)) }
             val code = conn.responseCode
             Log.i(TAG, "request sent; response $code")
-            if (code != 200) mapHttpError(code, readErr(conn)) else parseStream(conn)
+            val hadImages = messages.any { it.images.isNotEmpty() }
+            if (code != 200) mapHttpError(code, readErr(conn), hadImages) else parseStream(conn)
         } catch (e: UnknownHostException) {
             AiResult.Error("Couldn't reach the server — check the address and your connection.")
         } catch (e: IOException) {
@@ -114,10 +115,19 @@ class OpenAiCompatibleProvider(
         null
     }
 
-    private fun mapHttpError(code: Int, body: String?): AiResult.Error {
+    private fun mapHttpError(code: Int, body: String?, hadImages: Boolean): AiResult {
         val apiMsg = body?.let {
             try { JSONObject(it).optJSONObject("error")?.optString("message")?.takeIf { m -> m.isNotBlank() } }
             catch (e: Exception) { null }
+        }
+        // A client error on a request that carried ink-note images is almost always a
+        // text-only model rejecting the image_url parts (e.g. 404/400 from MLX/Ollama).
+        // Signal the caller to re-send without the images rather than show a bogus
+        // "check the model name".
+        if (hadImages && code in TEXT_ONLY_REJECT_CODES) {
+            return AiResult.NeedsTextOnlyRetry(
+                "This model couldn't read the handwritten note — re-sending the text without it.",
+            )
         }
         val msg = when (code) {
             401, 403 -> "Your API key was rejected. Check it in AI settings."
@@ -132,5 +142,7 @@ class OpenAiCompatibleProvider(
     companion object {
         private const val TAG = "AI"
         private const val MAX_TOKENS = 16000
+        // Client errors a text-only model returns when it can't accept image parts.
+        private val TEXT_ONLY_REJECT_CODES = setOf(400, 404, 415, 422)
     }
 }

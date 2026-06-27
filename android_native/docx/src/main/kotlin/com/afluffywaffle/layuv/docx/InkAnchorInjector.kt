@@ -73,6 +73,42 @@ internal object InkAnchorInjector {
         for ((pos, xml) in insertions) {
             sb.insert(pos, xml)
         }
-        return sb.toString()
+        // The injected drawing uses the wp:/a:/pic:/r: prefixes (see InkDrawing.build).
+        // word/comments.xml declares these on its <w:comments> root, but the document
+        // body root often declares only xmlns:w (Léamh drafts, Pages/GDocs exports), so
+        // the drawing would reference undeclared prefixes → malformed OOXML (Word repair
+        // prompt, Pages/GDocs drop the image). Ensure they exist on <w:document>.
+        return ensureDrawingNamespaces(sb.toString())
+    }
+
+    // Drawing namespaces the inline <wp:inline> markup depends on. Mirrors the
+    // declarations CommentWriter puts on the <w:comments> root.
+    private val DRAWING_NAMESPACES = listOf(
+        "wp" to "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
+        "a" to "http://schemas.openxmlformats.org/drawingml/2006/main",
+        "pic" to "http://schemas.openxmlformats.org/drawingml/2006/picture",
+        "r" to "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+    )
+
+    /**
+     * Inserts any MISSING `xmlns:wp/a/pic/r` declarations onto the `<w:document …>`
+     * open tag. Idempotent: a prefix already declared is left untouched, so repeated
+     * writes (the clean-snapshot/re-inject cycle) never accumulate duplicates.
+     */
+    private fun ensureDrawingNamespaces(documentXml: String): String {
+        val tagStart = documentXml.indexOf("<w:document")
+        if (tagStart < 0) return documentXml
+        val tagEnd = documentXml.indexOf('>', tagStart)
+        if (tagEnd < 0) return documentXml
+
+        val openTag = documentXml.substring(tagStart, tagEnd) // excludes the closing '>'
+        val additions = StringBuilder()
+        for ((prefix, uri) in DRAWING_NAMESPACES) {
+            if (!openTag.contains("xmlns:$prefix=")) {
+                additions.append(" xmlns:$prefix=\"$uri\"")
+            }
+        }
+        if (additions.isEmpty()) return documentXml
+        return documentXml.substring(0, tagEnd) + additions + documentXml.substring(tagEnd)
     }
 }

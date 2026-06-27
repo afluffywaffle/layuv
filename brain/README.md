@@ -1,4 +1,4 @@
-# Léamh brain — Phase 1 reference proxy
+# Léamh reference library — Phase 1 reference proxy
 
 A ~250-line, **dependency-free** Python server that gives Layuv *continuity*: it
 injects your project's whole reference library into every request, forwards to a
@@ -7,12 +7,12 @@ OpenAI-compatible client — you just point its endpoint at this Mac. **No app
 rebuild.**
 
 ```
-device (Layuv / Supernote)  ──►  this Mac (brain)  ──►  upstream model (Gemini)
-   knows only the Mac's URL       holds the KEY +            does the writing
+device (Layuv / Supernote)  ──►  this Mac (the library)  ──►  upstream model (Gemini)
+   knows only the Mac's URL       holds the KEY +                does the writing
    never holds the key            the LIBRARY
 ```
 
-## The three things the brain does
+## The three things the reference-library server does
 
 1. **Holds the API key** — it lives only on this Mac (`brain.env`), never on the
    device, never in a log.
@@ -25,8 +25,8 @@ device (Layuv / Supernote)  ──►  this Mac (brain)  ──►  upstream mod
 ## Honest privacy note
 
 With a **cloud** upstream (Gemini/Claude) your references + chapter *are* sent to
-that provider — that's inherent to any cloud model; the brain doesn't change it.
-What the brain protects is your **key** (stays here) and your **architecture**:
+that provider — that's inherent to any cloud model; this server doesn't change it.
+What it protects is your **key** (stays here) and your **architecture**:
 switching the upstream to a **local** model later — so *nothing* leaves your
 network — is a one-line edit in `brain.env`, with zero device rebuild.
 
@@ -103,7 +103,7 @@ left this Mac (Layuv's prefs hold only the Mac URL).
 
 ## Later phases (not built yet)
 
-- **Remote reach** via Tailscale/Headscale (set `BRAIN_TOKEN`, reach the brain
+- **Remote reach** via Tailscale/Headscale (set `BRAIN_TOKEN`, reach the server
   as a `100.x` / `*.ts.net` address; Layuv's cleartext guard already trusts it).
 - **Supernote batch path** via Supernote Private Cloud → a folder-watcher that
   reuses the `docx/` engine.
