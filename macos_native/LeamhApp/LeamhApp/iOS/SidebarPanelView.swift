@@ -11,6 +11,9 @@ struct SidebarPanelView: View {
     @Binding var findTrigger: Int
     let onScrollTo: (Annotation) -> Void
     let onOpenFile: () -> Void
+    /// iPhone hosts Find on the reader toolbar (a sheet would cover the system find bar),
+    /// so the panel hides its Find tab in compact width.
+    var showFindTab: Bool = true
 
     enum Tab { case annotations, bookmarks, find }
     @State private var tab: Tab = .annotations
@@ -20,7 +23,9 @@ struct SidebarPanelView: View {
             Picker("Panel", selection: $tab) {
                 Text("Annotations").tag(Tab.annotations)
                 Text("Bookmarks").tag(Tab.bookmarks)
-                Text("Find").tag(Tab.find)
+                if showFindTab {
+                    Text("Find").tag(Tab.find)
+                }
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 8)
@@ -34,7 +39,11 @@ struct SidebarPanelView: View {
             case .bookmarks:
                 BookmarksListView(onScrollTo: onScrollTo)
             case .find:
-                FindPanel(findTrigger: $findTrigger)
+                if showFindTab {
+                    FindPanel(findTrigger: $findTrigger)
+                } else {
+                    AnnotationsPanel()
+                }
             }
         }
         // navigationTitle and Open toolbar button sit here; AnnotationsPanel's own
