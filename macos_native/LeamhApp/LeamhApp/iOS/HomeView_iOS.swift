@@ -75,7 +75,7 @@ struct HomeView: View {
     private var regularRoot: some View {
         NavigationSplitView {
             SidebarPanelView(
-                findTrigger: $findTrigger,
+                onFind:      { findTrigger += 1 },
                 onScrollTo:  { ann in scrollToAnnotationId = ann.id },
                 onOpenFile:  { showImporter = true }
             )
@@ -93,7 +93,7 @@ struct HomeView: View {
         .sheet(isPresented: $showPanel) {
             NavigationStack {
                 SidebarPanelView(
-                    findTrigger: $findTrigger,
+                    onFind:      { findTrigger += 1 },
                     onScrollTo:  { ann in
                         showPanel = false
                         scrollToAnnotationId = ann.id

@@ -13,6 +13,9 @@ final class ReaderCoordinator: NSObject, ObservableObject {
     func nextPage()     { viewController?.nextPage();     sync() }
     func previousPage() { viewController?.previousPage(); sync() }
 
+    func find()                          { viewController?.presentFind() }
+    func scrollTo(annotationId: String)  { viewController?.scrollToAnnotation(id: annotationId) }
+
     func sync() {
         currentPage = viewController?.currentPage ?? 0
         pageCount   = max(1, viewController?.pageCount ?? 1)
@@ -125,6 +128,8 @@ final class ReaderViewController: NSViewController {
                                                     height: Self.pageHeight))
         textView.isEditable            = false
         textView.isSelectable          = true
+        textView.usesFindBar           = true
+        textView.isIncrementalSearchingEnabled = true
         textView.backgroundColor       = AppTheme.warmPaperNS
         textView.textContainerInset    = NSSize(width: Self.margin, height: 40)
         textView.autoresizingMask      = [.width]
@@ -275,6 +280,26 @@ final class ReaderViewController: NSViewController {
 
     func nextPage()     { scrollToPage(currentPage + 1) }
     func previousPage() { scrollToPage(currentPage - 1) }
+
+    // MARK: Find + scroll-to-annotation (driven from the sidebar panel)
+
+    /// Presents the NSTextView find bar (Bookmarks/Find tab → reader find UI).
+    func presentFind() {
+        guard textView.window != nil else { return }
+        textView.window?.makeFirstResponder(textView)
+        let item = NSMenuItem()
+        item.tag = Int(NSTextFinder.Action.showFindInterface.rawValue)
+        textView.performTextFinderAction(item)
+    }
+
+    /// Scrolls the reader so the annotation's span is visible (Bookmarks tab → tap a row).
+    func scrollToAnnotation(id: String) {
+        guard let resolved = currentAnnotations.first(where: { $0.annotation.id == id }),
+              let span = resolved.span, span.start >= 0 else { return }
+        let length = max(1, min(span.end - span.start, 80))
+        let clamped = min(span.start, max(0, (textView.string as NSString).length - 1))
+        textView.scrollRangeToVisible(NSRange(location: clamped, length: length))
+    }
 
     // MARK: Selection → annotation
 

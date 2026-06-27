@@ -1,14 +1,15 @@
 import SwiftUI
 
-// MARK: - Sidebar panel (replaces the recents list on iPad)
+// MARK: - Sidebar panel (shared: iPad NavigationSplitView sidebar + macOS sidebar)
 
 /// Three-tab sidebar that lives in the NavigationSplitView's sidebar column.
 /// Annotations: the full AnnotationsPanel (Android-parity: search, tag filter, sort, rich rows).
 /// Bookmarks:   compact list of .bookmark annotations sorted by document position — quick TOC nav.
-/// Find:        triggers UIFindInteraction on the reader text view and shows a status hint.
+/// Find:        triggers the reader's find UI (iOS UIFindInteraction / macOS find bar) via `onFind`.
 struct SidebarPanelView: View {
     @EnvironmentObject var store: DocumentStore
-    @Binding var findTrigger: Int
+    /// Triggers the reader's find UI. iOS bumps a findTrigger; macOS calls the reader coordinator.
+    let onFind: () -> Void
     let onScrollTo: (Annotation) -> Void
     let onOpenFile: () -> Void
     /// iPhone hosts Find on the reader toolbar (a sheet would cover the system find bar),
@@ -17,6 +18,14 @@ struct SidebarPanelView: View {
 
     enum Tab { case annotations, bookmarks, find }
     @State private var tab: Tab = .annotations
+
+    private var openPlacement: ToolbarItemPlacement {
+        #if os(iOS)
+        .topBarTrailing
+        #else
+        .automatic
+        #endif
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,7 +49,7 @@ struct SidebarPanelView: View {
                 BookmarksListView(onScrollTo: onScrollTo)
             case .find:
                 if showFindTab {
-                    FindPanel(findTrigger: $findTrigger)
+                    FindPanel(onFind: onFind)
                 } else {
                     AnnotationsPanel()
                 }
@@ -51,7 +60,7 @@ struct SidebarPanelView: View {
         // tab is active (SwiftUI propagates the deepest values).
         .navigationTitle("Léamh")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: openPlacement) {
                 Button("Open…", systemImage: "folder") { onOpenFile() }
             }
         }
@@ -114,7 +123,7 @@ private struct BookmarksListView: View {
 // MARK: - Find tab
 
 private struct FindPanel: View {
-    @Binding var findTrigger: Int
+    let onFind: () -> Void
 
     var body: some View {
         VStack(spacing: 20) {
@@ -124,13 +133,13 @@ private struct FindPanel: View {
                 .foregroundStyle(.secondary)
             Text("Find in Document")
                 .font(.headline)
-            Text("The system find bar is now active above the reader. Type to search the full text.")
+            Text("The find bar is now active over the reader. Type to search the full text.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
             Button {
-                findTrigger += 1
+                onFind()
             } label: {
                 Label("Open Find Bar", systemImage: "magnifyingglass")
             }
@@ -140,7 +149,7 @@ private struct FindPanel: View {
         .frame(maxWidth: .infinity)
         .navigationTitle("Find")
         .onAppear {
-            findTrigger += 1
+            onFind()
         }
     }
 }
