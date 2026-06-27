@@ -684,11 +684,21 @@ class ReaderView(context: Context) : View(context) {
      * start is on the current page are shown.
      */
     private fun drawMarginIcons(canvas: Canvas, pl: PageLayout) {
+        // Cheap page-range pre-gate: an icon is anchored at its annotation's start, and
+        // only annotations starting on this page are shown. Compute the visible char
+        // range once so off-page annotations skip the per-column columnOfChar() lookup
+        // below with a single integer comparison (matters for heavily-annotated books).
+        val firstCol = pl.firstColumnOfPage(currentPage)
+        val lastCol = (firstCol + pl.columns - 1).coerceAtMost(pl.columnCount - 1)
+        if (lastCol < firstCol) return
+        val pageStartChar = pl.layout.getLineStart(pl.lineStartOfColumn(firstCol))
+        val pageEndChar = pl.layout.getLineEnd(pl.lineEndOfColumn(lastCol) - 1)
         for (resolved in annotations) {
             val hasNote = !resolved.annotation.note.isNullOrEmpty()
             val hasInk = resolved.annotation.hasInk
             if (!hasNote && !hasInk) continue
             val span = resolved.span ?: continue
+            if (span.start < pageStartChar || span.start > pageEndChar) continue // off-page — cheap skip
             val colInPage = columnOfChar(span.start) ?: continue // not on this page
             val top = charPointInView(span.start, bottom = false) ?: continue
             val bottom = charPointInView(span.start, bottom = true) ?: continue

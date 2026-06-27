@@ -115,6 +115,22 @@ object DocxStore {
         }
     }
 
+    /**
+     * Cheap post-write integrity canary: reads only `leamh/annotations.json` from
+     * [docxBytes] and returns the annotation ids it contains. Unlike [load] it does
+     * NOT rebuild the plain text or re-anchor anything (O(annotations × text length)),
+     * so callers that just wrote the file can confirm it round-tripped without paying
+     * a full reload. Returns an empty list when there is no annotations file (all
+     * annotations removed), or null when the bytes can't be parsed (write looks torn).
+     */
+    fun readAnnotationIds(docxBytes: ByteArray): List<String>? = try {
+        val raw = DocxArchive.read(docxBytes).text(ANNOTATIONS)
+        if (raw == null) emptyList()
+        else Json.parseArray(raw).filterIsInstance<Map<String, Any?>>().mapNotNull { it["id"] as? String }
+    } catch (e: Exception) {
+        null
+    }
+
     // -------------------------------------------------------------------------
     // Write — mirror of _writeAllAnnotations.
     //

@@ -3,6 +3,7 @@ package com.afluffywaffle.layuv.docx
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.util.zip.CRC32
+import java.util.zip.Deflater
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -61,6 +62,13 @@ class DocxArchive private constructor(
         fun write(entries: Map<String, ByteArray>, sourceMethods: Map<String, Int> = emptyMap()): ByteArray {
             val bos = ByteArrayOutputStream()
             ZipOutputStream(bos).use { zos ->
+                // A full rewrite happens on EVERY annotation/position save and re-deflates
+                // the whole body (document.xml). On the Supernote's low-power CPU that
+                // compression — not file size — is the felt cost, and these devices have
+                // ample storage, so trade a little size for a faster save. BEST_SPEED is
+                // purely encoder-side: any reader (Word/Pages/GDocs) inflates it identically,
+                // and the golden tests compare extracted text, not compressed bytes.
+                zos.setLevel(Deflater.BEST_SPEED)
                 for ((name, data) in entries) {
                     val ze = ZipEntry(name)
                     if (sourceMethods[name] == ZipEntry.STORED) {

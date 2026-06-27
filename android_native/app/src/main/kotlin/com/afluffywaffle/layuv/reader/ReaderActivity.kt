@@ -83,6 +83,9 @@ class ReaderActivity : Activity() {
 
     @Volatile private var book: OpenBook? = null
     @Volatile private var savingPosition = false
+    // Char offset of the last position successfully written into the DOCX, so onPause
+    // can skip a full re-zip when the reader hasn't moved since. -1 = nothing saved yet.
+    private var lastSavedCharOffset = -1
 
     private val annotationPopup by lazy { AnnotationPopup(this) }
     private var pendingSelStart = -1
@@ -1575,48 +1578,36 @@ class ReaderActivity : Activity() {
                 DocxStore.writeWithInk(base, newList, inkPng, inkStrokes)
             },
             onSuccess = { newBytes ->
-                val freshDoc = DocxStore.load(newBytes)
+                // The write never changes the canonical plain text P (load reads the CLEAN
+                // snapshot), so the spans already resolved in book.doc are canonical — no
+                // need to reparse the body and re-anchor every annotation (the old
+                // DocxStore.load(newBytes) here was O(annotations × text length) on EVERY
+                // edit). Instead do a cheap read-back canary that only confirms
+                // annotations.json round-tripped with the expected ids.
+                val t0 = System.nanoTime()
+                val savedIds = DocxStore.readAnnotationIds(newBytes)
                 Log.d(TAG, "saveAnnotations: wrote ${newList.size} annotations, " +
-                    "reloaded ${freshDoc.annotations.size}; " +
-                    "notes=${freshDoc.annotations.map { it.annotation.note }}")
-                val freshBook = OpenBook(opened.displayName, newBytes, freshDoc, file)
+                    "validated ${savedIds?.size ?: -1} in ${(System.nanoTime() - t0) / 1_000_000}ms")
                 main.post {
-                    // Smart merge: if newer optimistic annotations were added while this
-                    // save was running, keep those and only update bytes (so future saves
-                    // have the right base). Otherwise do a full sync with re-resolved anchors.
                     val currentBook = book
                     if (currentBook != null) {
-                        val savedIds = freshDoc.annotations.map { it.annotation.id }.toSet()
-                        val currentIds = currentBook.doc.annotations.map { it.annotation.id }.toSet()
-                        // Guard: DocxStore.load silently returns [] on any parse failure.
-                        // If we wrote N annotations but reloaded 0, the load failed — fall
-                        // back to repairing in-memory state from newList + existing spans
-                        // so the note/tool change is visible immediately (disk is correct).
-                        val loadFailed = newList.isNotEmpty() && freshDoc.annotations.isEmpty()
-                        // An undo delete intentionally removes the deleted ID from savedIds.
-                        // Exclude it before checking whether all current IDs were persisted.
-                        val effectiveCurrentIds = if (deletedId != null) currentIds - deletedId else currentIds
+                        // Canary: a non-empty write that reads back as empty/unparseable means
+                        // the bytes look torn — repair in-memory from newList + existing spans
+                        // (disk is already the atomic-rename result, so it's correct).
+                        val loadFailed = newList.isNotEmpty() && savedIds.isNullOrEmpty()
                         if (loadFailed) {
-                            Log.w(TAG, "saveAnnotations: DocxStore.load returned 0 annotations after writing ${newList.size} — repairing from newList")
+                            Log.w(TAG, "saveAnnotations: read-back found no annotations after writing ${newList.size} — repairing from newList")
                             val spanById = currentBook.doc.annotations.associate { it.annotation.id to it.span }
-                            val repairedAnnotations = newList.map { a ->
-                                ResolvedAnnotation(a, spanById[a.id])
-                            }
+                            val repairedAnnotations = newList.map { a -> ResolvedAnnotation(a, spanById[a.id]) }
                             val repairedDoc = LoadedDocument(currentBook.doc.plainMap, repairedAnnotations, currentBook.doc.position)
-                            book = OpenBook(freshBook.displayName, freshBook.bytes, repairedDoc, freshBook.file)
+                            book = OpenBook(opened.displayName, newBytes, repairedDoc, file)
                             readerView.updateAnnotations(repairedAnnotations)
-                        } else if (effectiveCurrentIds.all { it in savedIds } && savedIds.all { it in currentIds }) {
-                            // Exact match (modulo deleted ID): freshDoc reflects current in-memory state. Full sync.
-                            book = freshBook
-                            readerView.updateAnnotations(freshDoc.annotations)
                         } else {
-                            // Mismatch: either currentBook has IDs not yet in savedIds (rapid adds after this
-                            // write was queued), or savedIds has IDs not in currentBook (stale creation write
-                            // completing after an optimistic delete). In both cases keep currentBook.doc so
-                            // the view stays correct, but update bytes so future writes read the right base.
-                            Log.d(TAG, "saveAnnotations: smart-merge kept currentBook.doc " +
-                                "(savedIds=${savedIds.size} currentIds=${currentIds.size} effectiveCurrentIds=${effectiveCurrentIds.size})")
-                            book = OpenBook(freshBook.displayName, freshBook.bytes, currentBook.doc, freshBook.file)
+                            // Healthy write. book.doc already reflects the current (optimistic)
+                            // annotations with correct spans (P unchanged), and the view is
+                            // already showing them — just republish the fresh bytes so the next
+                            // write/read uses the right base. No reparse, no redraw.
+                            book = OpenBook(opened.displayName, newBytes, currentBook.doc, file)
                         }
                     }
                     updatePillState()
@@ -1671,6 +1662,10 @@ class ReaderActivity : Activity() {
         if (length <= 0 || savingPosition) return
 
         val offset = readerView.currentCharOffset()
+        // The position write re-zips the whole DOCX (the position travels inside the
+        // file so it carries across devices). Skip it when the page hasn't moved since
+        // the last successful save — otherwise every onPause rewrites an identical position.
+        if (offset == lastSavedCharOffset) return
         val fraction = offset.toDouble() / length
         val position = ReadingPosition(
             mode = ReadingMode.screenFlip, // page-at-a-time, no animation
@@ -1692,6 +1687,7 @@ class ReaderActivity : Activity() {
                 transform = { base -> DocxStore.writePosition(base, position) },
                 onSuccess = { newBytes ->
                     Log.i(TAG, "saved position fraction=$fraction to ${file.name}")
+                    lastSavedCharOffset = offset
                     main.post {
                         // Republish the in-memory base so a later annotation save
                         // layers onto this position instead of reverting it. Guard on
