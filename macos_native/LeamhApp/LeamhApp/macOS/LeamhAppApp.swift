@@ -27,6 +27,13 @@ struct LeamhAppApp: App {
                     }
                 }
                 .pickerStyle(.inline)
+                Divider()
+                Picker("Text Size", selection: $store.bodyTextSize) {
+                    ForEach(BodyTextSize.allCases, id: \.rawValue) { size in
+                        Text(size.label).tag(size)
+                    }
+                }
+                .pickerStyle(.inline)
             }
         }
     }

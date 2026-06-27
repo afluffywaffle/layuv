@@ -39,6 +39,7 @@ struct ReaderTextView: UIViewControllerRepresentable {
     let document: LoadedDocument
     let annotations: [ResolvedAnnotation]
     let documentURL: URL?
+    var bodyPointSize: CGFloat = AppTheme.bodySize
     var navMode: NavMode = .scroll
     var findTrigger: Int = 0
     /// Set to an annotation ID to scroll the reader to that annotation (one-shot; stays set).
@@ -63,7 +64,8 @@ struct ReaderTextView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ vc: ReaderViewController, context: Context) {
-        vc.update(document: document, annotations: annotations, documentURL: documentURL)
+        vc.update(document: document, annotations: annotations,
+                  documentURL: documentURL, bodySize: bodyPointSize)
         vc.navMode = navMode
         if findTrigger != context.coordinator.lastFindTrigger {
             context.coordinator.lastFindTrigger = findTrigger
@@ -78,9 +80,10 @@ struct ReaderTextView: UIViewControllerRepresentable {
     // MARK: - Attributed string (shared with the VC; mirrors the macOS reader)
 
     static func makeAttributedString(document doc: LoadedDocument,
-                                     annotations: [ResolvedAnnotation]) -> NSAttributedString {
+                                     annotations: [ResolvedAnnotation],
+                                     bodySize: CGFloat = AppTheme.bodySize) -> NSAttributedString {
         let str = NSMutableAttributedString(string: doc.plainText, attributes: [
-            .font:            AppTheme.uiBody(),
+            .font:            AppTheme.uiBody(size: bodySize),
             .foregroundColor: UIColor.label,
         ])
         let utf16len = doc.plainText.utf16.count
@@ -90,11 +93,11 @@ struct ReaderTextView: UIViewControllerRepresentable {
             guard len > 0, span.start >= 0, span.start + len <= utf16len else { continue }
             let r = NSRange(location: span.start, length: len)
             if span.bold && span.italic {
-                str.addAttribute(.font, value: AppTheme.uiBodyItalic(), range: r)
+                str.addAttribute(.font, value: AppTheme.uiBodyItalic(size: bodySize), range: r)
             } else if span.bold {
-                str.addAttribute(.font, value: AppTheme.uiBodyBold(), range: r)
+                str.addAttribute(.font, value: AppTheme.uiBodyBold(size: bodySize), range: r)
             } else if span.italic {
-                str.addAttribute(.font, value: AppTheme.uiBodyItalic(), range: r)
+                str.addAttribute(.font, value: AppTheme.uiBodyItalic(size: bodySize), range: r)
             }
         }
 
@@ -220,12 +223,14 @@ final class ReaderViewController: UIViewController, UITextViewDelegate, UIGestur
 
     // MARK: - Content update
 
-    func update(document: LoadedDocument, annotations: [ResolvedAnnotation], documentURL: URL?) {
+    func update(document: LoadedDocument, annotations: [ResolvedAnnotation],
+                documentURL: URL?, bodySize: CGFloat) {
         currentAnnotations = annotations
         let isNewDocument = !hasRendered || documentURL != lastDocumentURL
         let offset = textView.contentOffset
         textView.attributedText = ReaderTextView.makeAttributedString(document: document,
-                                                                       annotations: annotations)
+                                                                       annotations: annotations,
+                                                                       bodySize: bodySize)
         if isNewDocument {
             textView.contentOffset = .zero
             lastDocumentURL = documentURL

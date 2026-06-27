@@ -27,6 +27,27 @@ enum FontChoice: String, CaseIterable {
     }
 }
 
+/// Reader body text size. Mirrors Android's 3-step `body_font_size` (small/medium/large).
+/// Affects the reader body ONLY — chrome stays at its fixed sizes, matching Android.
+enum BodyTextSize: String, CaseIterable {
+    case small, medium, large
+
+    var label: String {
+        switch self {
+        case .small:  return "Small"
+        case .medium: return "Medium"
+        case .large:  return "Large"
+        }
+    }
+    var points: CGFloat {
+        switch self {
+        case .small:  return 15
+        case .medium: return 17
+        case .large:  return 20
+        }
+    }
+}
+
 enum AppTheme {
     // CLAUDE.md: warm paper background #F5F0E8
     static let warmPaper = Color(red: 245/255, green: 240/255, blue: 232/255)

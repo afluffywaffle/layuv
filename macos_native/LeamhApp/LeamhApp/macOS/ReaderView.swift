@@ -43,7 +43,7 @@ struct ReaderView: NSViewControllerRepresentable {
 
     func updateNSViewController(_ vc: ReaderViewController, context: Context) {
         guard let doc = store.document else { return }
-        vc.update(document: doc, annotations: store.annotations)
+        vc.update(document: doc, annotations: store.annotations, bodySize: store.bodyTextSize.points)
         DispatchQueue.main.async { coordinator.sync() }
     }
 }
@@ -164,10 +164,10 @@ final class ReaderViewController: NSViewController {
 
     // MARK: Content update
 
-    func update(document: LoadedDocument, annotations: [ResolvedAnnotation]) {
+    func update(document: LoadedDocument, annotations: [ResolvedAnnotation], bodySize: CGFloat) {
         currentAnnotations = annotations
 
-        let attributed = buildAttributedString(from: document)
+        let attributed = buildAttributedString(from: document, bodySize: bodySize)
         if let cs = textView.textContentStorage {
             cs.performEditingTransaction {
                 cs.textStorage?.setAttributedString(attributed)
@@ -179,9 +179,9 @@ final class ReaderViewController: NSViewController {
         applyHighlights(annotations)
     }
 
-    private func buildAttributedString(from doc: LoadedDocument) -> NSAttributedString {
+    private func buildAttributedString(from doc: LoadedDocument, bodySize: CGFloat) -> NSAttributedString {
         let str = NSMutableAttributedString(string: doc.plainText, attributes: [
-            .font:            AppTheme.nsBody(),
+            .font:            AppTheme.nsBody(size: bodySize),
             .foregroundColor: NSColor.labelColor,
         ])
         let utf16len = doc.plainText.utf16.count
@@ -190,11 +190,11 @@ final class ReaderViewController: NSViewController {
             guard len > 0, span.start >= 0, span.start + len <= utf16len else { continue }
             let r = NSRange(location: span.start, length: len)
             if span.bold && span.italic {
-                str.addAttribute(.font, value: AppTheme.nsBodyItalic(), range: r)
+                str.addAttribute(.font, value: AppTheme.nsBodyItalic(size: bodySize), range: r)
             } else if span.bold {
-                str.addAttribute(.font, value: AppTheme.nsBodyBold(), range: r)
+                str.addAttribute(.font, value: AppTheme.nsBodyBold(size: bodySize), range: r)
             } else if span.italic {
-                str.addAttribute(.font, value: AppTheme.nsBodyItalic(), range: r)
+                str.addAttribute(.font, value: AppTheme.nsBodyItalic(size: bodySize), range: r)
             }
         }
         return str

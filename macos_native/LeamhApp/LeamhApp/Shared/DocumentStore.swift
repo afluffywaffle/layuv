@@ -25,6 +25,16 @@ final class DocumentStore: ObservableObject {
     private let recentsKey  = "com.afluffywaffle.layuv.recentFiles"
     private let bookmarksKey = "com.afluffywaffle.layuv.bookmarks"
     private let fontKey      = "com.afluffywaffle.layuv.bodyFont"
+    private let fontSizeKey   = "com.afluffywaffle.layuv.bodyFontSize"
+
+    /// Reader body text size (small/medium/large). Reader-only, like Android's `body_font_size`.
+    /// The @Published re-renders the reader; the readers read `bodyTextSize.points` directly.
+    @Published var bodyTextSize: BodyTextSize {
+        didSet {
+            guard oldValue != bodyTextSize else { return }
+            UserDefaults.standard.set(bodyTextSize.rawValue, forKey: fontSizeKey)
+        }
+    }
 
     /// The app-wide font. Mirrors Android's single `body_font` pref: changing it flips the
     /// reader AND all chrome. The @Published is the SwiftUI invalidation trigger; the didSet
@@ -63,6 +73,8 @@ final class DocumentStore: ObservableObject {
         let choice = UserDefaults.standard.string(forKey: fontKey)
             .flatMap(FontChoice.init(rawValue:)) ?? .serif
         fontChoice = choice
+        bodyTextSize = UserDefaults.standard.string(forKey: fontSizeKey)
+            .flatMap(BodyTextSize.init(rawValue:)) ?? .medium
         applyFontChoice(choice)
         loadRecents()
     }

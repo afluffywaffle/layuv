@@ -205,6 +205,7 @@ private struct ReaderScreen: View {
         ReaderTextView(document: document,
                        annotations: store.annotations,
                        documentURL: store.currentURL,
+                       bodyPointSize: store.bodyTextSize.points,
                        navMode: navMode,
                        findTrigger: findTrigger,
                        scrollToAnnotationId: scrollToAnnotationId)
@@ -235,6 +236,7 @@ private struct ReaderScreen: View {
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
                             Menu("Font") { fontMenuItems }
+                            Menu("Text Size") { sizeMenuItems }
                             Menu("Navigation Mode") {
                                 ForEach(NavMode.allCases, id: \.rawValue) { mode in
                                     Button {
@@ -264,11 +266,12 @@ private struct ReaderScreen: View {
                     // iPad: font, nav mode, Ask AI, Export as individual toolbar items.
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
-                            fontMenuItems
+                            Menu("Font") { fontMenuItems }
+                            Menu("Text Size") { sizeMenuItems }
                         } label: {
                             Image(systemName: "textformat")
                         }
-                        .accessibilityLabel("Font: \(store.fontChoice.label)")
+                        .accessibilityLabel("Typography")
                     }
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
@@ -313,6 +316,20 @@ private struct ReaderScreen: View {
                     Label(choice.label, systemImage: "checkmark")
                 } else {
                     Text(choice.label)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var sizeMenuItems: some View {
+        ForEach(BodyTextSize.allCases, id: \.rawValue) { size in
+            Button {
+                store.bodyTextSize = size
+            } label: {
+                if store.bodyTextSize == size {
+                    Label(size.label, systemImage: "checkmark")
+                } else {
+                    Text(size.label)
                 }
             }
         }
