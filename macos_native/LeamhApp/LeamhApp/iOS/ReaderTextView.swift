@@ -142,13 +142,12 @@ struct ReaderTextView: UIViewControllerRepresentable {
     }
 }
 
-// MARK: - View controller
+// MARK: - View controller (container)
 
-final class ReaderViewController: UIViewController, UITextViewDelegate, UIGestureRecognizerDelegate {
-    private let textView = UITextView(usingTextLayoutManager: true)
-    private var currentAnnotations: [ResolvedAnnotation] = []
-    private var lastDocumentURL: URL?
-    private var hasRendered = false
+/// Hosts the reader in the active NavMode: a single scrolling `AnnotatingTextSurface` (scroll mode),
+/// or a `UIPageViewController` of per-page surfaces — `.pageCurl` for Page Turn, `.scroll` for
+/// Screen Flip. Selection + annotation work in every mode (each surface owns that pipeline).
+final class ReaderViewController: UIViewController, UIPageViewControllerDataSource, UIPageViewControllerDelegate {
 
     var onAnnotationCreated: ((Annotation) -> Void)?
     var onAnnotationTapped:  ((Annotation) -> Void)?
@@ -156,317 +155,233 @@ final class ReaderViewController: UIViewController, UITextViewDelegate, UIGestur
     var onInkAnnotationRequested: ((Annotation) -> Void)?
     var onEditInk:           ((Annotation) -> Void)?
 
-    // MARK: - Nav mode
+    private var fullAttributed = NSAttributedString()
+    private var fullPlainText: NSString = ""
+    private var currentAnnotations: [ResolvedAnnotation] = []
+    private var bodySize = AppTheme.bodySize
+    private var lastDocumentURL: URL?
+    private var hasRendered = false
 
     var navMode: NavMode = .scroll {
-        didSet { guard oldValue != navMode else { return }; applyNavMode() }
+        didSet { guard oldValue != navMode else { return }; installMode() }
     }
 
+    // Scroll mode
+    private var scrollSurface: AnnotatingTextSurface?
+    // Paged modes
+    private var pageVC: UIPageViewController?
+    private var pageRanges: [NSRange] = []
+    private var pageIndex = 0
+    private var paginatedSize: CGSize = .zero
+    /// Identity of what affects line-breaking (text length + body size). Pagination only needs to
+    /// recompute when this changes — NOT when annotation decorations change.
+    private var lastPaginationKey = ""
     private var edgeTap: UITapGestureRecognizer!
-    private var swipeNext: UISwipeGestureRecognizer!
-    private var swipePrev: UISwipeGestureRecognizer!
-    private var selectionToolbar: FloatingSelectionToolbar?
 
-    // MARK: - Setup
+    private let scrollInsets = UIEdgeInsets(top: 32, left: 24, bottom: 48, right: 24)
+    private let pageInsets   = UIEdgeInsets(top: 24, left: 28, bottom: 24, right: 28)
+
+    // MARK: Setup
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        textView.isEditable   = false
-        textView.isSelectable = true
-        textView.delegate     = self
-        textView.backgroundColor        = AppTheme.warmPaperUI
-        textView.textContainerInset     = UIEdgeInsets(top: 32, left: 24, bottom: 48, right: 24)
-        textView.alwaysBounceVertical   = true
-        textView.showsVerticalScrollIndicator = true
-        textView.contentInsetAdjustmentBehavior = .always
-        textView.translatesAutoresizingMaskIntoConstraints = false
         view.backgroundColor = AppTheme.warmPaperUI
-        view.addSubview(textView)
-        NSLayoutConstraint.activate([
-            textView.topAnchor.constraint(equalTo: view.topAnchor),
-            textView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            textView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            textView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-        ])
-
-        // System find-in-text (UIFindInteraction, iOS 16+).
-        textView.isFindInteractionEnabled = true
-
-        // Single-tap to open annotation actions.
-        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
-        tap.delegate = self
-        tap.cancelsTouchesInView = false
-        for gr in textView.gestureRecognizers ?? [] {
-            if let dbl = gr as? UITapGestureRecognizer, dbl.numberOfTapsRequired == 2 {
-                tap.require(toFail: dbl)
-            }
-        }
-        textView.addGestureRecognizer(tap)
-
-        // Edge-tap for screenFlip / pageTurn (tapping left/right zone).
         edgeTap = UITapGestureRecognizer(target: self, action: #selector(handleEdgeTap(_:)))
-        edgeTap.delegate = self
+        edgeTap.cancelsTouchesInView = false
         edgeTap.isEnabled = false
         view.addGestureRecognizer(edgeTap)
-
-        // Swipe gestures for pageTurn.
-        swipeNext = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipeNext))
-        swipeNext.direction = .left
-        swipeNext.isEnabled = false
-        view.addGestureRecognizer(swipeNext)
-
-        swipePrev = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipePrev))
-        swipePrev.direction = .right
-        swipePrev.isEnabled = false
-        view.addGestureRecognizer(swipePrev)
+        installMode()
     }
 
-    // MARK: - Content update
+    private func wire(_ surface: AnnotatingTextSurface) {
+        surface.fullPlainText        = fullPlainText
+        surface.annotationsProvider  = { [weak self] in self?.currentAnnotations ?? [] }
+        surface.onAnnotationCreated  = { [weak self] in self?.onAnnotationCreated?($0) }
+        surface.onAnnotationTapped   = { [weak self] in self?.onAnnotationTapped?($0) }
+        surface.onDeleteAnnotation   = { [weak self] in self?.onDeleteAnnotation?($0) }
+        surface.onInkAnnotationRequested = { [weak self] in self?.onInkAnnotationRequested?($0) }
+        surface.onEditInk            = { [weak self] in self?.onEditInk?($0) }
+    }
+
+    // MARK: Content update
 
     func update(document: LoadedDocument, annotations: [ResolvedAnnotation],
                 documentURL: URL?, bodySize: CGFloat) {
+        let isNew = !hasRendered || documentURL != lastDocumentURL
         currentAnnotations = annotations
-        let isNewDocument = !hasRendered || documentURL != lastDocumentURL
-        let offset = textView.contentOffset
-        textView.attributedText = ReaderTextView.makeAttributedString(document: document,
-                                                                       annotations: annotations,
-                                                                       bodySize: bodySize)
-        if isNewDocument {
-            textView.contentOffset = .zero
-            lastDocumentURL = documentURL
-            hasRendered = true
+        self.bodySize      = bodySize
+        fullPlainText      = document.plainText as NSString
+        fullAttributed     = ReaderTextView.makeAttributedString(document: document,
+                                                                 annotations: annotations,
+                                                                 bodySize: bodySize)
+        if isNew { lastDocumentURL = documentURL; hasRendered = true; pageIndex = 0 }
+        scrollSurface?.fullPlainText = fullPlainText
+
+        let key = "\(fullPlainText.length)-\(bodySize)"
+        let layoutChanged = key != lastPaginationKey
+        lastPaginationKey = key
+
+        if scrollSurface != nil {
+            let offset = scrollSurface?.textView.contentOffset ?? .zero
+            scrollSurface?.setAttributed(fullAttributed)
+            if isNew { scrollSurface?.textView.contentOffset = .zero }
+            else     { scrollSurface?.textView.contentOffset = offset }
+        } else if layoutChanged || isNew {
+            // Text/size changed → re-paginate on next layout.
+            paginatedSize = .zero
+            view.setNeedsLayout()
         } else {
-            textView.contentOffset = offset
+            // Only decorations changed → refresh the visible page in place (no re-pagination).
+            if let s = pageVC?.viewControllers?.first as? AnnotatingTextSurface,
+               s.pageNumber < pageRanges.count {
+                s.fullPlainText = fullPlainText
+                s.setAttributed(fullAttributed.attributedSubstring(from: pageRanges[s.pageNumber]))
+            }
         }
     }
 
-    // MARK: - Find
+    // MARK: Mode install / layout
 
-    func activateFind() {
-        textView.findInteraction?.presentFindNavigator(showingReplace: false)
+    private func installMode() {
+        // Tear down whichever child is active.
+        if let s = scrollSurface { remove(child: s); scrollSurface = nil }
+        if let p = pageVC        { remove(child: p); pageVC = nil }
+
+        switch navMode {
+        case .scroll:
+            edgeTap.isEnabled = false
+            let s = AnnotatingTextSurface(scrollable: true, insets: scrollInsets)
+            wire(s)
+            add(child: s)
+            scrollSurface = s
+            s.setAttributed(fullAttributed)
+        case .pageTurn, .screenFlip:
+            edgeTap.isEnabled = true
+            let style: UIPageViewController.TransitionStyle = (navMode == .pageTurn) ? .pageCurl : .scroll
+            let p = UIPageViewController(transitionStyle: style,
+                                         navigationOrientation: .horizontal)
+            p.dataSource = self
+            p.delegate   = self
+            add(child: p)
+            pageVC = p
+            paginatedSize = .zero
+            view.setNeedsLayout()
+        }
     }
 
-    // MARK: - Scroll to annotation (used by the Bookmarks sidebar tab)
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        guard pageVC != nil, fullAttributed.length > 0 else { return }
+        let safe = view.safeAreaInsets
+        let textW = view.bounds.width  - safe.left - safe.right - pageInsets.left - pageInsets.right
+        let textH = view.bounds.height - safe.top  - safe.bottom - pageInsets.top - pageInsets.bottom
+        let size  = CGSize(width: textW, height: textH)
+        guard size.width > 10, size.height > 10, size != paginatedSize else { return }
+        paginatedSize = size
+        pageRanges    = TextPaginator.paginate(fullAttributed, pageSize: size)
+        pageIndex     = min(pageIndex, max(0, pageRanges.count - 1))
+        if let page = makePage(pageIndex) {
+            pageVC?.setViewControllers([page], direction: .forward, animated: false)
+        }
+    }
+
+    private func makePage(_ index: Int) -> AnnotatingTextSurface? {
+        guard index >= 0, index < pageRanges.count else { return nil }
+        let range = pageRanges[index]
+        let s = AnnotatingTextSurface(scrollable: false, insets: pageInsets)
+        wire(s)
+        s.pageNumber = index
+        s.baseOffset = range.location
+        s.loadViewIfNeeded()
+        s.setAttributed(fullAttributed.attributedSubstring(from: range))
+        return s
+    }
+
+    // MARK: Child VC helpers
+
+    private func add(child vc: UIViewController) {
+        addChild(vc)
+        vc.view.translatesAutoresizingMaskIntoConstraints = false
+        view.insertSubview(vc.view, at: 0)
+        NSLayoutConstraint.activate([
+            vc.view.topAnchor.constraint(equalTo: view.topAnchor),
+            vc.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            vc.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            vc.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
+        vc.didMove(toParent: self)
+    }
+
+    private func remove(child vc: UIViewController) {
+        vc.willMove(toParent: nil)
+        vc.view.removeFromSuperview()
+        vc.removeFromParent()
+    }
+
+    // MARK: Find / scroll-to-annotation (driven from the sidebar)
+
+    func activateFind() {
+        currentSurface?.presentFind()
+    }
 
     func scrollToAnnotation(id: String) {
         guard let resolved = currentAnnotations.first(where: { $0.annotation.id == id }),
               let span = resolved.span, span.start >= 0 else { return }
-        let length = max(1, min(span.end - span.start, 80))
-        textView.scrollRangeToVisible(NSRange(location: span.start, length: length))
-    }
-
-    // MARK: - Nav mode
-
-    private func applyNavMode() {
-        switch navMode {
-        case .scroll:
-            textView.isScrollEnabled = true
-            edgeTap.isEnabled   = false
-            swipeNext.isEnabled = false
-            swipePrev.isEnabled = false
-        case .screenFlip:
-            textView.isScrollEnabled = false
-            edgeTap.isEnabled   = true
-            swipeNext.isEnabled = false
-            swipePrev.isEnabled = false
-        case .pageTurn:
-            textView.isScrollEnabled = false
-            edgeTap.isEnabled   = true
-            swipeNext.isEnabled = true
-            swipePrev.isEnabled = true
+        if let s = scrollSurface {
+            let length = max(1, min(span.end - span.start, 80))
+            s.textView.scrollRangeToVisible(NSRange(location: span.start, length: length))
+        } else if !pageRanges.isEmpty {
+            let target = pageRanges.firstIndex { span.start >= $0.location && span.start < $0.location + $0.length }
+            goToPage(target ?? 0)
         }
     }
+
+    private var currentSurface: AnnotatingTextSurface? {
+        scrollSurface ?? (pageVC?.viewControllers?.first as? AnnotatingTextSurface)
+    }
+
+    // MARK: Edge-tap paging
 
     @objc private func handleEdgeTap(_ gr: UITapGestureRecognizer) {
         let x = gr.location(in: view).x
         let w = view.bounds.width
         if x < w * 0.25 {
-            navigatePages(forward: false)
+            goToPage(pageIndex - 1)
         } else if x > w * 0.75 {
-            navigatePages(forward: true)
+            goToPage(pageIndex + 1)
         }
     }
 
-    @objc private func handleSwipeNext() { navigatePages(forward: true) }
-    @objc private func handleSwipePrev() { navigatePages(forward: false) }
+    private func goToPage(_ target: Int) {
+        guard target >= 0, target < pageRanges.count, target != pageIndex,
+              let page = makePage(target) else { return }
+        let direction: UIPageViewController.NavigationDirection = target > pageIndex ? .forward : .reverse
+        let animated = (navMode == .pageTurn)
+        pageVC?.setViewControllers([page], direction: direction, animated: animated)
+        pageIndex = target
+    }
 
-    private func navigatePages(forward: Bool) {
-        let inset   = textView.textContainerInset
-        let visible = textView.bounds.height - inset.top - inset.bottom
-        let current = textView.contentOffset.y
-        let maxY    = max(0, textView.contentSize.height - textView.bounds.height)
-        let target  = forward
-            ? min(current + visible, maxY)
-            : max(current - visible, 0)
-        let dest = CGPoint(x: 0, y: target)
+    // MARK: UIPageViewControllerDataSource / Delegate
 
-        switch navMode {
-        case .scroll:
-            break
-        case .screenFlip:
-            textView.setContentOffset(dest, animated: false)
-        case .pageTurn:
-            UIView.transition(with: textView, duration: 0.30,
-                              options: forward ? .transitionFlipFromRight : .transitionFlipFromLeft) {
-                self.textView.setContentOffset(dest, animated: false)
-            }
+    func pageViewController(_ pvc: UIPageViewController,
+                            viewControllerBefore vc: UIViewController) -> UIViewController? {
+        guard let s = vc as? AnnotatingTextSurface else { return nil }
+        return makePage(s.pageNumber - 1)
+    }
+
+    func pageViewController(_ pvc: UIPageViewController,
+                            viewControllerAfter vc: UIViewController) -> UIViewController? {
+        guard let s = vc as? AnnotatingTextSurface else { return nil }
+        return makePage(s.pageNumber + 1)
+    }
+
+    func pageViewController(_ pvc: UIPageViewController,
+                            didFinishAnimating finished: Bool,
+                            previousViewControllers: [UIViewController],
+                            transitionCompleted completed: Bool) {
+        if completed, let s = pvc.viewControllers?.first as? AnnotatingTextSurface {
+            pageIndex = s.pageNumber
         }
-    }
-
-    // MARK: - UITextViewDelegate — floating annotation toolbar
-
-    func textViewDidChangeSelection(_ textView: UITextView) {
-        let range = textView.selectedRange
-        if range.length > 0 {
-            showAnnotationToolbar(near: range)
-        } else {
-            selectionToolbar?.isHidden = true
-        }
-    }
-
-    // Editing is disabled, so this delegate is only called on programmatic range changes,
-    // but return true so the delegate chain stays consistent.
-    func textView(_ textView: UITextView,
-                  editMenuForTextIn range: NSRange,
-                  suggestedActions: [UIMenuElement]) -> UIMenu? {
-        // Annotation tools live in the floating FloatingSelectionToolbar.
-        // Return only the system actions (Copy, Look Up, etc.) here.
-        return UIMenu(children: suggestedActions)
-    }
-
-    private func showAnnotationToolbar(near range: NSRange) {
-        // Lazily create the toolbar.
-        let toolbar: FloatingSelectionToolbar
-        if let existing = selectionToolbar {
-            toolbar = existing
-        } else {
-            let t = FloatingSelectionToolbar()
-            t.onSelect = { [weak self] tool in
-                guard let self else { return }
-                self.commitAnnotation(tool: tool, range: self.textView.selectedRange)
-                self.selectionToolbar?.isHidden = true
-            }
-            view.addSubview(t)
-            selectionToolbar = t
-            toolbar = t
-        }
-
-        // Determine position above the selection's first rect.
-        guard let from = textView.position(from: textView.beginningOfDocument, offset: range.location),
-              let to   = textView.position(from: from, offset: range.length),
-              let tr   = textView.textRange(from: from, to: to) else {
-            toolbar.isHidden = true; return
-        }
-        let firstRect    = textView.firstRect(for: tr)
-        let rectInView   = textView.convert(firstRect, to: view)
-        let sz           = toolbar.intrinsicContentSize
-        let toolbarH     = sz.height
-        let toolbarW     = sz.width
-        let yAbove       = rectInView.minY - toolbarH - 10
-        let ySafe        = max(view.safeAreaInsets.top + 8, yAbove)
-        let xCenter      = rectInView.midX
-        let xClamped     = max(8, min(view.bounds.width - toolbarW - 8, xCenter - toolbarW / 2))
-
-        toolbar.frame    = CGRect(x: xClamped, y: ySafe, width: toolbarW, height: toolbarH)
-        toolbar.isHidden = false
-        view.bringSubviewToFront(toolbar)
-    }
-
-    // MARK: - Commit annotation
-
-    private func commitAnnotation(tool: AnnotationTool, range: NSRange) {
-        let ns  = (textView.text ?? "") as NSString
-        let len = ns.length
-        guard range.location != NSNotFound, range.length > 0,
-              range.location + range.length <= len else { return }
-
-        let selected    = ns.substring(with: range)
-        let prefixStart = max(0, range.location - 40)
-        let prefix      = ns.substring(with: NSRange(location: prefixStart,
-                                                      length: range.location - prefixStart))
-        let suffixEnd   = min(len, range.location + range.length + 40)
-        let suffix      = ns.substring(with: NSRange(location: range.location + range.length,
-                                                      length: suffixEnd - range.location - range.length))
-        let position    = len > 0 ? Double(range.location) / Double(len) : 0.0
-
-        let annotation = Annotation(
-            id:           newId(),
-            selectedText: selected,
-            prefix:       prefix,
-            suffix:       suffix,
-            tool:         tool,
-            timestamp:    Date(),
-            position:     position
-        )
-        if tool == .inkAnnotation {
-            onInkAnnotationRequested?(annotation)
-        } else {
-            onAnnotationCreated?(annotation)
-            if tool == .comment { onAnnotationTapped?(annotation) }
-        }
-        textView.selectedTextRange = nil
-    }
-
-    // MARK: - Tap an annotation → action sheet
-
-    @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
-        guard textView.selectedRange.length == 0 else { return }
-        let point = gesture.location(in: textView)
-        guard let annotation = annotationAt(point) else { return }
-        presentActions(for: annotation, at: point)
-    }
-
-    private func annotationAt(_ point: CGPoint) -> Annotation? {
-        guard let pos = textView.closestPosition(to: point) else { return nil }
-        let caret   = textView.caretRect(for: pos)
-        var charIdx = textView.offset(from: textView.beginningOfDocument, to: pos)
-        if point.x < caret.minX { charIdx -= 1 }
-        let len = (textView.text as NSString?)?.length ?? 0
-        guard charIdx >= 0, charIdx < len else { return nil }
-        guard let from  = textView.position(from: textView.beginningOfDocument, offset: charIdx),
-              let to    = textView.position(from: from, offset: 1),
-              let range = textView.textRange(from: from, to: to) else { return nil }
-        let glyphRect = textView.firstRect(for: range)
-        guard glyphRect.height > 0, glyphRect.insetBy(dx: -4, dy: -2).contains(point) else { return nil }
-        return currentAnnotations.first { r in
-            guard let span = r.span else { return false }
-            return charIdx >= span.start && charIdx < span.end
-        }?.annotation
-    }
-
-    private func presentActions(for annotation: Annotation, at point: CGPoint) {
-        let raw     = annotation.selectedText
-        let preview = raw.count > 80 ? String(raw.prefix(80)) + "…" : raw
-        let sheet   = UIAlertController(title: nil, message: preview, preferredStyle: .actionSheet)
-        if annotation.hasInk {
-            sheet.addAction(UIAlertAction(title: "Edit Ink", style: .default) { [weak self] _ in
-                self?.onEditInk?(annotation)
-            })
-        } else {
-            sheet.addAction(UIAlertAction(title: "Comment", style: .default) { [weak self] _ in
-                self?.onAnnotationTapped?(annotation)
-            })
-        }
-        sheet.addAction(UIAlertAction(title: "Delete", style: .destructive) { [weak self] _ in
-            self?.onDeleteAnnotation?(annotation.id)
-        })
-        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        if let pop = sheet.popoverPresentationController {
-            pop.sourceView = textView
-            pop.sourceRect = CGRect(origin: point, size: CGSize(width: 1, height: 1))
-        }
-        present(sheet, animated: true)
-    }
-
-    // MARK: - UIGestureRecognizerDelegate
-
-    func gestureRecognizer(_ gr: UIGestureRecognizer,
-                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
-
-    // Let the edge-tap fire only when the annotation-tap wouldn't have matched.
-    func gestureRecognizer(_ gr: UIGestureRecognizer,
-                           shouldRequireFailureOf other: UIGestureRecognizer) -> Bool {
-        gr === edgeTap && other === (textView.gestureRecognizers?.first { $0 is UITapGestureRecognizer } ?? gr)
     }
 }
 
@@ -474,7 +389,8 @@ final class ReaderViewController: UIViewController, UITextViewDelegate, UIGestur
 
 /// A pill-shaped floating icon toolbar that appears above a text selection.
 /// Each button maps to one AnnotationTool; tapping commits an annotation and hides the bar.
-private final class FloatingSelectionToolbar: UIView {
+/// Internal (not file-private) so the paginated page surfaces can reuse it.
+final class FloatingSelectionToolbar: UIView {
 
     var onSelect: ((AnnotationTool) -> Void)?
 

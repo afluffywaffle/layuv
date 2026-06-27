@@ -1,0 +1,263 @@
+import UIKit
+
+// MARK: - Pagination
+
+/// Splits an attributed string into per-page character ranges that fit `pageSize`, using a
+/// TextKit-1 layout pass. Page breaks fall on line boundaries, so each page's substring
+/// re-renders identically in its own (same-width) text view.
+enum TextPaginator {
+    static func paginate(_ attributed: NSAttributedString, pageSize: CGSize) -> [NSRange] {
+        guard pageSize.width > 10, pageSize.height > 10, attributed.length > 0 else {
+            return [NSRange(location: 0, length: attributed.length)]
+        }
+        let storage       = NSTextStorage(attributedString: attributed)
+        let layoutManager = NSLayoutManager()
+        storage.addLayoutManager(layoutManager)
+
+        var ranges: [NSRange] = []
+        var safety = 0
+        while ranges.reduce(0, { $0 + $1.length }) < attributed.length, safety < 100_000 {
+            safety += 1
+            let container = NSTextContainer(size: pageSize)
+            container.lineFragmentPadding = 0
+            layoutManager.addTextContainer(container)
+
+            let glyphRange = layoutManager.glyphRange(for: container)
+            guard glyphRange.length > 0 else { break }
+            let charRange = layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
+            // Avoid zero-progress loops at the tail.
+            if let last = ranges.last, charRange.location <= last.location { break }
+            ranges.append(charRange)
+        }
+        if ranges.isEmpty { ranges = [NSRange(location: 0, length: attributed.length)] }
+        return ranges
+    }
+}
+
+// MARK: - Annotating text surface
+
+/// A reusable text surface that owns one UITextView plus the full selection→tool-toolbar→commit
+/// and tap-an-annotation pipeline, parameterised by `baseOffset` (the page's first character index
+/// in the whole document) and `fullPlainText` so commits compute correct global prefix/suffix/position.
+///
+/// Used for BOTH the scroll-mode reader (scrollable, baseOffset 0, full text) and each curl/flip
+/// page (non-scrolling, baseOffset = page start, page substring). Selection + annotation therefore
+/// work identically in every mode.
+final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestureRecognizerDelegate {
+
+    let textView: UITextView
+    private let scrollable: Bool
+    private let insets: UIEdgeInsets
+
+    /// Page's first char index in the full document (0 for scroll mode).
+    var baseOffset: Int = 0
+    /// Index of this page within the paginated document (used by the page-view datasource).
+    var pageNumber: Int = 0
+    /// The whole document's plain text — anchoring prefix/suffix/position are computed against this.
+    var fullPlainText: NSString = ""
+    var annotationsProvider: () -> [ResolvedAnnotation] = { [] }
+
+    var onAnnotationCreated:      ((Annotation) -> Void)?
+    var onAnnotationTapped:       ((Annotation) -> Void)?
+    var onDeleteAnnotation:       ((String) -> Void)?
+    var onInkAnnotationRequested: ((Annotation) -> Void)?
+    var onEditInk:                ((Annotation) -> Void)?
+
+    private var selectionToolbar: FloatingSelectionToolbar?
+
+    init(scrollable: Bool, insets: UIEdgeInsets) {
+        self.scrollable = scrollable
+        self.insets     = insets
+        // Scroll mode uses TextKit 2 (matches the original reader); pages use TextKit 1 so their
+        // line breaking matches the TextKit-1 paginator exactly.
+        self.textView   = UITextView(usingTextLayoutManager: scrollable)
+        super.init(nibName: nil, bundle: nil)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor          = AppTheme.warmPaperUI
+        textView.isEditable           = false
+        textView.isSelectable         = true
+        textView.delegate             = self
+        textView.backgroundColor      = AppTheme.warmPaperUI
+        textView.textContainerInset   = insets
+        textView.isScrollEnabled      = scrollable
+        textView.alwaysBounceVertical = scrollable
+        textView.showsVerticalScrollIndicator = scrollable
+        textView.isFindInteractionEnabled      = scrollable
+        textView.contentInsetAdjustmentBehavior = .always
+        textView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(textView)
+        // Pages pin to the safe area; the scroll surface fills the view (it manages its own insets).
+        if scrollable {
+            NSLayoutConstraint.activate([
+                textView.topAnchor.constraint(equalTo: view.topAnchor),
+                textView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+                textView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                textView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            ])
+        } else {
+            let guide = view.safeAreaLayoutGuide
+            NSLayoutConstraint.activate([
+                textView.topAnchor.constraint(equalTo: guide.topAnchor),
+                textView.bottomAnchor.constraint(equalTo: guide.bottomAnchor),
+                textView.leadingAnchor.constraint(equalTo: guide.leadingAnchor),
+                textView.trailingAnchor.constraint(equalTo: guide.trailingAnchor),
+            ])
+        }
+
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+        tap.delegate = self
+        tap.cancelsTouchesInView = false
+        for gr in textView.gestureRecognizers ?? [] {
+            if let dbl = gr as? UITapGestureRecognizer, dbl.numberOfTapsRequired == 2 {
+                tap.require(toFail: dbl)
+            }
+        }
+        textView.addGestureRecognizer(tap)
+    }
+
+    func setAttributed(_ attributed: NSAttributedString) {
+        textView.attributedText = attributed
+    }
+
+    func presentFind() {
+        textView.findInteraction?.presentFindNavigator(showingReplace: false)
+    }
+
+    // MARK: Selection → floating tool toolbar
+
+    func textViewDidChangeSelection(_ textView: UITextView) {
+        if textView.selectedRange.length > 0 {
+            showAnnotationToolbar(near: textView.selectedRange)
+        } else {
+            selectionToolbar?.isHidden = true
+        }
+    }
+
+    func textView(_ textView: UITextView, editMenuForTextIn range: NSRange,
+                  suggestedActions: [UIMenuElement]) -> UIMenu? {
+        UIMenu(children: suggestedActions)
+    }
+
+    private func showAnnotationToolbar(near range: NSRange) {
+        let toolbar: FloatingSelectionToolbar
+        if let existing = selectionToolbar {
+            toolbar = existing
+        } else {
+            let t = FloatingSelectionToolbar()
+            t.onSelect = { [weak self] tool in
+                guard let self else { return }
+                self.commitAnnotation(tool: tool, localRange: self.textView.selectedRange)
+                self.selectionToolbar?.isHidden = true
+            }
+            view.addSubview(t)
+            selectionToolbar = t
+            toolbar = t
+        }
+
+        guard let from = textView.position(from: textView.beginningOfDocument, offset: range.location),
+              let to   = textView.position(from: from, offset: range.length),
+              let tr   = textView.textRange(from: from, to: to) else {
+            toolbar.isHidden = true; return
+        }
+        let rectInView = textView.convert(textView.firstRect(for: tr), to: view)
+        let sz         = toolbar.intrinsicContentSize
+        let yAbove     = rectInView.minY - sz.height - 10
+        let ySafe      = max(view.safeAreaInsets.top + 8, yAbove)
+        let xClamped   = max(8, min(view.bounds.width - sz.width - 8, rectInView.midX - sz.width / 2))
+        toolbar.frame  = CGRect(x: xClamped, y: ySafe, width: sz.width, height: sz.height)
+        toolbar.isHidden = false
+        view.bringSubviewToFront(toolbar)
+    }
+
+    // MARK: Commit (offset-aware)
+
+    private func commitAnnotation(tool: AnnotationTool, localRange: NSRange) {
+        let pageNS = (textView.text ?? "") as NSString
+        guard localRange.location != NSNotFound, localRange.length > 0,
+              localRange.location + localRange.length <= pageNS.length else { return }
+
+        let selected  = pageNS.substring(with: localRange)
+        let globalLoc = baseOffset + localRange.location
+        let globalEnd = globalLoc + localRange.length
+        let full      = fullPlainText
+        let len       = full.length
+        guard globalEnd <= len else { return }
+
+        let prefixStart = max(0, globalLoc - 40)
+        let prefix      = full.substring(with: NSRange(location: prefixStart, length: globalLoc - prefixStart))
+        let suffixEnd   = min(len, globalEnd + 40)
+        let suffix      = full.substring(with: NSRange(location: globalEnd, length: suffixEnd - globalEnd))
+        let position    = len > 0 ? Double(globalLoc) / Double(len) : 0.0
+
+        let annotation = Annotation(
+            id: newId(), selectedText: selected, prefix: prefix, suffix: suffix,
+            tool: tool, timestamp: Date(), position: position
+        )
+        if tool == .inkAnnotation {
+            onInkAnnotationRequested?(annotation)
+        } else {
+            onAnnotationCreated?(annotation)
+            if tool == .comment { onAnnotationTapped?(annotation) }
+        }
+        textView.selectedTextRange = nil
+    }
+
+    // MARK: Tap an annotation (offset-aware)
+
+    @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
+        guard textView.selectedRange.length == 0 else { return }
+        let point = gesture.location(in: textView)
+        guard let annotation = annotationAt(point) else { return }
+        presentActions(for: annotation, at: point)
+    }
+
+    private func annotationAt(_ point: CGPoint) -> Annotation? {
+        guard let pos = textView.closestPosition(to: point) else { return nil }
+        let caret    = textView.caretRect(for: pos)
+        var localIdx = textView.offset(from: textView.beginningOfDocument, to: pos)
+        if point.x < caret.minX { localIdx -= 1 }
+        let pageLen = (textView.text as NSString?)?.length ?? 0
+        guard localIdx >= 0, localIdx < pageLen else { return nil }
+        guard let from  = textView.position(from: textView.beginningOfDocument, offset: localIdx),
+              let to    = textView.position(from: from, offset: 1),
+              let range = textView.textRange(from: from, to: to) else { return nil }
+        let glyphRect = textView.firstRect(for: range)
+        guard glyphRect.height > 0, glyphRect.insetBy(dx: -4, dy: -2).contains(point) else { return nil }
+        let globalIdx = baseOffset + localIdx
+        return annotationsProvider().first { r in
+            guard let span = r.span else { return false }
+            return globalIdx >= span.start && globalIdx < span.end
+        }?.annotation
+    }
+
+    private func presentActions(for annotation: Annotation, at point: CGPoint) {
+        let raw     = annotation.selectedText
+        let preview = raw.count > 80 ? String(raw.prefix(80)) + "…" : raw
+        let sheet   = UIAlertController(title: nil, message: preview, preferredStyle: .actionSheet)
+        if annotation.hasInk {
+            sheet.addAction(UIAlertAction(title: "Edit Ink", style: .default) { [weak self] _ in
+                self?.onEditInk?(annotation)
+            })
+        } else {
+            sheet.addAction(UIAlertAction(title: "Comment", style: .default) { [weak self] _ in
+                self?.onAnnotationTapped?(annotation)
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "Delete", style: .destructive) { [weak self] _ in
+            self?.onDeleteAnnotation?(annotation.id)
+        })
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        if let pop = sheet.popoverPresentationController {
+            pop.sourceView = textView
+            pop.sourceRect = CGRect(origin: point, size: CGSize(width: 1, height: 1))
+        }
+        present(sheet, animated: true)
+    }
+
+    func gestureRecognizer(_ gr: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+}
