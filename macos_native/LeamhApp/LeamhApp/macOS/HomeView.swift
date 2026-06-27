@@ -78,6 +78,7 @@ struct ReaderScreen: View {
             AnnotationEditSheet(annotation: annotation)
                 .environmentObject(store)
                 .appFont(store.fontChoice)
+                .preferredColorScheme(.light)
         }
     }
 }

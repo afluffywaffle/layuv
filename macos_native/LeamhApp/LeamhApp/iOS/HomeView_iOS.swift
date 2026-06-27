@@ -50,17 +50,20 @@ struct HomeView: View {
             AnnotationEditSheet(annotation: annotation)
                 .environmentObject(store)
                 .appFont(store.fontChoice)
+                .preferredColorScheme(.light)
         }
         .fullScreenCover(item: $store.inkEditingAnnotation) { annotation in
             InkEditorView(annotation: annotation)
                 .environmentObject(store)
                 .appFont(store.fontChoice)
+                .preferredColorScheme(.light)
         }
         // AI panels
         .sheet(isPresented: $showAskAi) {
             AskAiView()
                 .environmentObject(store)
                 .appFont(store.fontChoice)
+                .preferredColorScheme(.light)
         }
         .sheet(isPresented: $showExport) {
             ShareSheet(items: exportItems)
@@ -108,6 +111,7 @@ struct HomeView: View {
                 }
             }
             .presentationDetents([.large, .medium])
+            .preferredColorScheme(.light)
         }
     }
 
