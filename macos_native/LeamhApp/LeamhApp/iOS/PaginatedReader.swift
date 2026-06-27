@@ -83,6 +83,9 @@ final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestu
         textView.delegate             = self
         textView.backgroundColor      = AppTheme.warmPaperUI
         textView.textContainerInset   = insets
+        // Match TextPaginator (which uses lineFragmentPadding = 0) so per-page line breaking is
+        // identical to the paginator's — otherwise columns wrap extra lines and clip the overflow.
+        textView.textContainer.lineFragmentPadding = 0
         textView.isScrollEnabled      = scrollable
         textView.alwaysBounceVertical = scrollable
         textView.showsVerticalScrollIndicator = scrollable
@@ -260,4 +263,51 @@ final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestu
 
     func gestureRecognizer(_ gr: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+}
+
+// MARK: - Page (1–2 columns)
+
+/// One page of the paginated reader: a horizontal stack of 1 (compact/iPhone) or 2 (wide/iPad)
+/// `AnnotatingTextSurface` columns. Each column owns its own selection/annotation pipeline and
+/// `baseOffset`, so annotating works in any column. Selection does NOT span the column gap.
+final class ReaderPageViewController: UIViewController {
+    let pageNumber: Int
+    let columns: [AnnotatingTextSurface]
+    private let padding: UIEdgeInsets
+    private let columnGap: CGFloat
+
+    init(pageNumber: Int, columns: [AnnotatingTextSurface], padding: UIEdgeInsets, gap: CGFloat) {
+        self.pageNumber = pageNumber
+        self.columns    = columns
+        self.padding    = padding
+        self.columnGap  = gap
+        super.init(nibName: nil, bundle: nil)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = AppTheme.warmPaperUI
+
+        let stack = UIStackView()
+        stack.axis         = .horizontal
+        stack.distribution = .fillEqually
+        stack.spacing      = columnGap
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+
+        for col in columns {
+            addChild(col)
+            stack.addArrangedSubview(col.view)
+            col.didMove(toParent: self)
+        }
+
+        let g = view.safeAreaLayoutGuide
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: g.topAnchor, constant: padding.top),
+            stack.bottomAnchor.constraint(equalTo: g.bottomAnchor, constant: -padding.bottom),
+            stack.leadingAnchor.constraint(equalTo: g.leadingAnchor, constant: padding.left),
+            stack.trailingAnchor.constraint(equalTo: g.trailingAnchor, constant: -padding.right),
+        ])
+    }
 }

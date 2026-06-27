@@ -168,9 +168,9 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
 
     // Scroll mode
     private var scrollSurface: AnnotatingTextSurface?
-    // Paged modes
+    // Paged modes — each page holds 1 (compact) or 2 (wide) column ranges.
     private var pageVC: UIPageViewController?
-    private var pageRanges: [NSRange] = []
+    private var pages: [[NSRange]] = []
     private var pageIndex = 0
     private var paginatedSize: CGSize = .zero
     /// Identity of what affects line-breaking (text length + body size). Pagination only needs to
@@ -178,8 +178,13 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
     private var lastPaginationKey = ""
     private var edgeTap: UITapGestureRecognizer!
 
-    private let scrollInsets = UIEdgeInsets(top: 32, left: 24, bottom: 48, right: 24)
-    private let pageInsets   = UIEdgeInsets(top: 24, left: 28, bottom: 24, right: 28)
+    private let scrollInsets   = UIEdgeInsets(top: 32, left: 24, bottom: 48, right: 24)
+    private let pagePadding    = UIEdgeInsets(top: 28, left: 28, bottom: 28, right: 28)
+    private let columnGap: CGFloat = 28
+    /// Available text width at/above which a page uses two columns (iPad); below = one (iPhone).
+    private let twoColumnMinWidth: CGFloat = 380
+
+    private var isVerticalPaging: Bool { navMode == .screenFlip }
 
     // MARK: Setup
 
@@ -231,11 +236,14 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
             paginatedSize = .zero
             view.setNeedsLayout()
         } else {
-            // Only decorations changed → refresh the visible page in place (no re-pagination).
-            if let s = pageVC?.viewControllers?.first as? AnnotatingTextSurface,
-               s.pageNumber < pageRanges.count {
-                s.fullPlainText = fullPlainText
-                s.setAttributed(fullAttributed.attributedSubstring(from: pageRanges[s.pageNumber]))
+            // Only decorations changed → refresh the visible page's columns in place (no re-paginate).
+            if let page = pageVC?.viewControllers?.first as? ReaderPageViewController,
+               page.pageNumber < pages.count {
+                let cols = pages[page.pageNumber]
+                for (i, col) in page.columns.enumerated() where i < cols.count {
+                    col.fullPlainText = fullPlainText
+                    col.setAttributed(fullAttributed.attributedSubstring(from: cols[i]))
+                }
             }
         }
     }
@@ -257,9 +265,11 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
             s.setAttributed(fullAttributed)
         case .pageTurn, .screenFlip:
             edgeTap.isEnabled = true
+            // Page Turn = horizontal page-curl; Screen Flip = vertical scroll.
             let style: UIPageViewController.TransitionStyle = (navMode == .pageTurn) ? .pageCurl : .scroll
+            let orientation: UIPageViewController.NavigationOrientation = isVerticalPaging ? .vertical : .horizontal
             let p = UIPageViewController(transitionStyle: style,
-                                         navigationOrientation: .horizontal)
+                                         navigationOrientation: orientation)
             p.dataSource = self
             p.delegate   = self
             add(child: p)
@@ -272,29 +282,39 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         guard pageVC != nil, fullAttributed.length > 0 else { return }
-        let safe = view.safeAreaInsets
-        let textW = view.bounds.width  - safe.left - safe.right - pageInsets.left - pageInsets.right
-        let textH = view.bounds.height - safe.top  - safe.bottom - pageInsets.top - pageInsets.bottom
-        let size  = CGSize(width: textW, height: textH)
+        let safe  = view.safeAreaInsets
+        let availW = view.bounds.width  - safe.left - safe.right - pagePadding.left - pagePadding.right
+        let availH = view.bounds.height - safe.top  - safe.bottom - pagePadding.top - pagePadding.bottom
+        let size   = CGSize(width: availW, height: availH)
         guard size.width > 10, size.height > 10, size != paginatedSize else { return }
         paginatedSize = size
-        pageRanges    = TextPaginator.paginate(fullAttributed, pageSize: size)
-        pageIndex     = min(pageIndex, max(0, pageRanges.count - 1))
+
+        let columnCount = availW >= twoColumnMinWidth ? 2 : 1
+        let colW = (availW - columnGap * CGFloat(columnCount - 1)) / CGFloat(columnCount)
+        // Paginate to a hair under the column height so sub-pixel rounding never clips the last line.
+        let colH = availH - 4
+        let columnRanges = TextPaginator.paginate(fullAttributed, pageSize: CGSize(width: colW, height: colH))
+        pages = stride(from: 0, to: columnRanges.count, by: columnCount).map {
+            Array(columnRanges[$0 ..< min($0 + columnCount, columnRanges.count)])
+        }
+        pageIndex = min(pageIndex, max(0, pages.count - 1))
         if let page = makePage(pageIndex) {
             pageVC?.setViewControllers([page], direction: .forward, animated: false)
         }
     }
 
-    private func makePage(_ index: Int) -> AnnotatingTextSurface? {
-        guard index >= 0, index < pageRanges.count else { return nil }
-        let range = pageRanges[index]
-        let s = AnnotatingTextSurface(scrollable: false, insets: pageInsets)
-        wire(s)
-        s.pageNumber = index
-        s.baseOffset = range.location
-        s.loadViewIfNeeded()
-        s.setAttributed(fullAttributed.attributedSubstring(from: range))
-        return s
+    private func makePage(_ index: Int) -> ReaderPageViewController? {
+        guard index >= 0, index < pages.count else { return nil }
+        let columns = pages[index].map { range -> AnnotatingTextSurface in
+            let s = AnnotatingTextSurface(scrollable: false, insets: .zero)
+            wire(s)
+            s.baseOffset = range.location
+            s.loadViewIfNeeded()
+            s.setAttributed(fullAttributed.attributedSubstring(from: range))
+            return s
+        }
+        return ReaderPageViewController(pageNumber: index, columns: columns,
+                                        padding: pagePadding, gap: columnGap)
     }
 
     // MARK: Child VC helpers
@@ -330,30 +350,38 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
         if let s = scrollSurface {
             let length = max(1, min(span.end - span.start, 80))
             s.textView.scrollRangeToVisible(NSRange(location: span.start, length: length))
-        } else if !pageRanges.isEmpty {
-            let target = pageRanges.firstIndex { span.start >= $0.location && span.start < $0.location + $0.length }
+        } else if !pages.isEmpty {
+            let target = pages.firstIndex { cols in
+                cols.contains { span.start >= $0.location && span.start < $0.location + $0.length }
+            }
             goToPage(target ?? 0)
         }
     }
 
+    /// First text surface of the current page (used by Find, which is per-surface).
     private var currentSurface: AnnotatingTextSurface? {
-        scrollSurface ?? (pageVC?.viewControllers?.first as? AnnotatingTextSurface)
+        if let s = scrollSurface { return s }
+        return (pageVC?.viewControllers?.first as? ReaderPageViewController)?.columns.first
     }
 
-    // MARK: Edge-tap paging
+    // MARK: Edge-tap paging (orientation-aware)
 
     @objc private func handleEdgeTap(_ gr: UITapGestureRecognizer) {
-        let x = gr.location(in: view).x
-        let w = view.bounds.width
-        if x < w * 0.25 {
-            goToPage(pageIndex - 1)
-        } else if x > w * 0.75 {
-            goToPage(pageIndex + 1)
+        if isVerticalPaging {
+            let y = gr.location(in: view).y
+            let h = view.bounds.height
+            if y < h * 0.25      { goToPage(pageIndex - 1) }
+            else if y > h * 0.75 { goToPage(pageIndex + 1) }
+        } else {
+            let x = gr.location(in: view).x
+            let w = view.bounds.width
+            if x < w * 0.25      { goToPage(pageIndex - 1) }
+            else if x > w * 0.75 { goToPage(pageIndex + 1) }
         }
     }
 
     private func goToPage(_ target: Int) {
-        guard target >= 0, target < pageRanges.count, target != pageIndex,
+        guard target >= 0, target < pages.count, target != pageIndex,
               let page = makePage(target) else { return }
         let direction: UIPageViewController.NavigationDirection = target > pageIndex ? .forward : .reverse
         let animated = (navMode == .pageTurn)
@@ -365,22 +393,22 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
 
     func pageViewController(_ pvc: UIPageViewController,
                             viewControllerBefore vc: UIViewController) -> UIViewController? {
-        guard let s = vc as? AnnotatingTextSurface else { return nil }
-        return makePage(s.pageNumber - 1)
+        guard let p = vc as? ReaderPageViewController else { return nil }
+        return makePage(p.pageNumber - 1)
     }
 
     func pageViewController(_ pvc: UIPageViewController,
                             viewControllerAfter vc: UIViewController) -> UIViewController? {
-        guard let s = vc as? AnnotatingTextSurface else { return nil }
-        return makePage(s.pageNumber + 1)
+        guard let p = vc as? ReaderPageViewController else { return nil }
+        return makePage(p.pageNumber + 1)
     }
 
     func pageViewController(_ pvc: UIPageViewController,
                             didFinishAnimating finished: Bool,
                             previousViewControllers: [UIViewController],
                             transitionCompleted completed: Bool) {
-        if completed, let s = pvc.viewControllers?.first as? AnnotatingTextSurface {
-            pageIndex = s.pageNumber
+        if completed, let p = pvc.viewControllers?.first as? ReaderPageViewController {
+            pageIndex = p.pageNumber
         }
     }
 }
