@@ -127,6 +127,9 @@ final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestu
         pencilPan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
         pencilPan.delegate = self
         textView.addGestureRecognizer(pencilPan)
+        // Finger scrolls; the pencil is reserved for selection (above), so the text view's own
+        // scroll pan must ignore pencil touches — otherwise a pencil drag scrolls instead of selecting.
+        textView.panGestureRecognizer.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
     }
 
     // MARK: Pencil drag → select

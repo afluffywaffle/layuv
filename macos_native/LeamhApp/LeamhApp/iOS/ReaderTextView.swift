@@ -286,6 +286,7 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
             p.delegate   = self
             add(child: p)
             pageVC = p
+            restrictPagingToFinger(p)
             paginatedSize = .zero
             view.setNeedsLayout()
         }
@@ -314,6 +315,17 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
         pageIndex = min(pageIndex, max(0, pages.count - 1))
         if let page = makePage(pageIndex) {
             pageVC?.setViewControllers([page], direction: .forward, animated: false)
+        }
+        if let p = pageVC { restrictPagingToFinger(p) }
+    }
+
+    /// Restricts the page-view's paging gestures (pageCurl pan/tap, or the .scroll style's inner
+    /// scroll view) to finger touches, so an Apple Pencil drag selects text instead of turning pages.
+    private func restrictPagingToFinger(_ vc: UIPageViewController) {
+        let finger = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        vc.gestureRecognizers.forEach { $0.allowedTouchTypes = finger }
+        for sub in vc.view.subviews {
+            (sub as? UIScrollView)?.panGestureRecognizer.allowedTouchTypes = finger
         }
     }
 
