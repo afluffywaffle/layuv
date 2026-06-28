@@ -25,6 +25,17 @@ enum Timestamps {
         )
     }
 
+    /// Short UTC stamp (`yyyy-MM-dd HH:mm`) used to prefix thread-reply paragraphs in
+    /// `word/comments.xml`. Display-only — thread data round-trips via leamh/annotations.json,
+    /// never by parsing this prefix back. Mirrors Timestamps.formatThreadPrefix in Kotlin.
+    static func formatThreadPrefix(_ epochMillis: Int64) -> String {
+        let date = Date(timeIntervalSince1970: Double(epochMillis) / 1000.0)
+        let comps = Calendar(identifier: .gregorian)
+            .dateComponents(in: TimeZone(identifier: "UTC")!, from: date)
+        return String(format: "%04d-%02d-%02d %02d:%02d",
+                      comps.year!, comps.month!, comps.day!, comps.hour!, comps.minute!)
+    }
+
     static func parse(_ s: String) -> Date {
         // Try ISO8601DateFormatter with fractional seconds first (handles Z and offsets)
         let fmtFrac = ISO8601DateFormatter()

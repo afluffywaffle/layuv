@@ -75,9 +75,15 @@ public enum ManuscriptSerializer {
         return Prompt(text: sb, inkAnnotationIds: inkIds)
     }
 
-    /// The note text (single note for now; see the type note about threads).
+    /// Full thread text when present (the note is just the first entry), else the note.
+    /// Mirrors ManuscriptSerializer.noteText in Kotlin (continuation lines indent under "note: ").
     private static func noteText(_ a: Annotation) -> String {
-        (a.note ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !a.threadEntries.isEmpty {
+            return a.threadEntries
+                .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .joined(separator: "\n         ")
+        }
+        return (a.note ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func label(_ tool: AnnotationTool) -> String {

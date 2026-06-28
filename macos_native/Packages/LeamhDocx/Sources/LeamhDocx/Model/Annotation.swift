@@ -6,6 +6,41 @@ func newId() -> String {
     return String(micros)
 }
 
+/// One comment in an annotation's thread. `source` is `"leamh"` (created in Léamh — editable)
+/// or `"word"` (imported from a Word reply chain — read-only). `timestamp` is epoch milliseconds.
+/// When the thread is non-empty, entry 0's text mirrors `Annotation.note` (backward compat).
+/// Mirror of ThreadEntry in Annotation.kt.
+public struct ThreadEntry: Equatable {
+    public let text: String
+    public let timestamp: Int64
+    public let source: String
+
+    public static let sourceLeamh = "leamh"
+    public static let sourceWord  = "word"
+
+    public init(text: String, timestamp: Int64, source: String) {
+        self.text = text
+        self.timestamp = timestamp
+        self.source = source
+    }
+
+    func toMap() -> [String: Any?] {
+        return [
+            "text": text,
+            "timestamp": timestamp,
+            "source": source,
+        ]
+    }
+
+    static func fromMap(_ map: [String: Any?]) -> ThreadEntry {
+        ThreadEntry(
+            text: (map["text"] as? String) ?? "",
+            timestamp: (map["timestamp"] as? NSNumber)?.int64Value ?? 0,
+            source: (map["source"] as? String) ?? sourceLeamh
+        )
+    }
+}
+
 /// A Léamh annotation. Field-for-field mirror of Annotation.kt / lib/models/annotation.dart.
 /// toMap/fromMap reproduce Dart's toJson/fromJson structurally; JSON encoding is one layer up.
 public struct Annotation: Equatable {
@@ -19,6 +54,10 @@ public struct Annotation: Equatable {
     public let timestamp: Date
     public let position: Double
     public let hasInk: Bool
+    /// Chronological comment thread. Empty for legacy/single-note annotations (the `note` field
+    /// carries those). When non-empty, entry 0's text equals `note` and the thread is the source
+    /// of truth for the comment body written to `word/comments.xml`.
+    public let threadEntries: [ThreadEntry]
 
     public init(
         id: String,
@@ -30,7 +69,8 @@ public struct Annotation: Equatable {
         tag: AnnotationTag? = nil,
         timestamp: Date,
         position: Double = 0.0,
-        hasInk: Bool = false
+        hasInk: Bool = false,
+        threadEntries: [ThreadEntry] = []
     ) {
         self.id = id
         self.selectedText = selectedText
@@ -42,6 +82,7 @@ public struct Annotation: Equatable {
         self.timestamp = timestamp
         self.position = position
         self.hasInk = hasInk
+        self.threadEntries = threadEntries
     }
 
     // Key order matches Dart insertion order for JSON compatibility.
@@ -57,6 +98,7 @@ public struct Annotation: Equatable {
             "timestamp": Timestamps.format(timestamp),
             "position": position,
             "hasInk": hasInk,
+            "threadEntries": threadEntries.map { $0.toMap() },
         ]
     }
 
@@ -75,7 +117,9 @@ public struct Annotation: Equatable {
             tag: AnnotationTag.fromName(map["tag"] as? String),
             timestamp: Timestamps.parse(timestampStr),
             position: (map["position"] as? NSNumber)?.doubleValue ?? 0.0,
-            hasInk: (map["hasInk"] as? Bool) ?? false
+            hasInk: (map["hasInk"] as? Bool) ?? false,
+            threadEntries: ((map["threadEntries"] as? [[String: Any]]) ?? [])
+                .map { ThreadEntry.fromMap($0 as [String: Any?]) }
         )
     }
 
@@ -89,7 +133,8 @@ public struct Annotation: Equatable {
         tag: AnnotationTag?? = nil,
         timestamp: Date? = nil,
         position: Double? = nil,
-        hasInk: Bool? = nil
+        hasInk: Bool? = nil,
+        threadEntries: [ThreadEntry]? = nil
     ) -> Annotation {
         Annotation(
             id: id ?? self.id,
@@ -101,7 +146,8 @@ public struct Annotation: Equatable {
             tag: tag ?? self.tag,
             timestamp: timestamp ?? self.timestamp,
             position: position ?? self.position,
-            hasInk: hasInk ?? self.hasInk
+            hasInk: hasInk ?? self.hasInk,
+            threadEntries: threadEntries ?? self.threadEntries
         )
     }
 }

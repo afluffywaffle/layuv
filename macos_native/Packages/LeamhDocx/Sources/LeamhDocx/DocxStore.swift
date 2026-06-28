@@ -34,6 +34,7 @@ public enum DocxStore {
     private static let documentPath     = "word/document.xml"
     private static let cleanPath        = "leamh/document_clean.xml"
     private static let commentsPath     = "word/comments.xml"
+    private static let commentsExtPath  = "word/commentsExtended.xml"
     private static let docRelsPath      = "word/_rels/document.xml.rels"
     private static let commentsRelsPath = "word/_rels/comments.xml.rels"
     private static let contentTypesPath = "[Content_Types].xml"
@@ -73,7 +74,8 @@ public enum DocxStore {
                 let native = documentXml.isEmpty ? [] :
                     NativeImport.importNativeFormatting(documentXml: documentXml, map: map, baseMicros: baseMicros, now: now)
                 let legacy = archive.text(named: commentsPath).map {
-                    LegacyComments.parseComments($0, documentXml: documentXml, map: map)
+                    LegacyComments.parseComments($0, documentXml: documentXml, map: map,
+                                                 commentsExtendedXml: archive.text(named: commentsExtPath))
                 } ?? []
                 annotations = native + legacy
             }
@@ -133,6 +135,12 @@ public enum DocxStore {
             }
         } else if entries.contains(commentsPath) {
             entries[commentsPath] = Data(CommentWriter.emptyComments.utf8)
+        }
+
+        // Léamh flattens Word reply threads into comments.xml without Word's paraIds, so any
+        // retained <w15:commentEx> would dangle. Empty the part — only if it's already present.
+        if let cx = entries[commentsExtPath], let cxStr = String(data: cx, encoding: .utf8) {
+            entries[commentsExtPath] = Data(CommentWriter.emptyCommentsExtended(cxStr).utf8)
         }
 
         if let ctData = entries[contentTypesPath],

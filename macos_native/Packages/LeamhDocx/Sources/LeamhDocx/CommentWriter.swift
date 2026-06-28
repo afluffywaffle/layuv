@@ -5,8 +5,18 @@ import Foundation
 enum CommentWriter {
 
     static func buildNoteComment(xmlId: Int, annotation a: Annotation, inkRelId: String?) -> String {
+        // When the annotation carries a thread, each entry is its own paragraph: the first (== note)
+        // is plain; later entries are prefixed with their write time so Word/Pages readers see the
+        // thread. With no thread, behaviour is unchanged — a single note paragraph (byte-identical).
         let noteXml: String
-        if let note = a.note, !note.isEmpty {
+        if !a.threadEntries.isEmpty {
+            noteXml = a.threadEntries.enumerated().compactMap { (i, entry) -> String? in
+                let text = i == 0 ? entry.text
+                                  : "[\(Timestamps.formatThreadPrefix(entry.timestamp))] \(entry.text)"
+                guard !text.isEmpty else { return nil }
+                return "<w:p><w:r><w:t xml:space=\"preserve\">\(XmlEntities.escape(text))</w:t></w:r></w:p>"
+            }.joined()
+        } else if let note = a.note, !note.isEmpty {
             noteXml = "<w:p><w:r><w:t xml:space=\"preserve\">\(XmlEntities.escape(note))</w:t></w:r></w:p>"
         } else {
             noteXml = ""
@@ -52,6 +62,20 @@ enum CommentWriter {
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
         "<w:comments" +
         " xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"/>"
+
+    private static let commentExChild = try! NSRegularExpression(
+        pattern: "<w15:commentEx\\b[^>]*/>|<w15:commentEx\\b[\\s\\S]*?</w15:commentEx>"
+    )
+
+    /// Strips every `<w15:commentEx>` child from a `word/commentsExtended.xml` payload, leaving the
+    /// root element + namespaces intact. Léamh rebuilds comments.xml paragraphs without Word's paraIds,
+    /// so any retained commentEx would dangle; we empty the part (not delete it) so its content-type
+    /// override and relationship stay valid. Mirrors CommentWriter.emptyCommentsExtended in Kotlin.
+    static func emptyCommentsExtended(_ raw: String) -> String {
+        commentExChild.stringByReplacingMatches(
+            in: raw, range: NSRange(raw.startIndex..., in: raw), withTemplate: ""
+        )
+    }
 
     static func ensureRelsEntry(_ raw: String) -> String {
         if raw.contains("comments.xml") { return raw }
