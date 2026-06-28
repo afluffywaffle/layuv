@@ -109,6 +109,7 @@ class ReaderActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        DocxWriteQueue.init(this) // hold the CPU awake while saves drain (Supernote freezes it otherwise)
         ReaderTheme.seedBodyFont(this)
         setContentView(buildUi())
         readerView.setNavSide(prefs.getString(KEY_NAV_SIDE, "both") ?: "both")
@@ -1561,7 +1562,43 @@ class ReaderActivity : Activity() {
         )
     }
 
+    // Char offset / pending-save coalescing — a rapid burst of annotation edits (e.g.
+    // highlighting many passages) otherwise queues one full DOCX write each, which on the
+    // Supernote piles up badly. We debounce annotation-list saves so a burst collapses to a
+    // single write (each write persists the WHOLE list, so the latest wins), and ALWAYS flush
+    // the pending write before backgrounding ([onPause]) / teardown so nothing is lost. Ink
+    // and delete saves carry one-shot data, so they flush the pending write and persist
+    // immediately rather than coalescing.
+    private var pendingSave: (() -> Unit)? = null
+    private val flushSaveRunnable = Runnable { flushPendingSave() }
+
     private fun saveAnnotations(
+        opened: OpenBook,
+        file: File,
+        newList: List<Annotation>,
+        inkPng: Pair<String, ByteArray>? = null,
+        inkStrokes: Pair<String, String>? = null,
+        deletedId: String? = null,
+    ) {
+        if (inkPng != null || inkStrokes != null || deletedId != null) {
+            flushPendingSave() // persist any coalesced annotation edits first, in order
+            doSaveAnnotations(opened, file, newList, inkPng, inkStrokes, deletedId)
+            return
+        }
+        pendingSave = { doSaveAnnotations(opened, file, newList) }
+        main.removeCallbacks(flushSaveRunnable)
+        main.postDelayed(flushSaveRunnable, SAVE_DEBOUNCE_MS)
+    }
+
+    /** Run the pending coalesced annotation save now (no-op if none). Idempotent. */
+    private fun flushPendingSave() {
+        main.removeCallbacks(flushSaveRunnable)
+        val save = pendingSave ?: return
+        pendingSave = null
+        save()
+    }
+
+    private fun doSaveAnnotations(
         opened: OpenBook,
         file: File,
         newList: List<Annotation>,
@@ -1635,11 +1672,13 @@ class ReaderActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
+        flushPendingSave() // persist any coalesced annotation edits before we may be killed
         savePosition()
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        flushPendingSave()
         aiPanel?.destroy()
     }
 
@@ -1827,5 +1866,10 @@ class ReaderActivity : Activity() {
         // tune. The toggle (persisted per device) overrides either way.
         private const val AUTO_TWO_COL_MIN_DP = 1200
         private const val UNDO_TIMEOUT_MS = 4_000L
+        // Coalesce annotation-list saves within this window into a single DOCX write. Sized
+        // a bit above a comfortable highlighting cadence so a burst of marks collapses to one
+        // write instead of one-per-mark. Always flushed on pause/teardown, so the delay never
+        // costs data and is invisible (the marks render optimistically the instant you make them).
+        private const val SAVE_DEBOUNCE_MS = 1500L
     }
 }

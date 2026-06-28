@@ -87,6 +87,7 @@ class AnnotationsPanelActivity : Activity() {
         super.onCreate(savedInstanceState)
         val path = intent.getStringExtra(EXTRA_DOCX_PATH) ?: run { finish(); return }
         docxFile = File(path)
+        DocxWriteQueue.init(this) // hold the CPU awake while saves drain (Supernote freezes it otherwise)
         ReaderTheme.seedBodyFont(this)
         setContentView(buildUi())
         loadAnnotations(File(path))

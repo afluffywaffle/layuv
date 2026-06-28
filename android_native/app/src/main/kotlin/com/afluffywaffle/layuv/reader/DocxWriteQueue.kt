@@ -1,12 +1,15 @@
 package com.afluffywaffle.layuv.reader
 
+import android.content.Context
 import android.os.ParcelFileDescriptor
+import android.os.PowerManager
 import android.system.Os
 import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Process-wide serializer for EVERY `.docx` write in the app.
@@ -33,9 +36,43 @@ object DocxWriteQueue {
 
     private const val TAG = "DocxWriteQueue"
 
+    // Wake-lock leak backstop — far longer than any real drain, so it never trims a
+    // legitimate write but still self-heals if a release is somehow missed.
+    private const val WAKE_TIMEOUT_MS = 60_000L
+
     // ONE thread for all docx writes across all activities.
     private val executor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "docx-write").apply { isDaemon = true }
+    }
+
+    // The Supernote freezes the CPU when the screen is idle, halting this background
+    // thread mid-drain — without a wake lock a queued burst only advances one write per
+    // user interaction. Held only while writes are in flight, released the moment the
+    // queue drains (each write is ~120ms after the injector fix, so the hold is brief).
+    @Volatile private var wakeLock: PowerManager.WakeLock? = null
+    private val pending = AtomicInteger(0)
+
+    /**
+     * Wire up the pending-write wake lock. Idempotent; call from any writer Activity's
+     * `onCreate`. Safe to skip — writes still run, just without holding the CPU awake.
+     */
+    fun init(context: Context) {
+        if (wakeLock != null) return
+        val pm = context.applicationContext.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "leamh:docx-write")
+            .apply { setReferenceCounted(false) }
+    }
+
+    private fun acquireForPending() {
+        if (pending.getAndIncrement() == 0) {
+            try { wakeLock?.acquire(WAKE_TIMEOUT_MS) } catch (e: Exception) { Log.w(TAG, "wakelock acquire: ${e.message}") }
+        }
+    }
+
+    private fun releaseIfDrained() {
+        if (pending.decrementAndGet() == 0) {
+            try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (e: Exception) { Log.w(TAG, "wakelock release: ${e.message}") }
+        }
     }
 
     /**
@@ -50,6 +87,7 @@ object DocxWriteQueue {
         onSuccess: (ByteArray) -> Unit = {},
         onError: (Exception) -> Unit = {},
     ) {
+        acquireForPending()
         executor.execute {
             try {
                 val base = file.readBytes()
@@ -60,6 +98,8 @@ object DocxWriteQueue {
             } catch (e: Exception) {
                 Log.e(TAG, "write failed for ${file.name}", e)
                 onError(e)
+            } finally {
+                releaseIfDrained()
             }
         }
     }

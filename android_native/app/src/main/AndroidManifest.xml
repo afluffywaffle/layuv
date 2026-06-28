@@ -13,6 +13,12 @@
          (Claude, Gemini, OpenAI, or their own server). Exercised only after AI is set up. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- The Supernote freezes the CPU the moment the screen goes idle, which halts the
+         background docx-write thread mid-drain — saves then only advance when the user next
+         interacts. DocxWriteQueue holds a PARTIAL_WAKE_LOCK only while writes are pending so a
+         burst flushes promptly (each write is ~120ms), then releases. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <application
         android:allowBackup="true"
         android:fullBackupContent="@xml/backup_rules"
