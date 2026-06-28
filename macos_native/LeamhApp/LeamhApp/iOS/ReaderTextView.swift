@@ -435,6 +435,7 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
 final class FloatingSelectionToolbar: UIView {
 
     var onSelect: ((AnnotationTool) -> Void)?
+    var onCopy: (() -> Void)?
 
     private static let items: [(AnnotationTool, String, UIColor, String)] = [
         (.highlight,       "highlighter",            .systemOrange, "Highlight"),
@@ -477,6 +478,24 @@ final class FloatingSelectionToolbar: UIView {
         ])
 
         let cfg = UIImage.SymbolConfiguration(pointSize: 16, weight: .medium)
+
+        // Copy leads the bar (not an annotation tool).
+        let copyBtn = UIButton(type: .system)
+        copyBtn.setImage(UIImage(systemName: "doc.on.doc", withConfiguration: cfg), for: .normal)
+        copyBtn.tintColor = .label
+        copyBtn.accessibilityLabel = "Copy"
+        copyBtn.addAction(UIAction { [weak self] _ in self?.onCopy?() }, for: .touchUpInside)
+        copyBtn.translatesAutoresizingMaskIntoConstraints = false
+        copyBtn.widthAnchor.constraint(equalToConstant: Self.buttonSize).isActive = true
+        copyBtn.heightAnchor.constraint(equalToConstant: Self.buttonSize).isActive = true
+        stack.addArrangedSubview(copyBtn)
+        let copySep = UIView()
+        copySep.backgroundColor = UIColor.separator
+        copySep.translatesAutoresizingMaskIntoConstraints = false
+        copySep.widthAnchor.constraint(equalToConstant: Self.separatorW).isActive = true
+        copySep.heightAnchor.constraint(equalToConstant: 22).isActive = true
+        stack.addArrangedSubview(copySep)
+
         for (i, (tool, icon, color, label)) in Self.items.enumerated() {
             let btn = UIButton(type: .system)
             btn.setImage(UIImage(systemName: icon, withConfiguration: cfg), for: .normal)
@@ -501,9 +520,10 @@ final class FloatingSelectionToolbar: UIView {
     }
 
     override var intrinsicContentSize: CGSize {
-        let n = CGFloat(Self.items.count)
-        let seps = n - 1
-        return CGSize(width: n * Self.buttonSize + seps * Self.separatorW,
+        // +1 button (Copy) and its separator, in addition to the annotation tools.
+        let buttons = CGFloat(Self.items.count + 1)
+        let seps    = CGFloat(Self.items.count)
+        return CGSize(width: buttons * Self.buttonSize + seps * Self.separatorW,
                       height: Self.buttonSize)
     }
 }

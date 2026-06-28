@@ -120,6 +120,35 @@ final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestu
             }
         }
         textView.addGestureRecognizer(tap)
+
+        // Apple Pencil: a pencil drag selects text immediately (highlighter feel) — no long-press.
+        // Pencil-only so it never competes with finger scroll / page-curl.
+        let pencilPan = UIPanGestureRecognizer(target: self, action: #selector(handlePencilPan(_:)))
+        pencilPan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+        pencilPan.delegate = self
+        textView.addGestureRecognizer(pencilPan)
+    }
+
+    // MARK: Pencil drag → select
+
+    private var pencilSelectionStart: UITextPosition?
+
+    @objc private func handlePencilPan(_ gr: UIPanGestureRecognizer) {
+        let point = gr.location(in: textView)
+        switch gr.state {
+        case .began:
+            pencilSelectionStart = textView.closestPosition(to: point)
+            selectionToolbar?.isHidden = true
+        case .changed:
+            guard let start = pencilSelectionStart,
+                  let end   = textView.closestPosition(to: point),
+                  let range = textView.textRange(from: start, to: end) else { return }
+            textView.selectedTextRange = range
+        case .ended, .cancelled, .failed:
+            pencilSelectionStart = nil
+        default:
+            break
+        }
     }
 
     func setAttributed(_ attributed: NSAttributedString) {
@@ -142,7 +171,9 @@ final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestu
 
     func textView(_ textView: UITextView, editMenuForTextIn range: NSRange,
                   suggestedActions: [UIMenuElement]) -> UIMenu? {
-        UIMenu(children: suggestedActions)
+        // Suppress the system edit menu entirely — the floating annotation bar is the only
+        // selection UI (it carries Copy + the annotation tools).
+        UIMenu(children: [])
     }
 
     private func showAnnotationToolbar(near range: NSRange) {
@@ -156,6 +187,7 @@ final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestu
                 self.commitAnnotation(tool: tool, localRange: self.textView.selectedRange)
                 self.selectionToolbar?.isHidden = true
             }
+            t.onCopy = { [weak self] in self?.copySelection() }
             view.addSubview(t)
             selectionToolbar = t
             toolbar = t
@@ -174,6 +206,14 @@ final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestu
         toolbar.frame  = CGRect(x: xClamped, y: ySafe, width: sz.width, height: sz.height)
         toolbar.isHidden = false
         view.bringSubviewToFront(toolbar)
+    }
+
+    private func copySelection() {
+        if let r = textView.selectedTextRange, let text = textView.text(in: r), !text.isEmpty {
+            UIPasteboard.general.string = text
+        }
+        selectionToolbar?.isHidden = true
+        textView.selectedTextRange = nil
     }
 
     // MARK: Commit (offset-aware)
