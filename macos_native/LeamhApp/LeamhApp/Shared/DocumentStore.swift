@@ -47,6 +47,14 @@ final class DocumentStore: ObservableObject {
         }
     }
 
+    private let aiExportFolderKey = "com.afluffywaffle.layuv.aiExportFolder"
+    private let aiImportFolderKey = "com.afluffywaffle.layuv.aiImportFolder"
+
+    /// Optional persisted destination for "Export for AI" (write directly instead of share sheet)
+    /// and source folder for "Import rewrite" auto-find. Held as security-scoped bookmarks.
+    @Published private(set) var aiExportFolder: URL?
+    @Published private(set) var aiImportFolder: URL?
+
     /// The app-wide font. Mirrors Android's single `body_font` pref: changing it flips the
     /// reader AND all chrome. The @Published is the SwiftUI invalidation trigger; the didSet
     /// also pushes the value into the `AppTheme.current` static the font helpers read.
@@ -84,8 +92,12 @@ final class DocumentStore: ObservableObject {
         bodyTextSize = UserDefaults.standard.string(forKey: fontSizeKey)
             .flatMap(BodyTextSize.init(rawValue:)) ?? .medium
         twoColumnPaged = (UserDefaults.standard.object(forKey: twoColumnKey) as? Bool) ?? true
+        aiExportFolder = nil
+        aiImportFolder = nil
         applyFontChoice(choice)
         loadRecents()
+        aiExportFolder = loadFolderBookmark(key: aiExportFolderKey)
+        aiImportFolder = loadFolderBookmark(key: aiImportFolderKey)
     }
 
     // MARK: - File access
@@ -333,6 +345,75 @@ final class DocumentStore: ObservableObject {
 
     private func bookmarkMap() -> [String: Data] {
         UserDefaults.standard.dictionary(forKey: bookmarksKey) as? [String: Data] ?? [:]
+    }
+
+    // MARK: - AI export / import folders (security-scoped bookmarks)
+
+    func setAiExportFolder(_ url: URL) { aiExportFolder = persistFolderBookmark(url, key: aiExportFolderKey) }
+    func setAiImportFolder(_ url: URL) { aiImportFolder = persistFolderBookmark(url, key: aiImportFolderKey) }
+
+    private func persistFolderBookmark(_ url: URL, key: String) -> URL? {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? url.bookmarkData(options: Self.bookmarkCreationOptions,
+                                               includingResourceValuesForKeys: nil,
+                                               relativeTo: nil) else { return nil }
+        UserDefaults.standard.set(data, forKey: key)
+        return url
+    }
+
+    private func loadFolderBookmark(key: String) -> URL? {
+        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+        var stale = false
+        guard let url = try? URL(resolvingBookmarkData: data,
+                                 options: Self.bookmarkResolutionOptions,
+                                 relativeTo: nil,
+                                 bookmarkDataIsStale: &stale) else { return nil }
+        if stale, let refreshed = persistFolderBookmark(url, key: key) { return refreshed }
+        return url
+    }
+
+    /// Writes the AI export package (Markdown + ink PNGs) directly into `folder`. Returns true on success.
+    func exportForAi(toFolder folder: URL) async -> Bool {
+        let (text, images) = await buildAiExportItems()
+        let docName = currentURL?.deletingPathExtension().lastPathComponent ?? "Document"
+        let scoped  = folder.startAccessingSecurityScopedResource()
+        defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
+        do {
+            try (text.data(using: .utf8) ?? Data())
+                .write(to: folder.appendingPathComponent("\(docName)_for_ai.md"))
+            for (name, data) in images {
+                try data.write(to: folder.appendingPathComponent(name))
+            }
+            return true
+        } catch {
+            print("[DocumentStore] export-to-folder failed: \(error)")
+            return false
+        }
+    }
+
+    /// Looks for an AI-rewritten draft in the import folder matching the open doc's name
+    /// (the "<docName> Draft.docx" produced by saveAiDraft). Returns its URL if present.
+    func autoFindRewrite() -> URL? {
+        guard let folder = aiImportFolder,
+              let docName = currentURL?.deletingPathExtension().lastPathComponent else { return nil }
+        let scoped = folder.startAccessingSecurityScopedResource()
+        defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
+        let candidate = folder.appendingPathComponent("\(docName) Draft.docx")
+        return FileManager.default.fileExists(atPath: candidate.path) ? candidate : nil
+    }
+
+    /// Replaces the open document's bytes with the chosen rewritten DOCX, then reloads.
+    /// Mirrors Android's importRewrite (writes the rewrite over the working file).
+    func importRewrite(from url: URL) async throws {
+        guard let current = currentURL else { throw DocumentStoreError("No document is open.") }
+        let scoped = url.startAccessingSecurityScopedResource()
+        let bytes: Data
+        do { bytes = try Data(contentsOf: url) }
+        catch { if scoped { url.stopAccessingSecurityScopedResource() }; throw error }
+        if scoped { url.stopAccessingSecurityScopedResource() }
+        await enqueueWrite(url: current) { _ in bytes }
+        await load(url: current)
     }
 
     // MARK: - AI chat

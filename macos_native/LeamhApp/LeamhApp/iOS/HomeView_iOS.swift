@@ -31,11 +31,51 @@ struct HomeView: View {
     @AppStorage("com.afluffywaffle.layuv.navMode") private var navModeRaw = NavMode.scroll.rawValue
     @State private var searchScrollOverride   = false
 
+    // AI menu (mirrors Android's AI submenu)
+    @State private var showAiSettings         = false
+    @State private var showImportRewrite      = false
+    @State private var showExportFolderPicker = false
+    @State private var showImportFolderPicker = false
+
     private var docxType: UTType { UTType(filenameExtension: "docx") ?? .data }
 
     private func triggerFind() {
         if NavMode(rawValue: navModeRaw) != .scroll { searchScrollOverride = true }
         findTrigger += 1
+    }
+
+    /// Export for AI: write directly into the chosen folder if set, else fall back to the share sheet.
+    private func exportAi() {
+        Task {
+            if let folder = store.aiExportFolder {
+                _ = await store.exportForAi(toFolder: folder)
+            } else {
+                let (text, images) = await store.buildAiExportItems()
+                var urls: [Any] = []
+                if let md = writeTmp(text.data(using: .utf8) ?? Data(), filename: "leamh_export.md") {
+                    urls.append(md)
+                }
+                for (name, data) in images {
+                    if let u = writeTmp(data, filename: name) { urls.append(u) }
+                }
+                exportItems = urls
+                showExport  = true
+            }
+        }
+    }
+
+    /// Import rewrite: auto-find "<doc> Draft.docx" in the import folder, else open a picker.
+    private func importRewrite() {
+        if let found = store.autoFindRewrite() {
+            Task { try? await store.importRewrite(from: found) }
+        } else {
+            showImportRewrite = true
+        }
+    }
+
+    private func writeTmp(_ data: Data, filename: String) -> URL? {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+        return (try? data.write(to: url)) != nil ? url : nil
     }
 
     var body: some View {
@@ -73,6 +113,34 @@ struct HomeView: View {
         }
         .sheet(isPresented: $showExport) {
             ShareSheet(items: exportItems)
+        }
+        .sheet(isPresented: $showAiSettings) {
+            AiSettingsView()
+                .environmentObject(store)
+                .preferredColorScheme(.light)
+        }
+        // Import rewrite — pick the AI-rewritten DOCX, overwrite the open document.
+        .fileImporter(isPresented: $showImportRewrite,
+                      allowedContentTypes: [docxType],
+                      allowsMultipleSelection: false) { result in
+            if case .success(let urls) = result, let url = urls.first {
+                Task { try? await store.importRewrite(from: url) }
+            }
+        }
+        // Folder pickers for the AI export / import destinations.
+        .fileImporter(isPresented: $showExportFolderPicker,
+                      allowedContentTypes: [.folder],
+                      allowsMultipleSelection: false) { result in
+            if case .success(let urls) = result, let url = urls.first {
+                store.setAiExportFolder(url)
+            }
+        }
+        .fileImporter(isPresented: $showImportFolderPicker,
+                      allowedContentTypes: [.folder],
+                      allowsMultipleSelection: false) { result in
+            if case .success(let urls) = result, let url = urls.first {
+                store.setAiImportFolder(url)
+            }
         }
     }
 
@@ -136,10 +204,11 @@ struct HomeView: View {
                          onShowPanel: onShowPanel,
                          onFind:   { triggerFind() },
                          onAskAi:  { showAskAi = true },
-                         onExport: { items in
-                             exportItems = items
-                             showExport  = true
-                         },
+                         onAiSettings: { showAiSettings = true },
+                         onExportAi: { exportAi() },
+                         onImportRewrite: { importRewrite() },
+                         onSetExportFolder: { showExportFolderPicker = true },
+                         onSetImportFolder: { showImportFolderPicker = true },
                          searchScrollOverride: searchScrollOverride,
                          onClearSearch: { searchScrollOverride = false })
         } else {
@@ -203,7 +272,11 @@ private struct ReaderScreen: View {
     let onShowPanel: (() -> Void)?
     let onFind: () -> Void
     let onAskAi: () -> Void
-    let onExport: ([Any]) -> Void
+    let onAiSettings: () -> Void
+    let onExportAi: () -> Void
+    let onImportRewrite: () -> Void
+    let onSetExportFolder: () -> Void
+    let onSetImportFolder: () -> Void
     /// While searching in a paged mode the reader is forced to scroll (global system find);
     /// `onClearSearch` returns to the saved nav mode.
     let searchScrollOverride: Bool
@@ -270,12 +343,7 @@ private struct ReaderScreen: View {
                                 }
                             }
                             Divider()
-                            Button { onAskAi() } label: {
-                                Label("Ask AI", systemImage: "sparkles")
-                            }
-                            Button { exportForAi() } label: {
-                                Label("Export for AI", systemImage: "square.and.arrow.up")
-                            }
+                            Menu("AI") { aiMenuItems }
                         } label: {
                             Image(systemName: "ellipsis.circle")
                         }
@@ -321,16 +389,12 @@ private struct ReaderScreen: View {
                         .accessibilityLabel("Navigation mode: \(navMode.label)")
                     }
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button { onAskAi() } label: {
-                            Image(systemName: "sparkles")
+                        Menu {
+                            aiMenuItems
+                        } label: {
+                            Image(systemName: "bubble.left.and.text.bubble.right")
                         }
-                        .accessibilityLabel("Ask AI")
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button { exportForAi() } label: {
-                            Image(systemName: "square.and.arrow.up")
-                        }
-                        .accessibilityLabel("Export for AI")
+                        .accessibilityLabel("AI")
                     }
                 }
             }
@@ -364,21 +428,36 @@ private struct ReaderScreen: View {
         }
     }
 
-    private func exportForAi() {
-        Task {
-            let (text, images) = await store.buildAiExportItems()
-            var urls: [Any] = []
-            if let mdURL = writeTmp(text.data(using: .utf8) ?? Data(),
-                                    filename: "leamh_export.md") { urls.append(mdURL) }
-            for (name, data) in images {
-                if let imgURL = writeTmp(data, filename: name) { urls.append(imgURL) }
-            }
-            onExport(urls)
+    // MARK: - AI menu (mirrors Android's AI submenu)
+
+    @ViewBuilder private var aiMenuItems: some View {
+        Button { onAskAi() } label: {
+            Label("AI Chat", systemImage: "bubble.left.and.text.bubble.right")
+        }
+        .disabled(!AiProviderSettings.shared.isConfigured)
+        Button { onAiSettings() } label: {
+            Label("AI Settings…", systemImage: "gearshape")
+        }
+        Divider()
+        Button { onExportAi() } label: {
+            Label("Export for AI…", systemImage: "square.and.arrow.up")
+        }
+        Button { onImportRewrite() } label: {
+            Label("Import rewrite…", systemImage: "square.and.arrow.down")
+        }
+        Divider()
+        Button { onSetExportFolder() } label: {
+            Label(folderLabel("Set AI export folder…", store.aiExportFolder), systemImage: "folder")
+        }
+        Button { onSetImportFolder() } label: {
+            Label(folderLabel("Set import folder…", store.aiImportFolder), systemImage: "folder")
         }
     }
 
-    private func writeTmp(_ data: Data, filename: String) -> URL? {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
-        return (try? data.write(to: url)) != nil ? url : nil
+    private func folderLabel(_ base: String, _ url: URL?) -> String {
+        guard let url else { return base }
+        let parent = url.deletingLastPathComponent().lastPathComponent
+        let name   = url.lastPathComponent
+        return parent.isEmpty ? "\(base)  (\(name))" : "\(base)  (\(parent)/\(name))"
     }
 }
