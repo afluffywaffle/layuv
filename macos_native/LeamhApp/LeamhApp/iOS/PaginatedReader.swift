@@ -140,6 +140,9 @@ final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestu
         let point = gr.location(in: textView)
         switch gr.state {
         case .began:
+            // The text view's selection interaction is inert until it's first responder — that's why
+            // pencil-select only worked after a finger selection "woke" it. Activate it ourselves.
+            if !textView.isFirstResponder { textView.becomeFirstResponder() }
             pencilSelectionStart = textView.closestPosition(to: point)
             selectionToolbar?.isHidden = true
         case .changed:
