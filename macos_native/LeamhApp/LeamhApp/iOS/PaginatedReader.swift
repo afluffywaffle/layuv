@@ -62,8 +62,17 @@ final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestu
     var onDeleteAnnotation:       ((String) -> Void)?
     var onInkAnnotationRequested: ((Annotation) -> Void)?
     var onEditInk:                ((Annotation) -> Void)?
+    /// Fired when this surface starts a selection — lets the page clear the OTHER columns' selections
+    /// so only one column shows the floating bar at a time.
+    var onBeganSelecting:         (() -> Void)?
 
     private var selectionToolbar: FloatingSelectionToolbar?
+
+    /// Clears this surface's selection and hides its floating bar (called on sibling columns).
+    func clearSelectionUI() {
+        selectionToolbar?.isHidden = true
+        if textView.selectedTextRange != nil { textView.selectedTextRange = nil }
+    }
 
     init(scrollable: Bool, insets: UIEdgeInsets) {
         self.scrollable = scrollable
@@ -169,6 +178,7 @@ final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestu
 
     func textViewDidChangeSelection(_ textView: UITextView) {
         if textView.selectedRange.length > 0 {
+            onBeganSelecting?()   // clear other columns' selections so only one bar shows
             showAnnotationToolbar(near: textView.selectedRange)
         } else {
             selectionToolbar?.isHidden = true
@@ -346,6 +356,11 @@ final class ReaderPageViewController: UIViewController {
             addChild(col)
             stack.addArrangedSubview(col.view)
             col.didMove(toParent: self)
+            // Selecting in one column clears the others so only one floating bar shows at a time.
+            col.onBeganSelecting = { [weak self, weak col] in
+                guard let self else { return }
+                for other in self.columns where other !== col { other.clearSelectionUI() }
+            }
         }
 
         let g = view.safeAreaLayoutGuide
