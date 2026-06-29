@@ -95,11 +95,26 @@ Always read these before modifying.
 - Save (atomic write via replaceItemAt, reads base bytes fresh from disk)
 - App Sandbox entitlements + security-scoped bookmarks for recents
 
+**iOS-parity pass (2026-06-28):**
+- AI layer — AI Settings form, Ask AI chat panel (streaming, rewrite card → Save as Draft via
+  NSSavePanel), AI menu (Chat / Settings / Export for AI / Import rewrite / set folders). Shared
+  `AskAiViewModel` (Shared/) drives both iOS and macOS chat.
+- Reader nav modes — `scroll` (single-column, unchanged) + `screenFlip` (horizontal paged, NO curl
+  animation; two-column applies only in this paged mode). Edge-margin clicks + toolbar arrows flip
+  pages; toolbar page indicator. macOS has NO page-turn/curl mode by design.
+- Ink — `InkEditorView` (macOS) with a custom NSView stroke canvas (mouse/trackpad/tablet),
+  pen/eraser/width/clear. Saves a `macink` strokes JSON (re-editable on Mac) + transparent PNG
+  (cross-platform display). Same degradation model as iPad/Android (PNG always shows; strokes
+  re-editable only on the writing platform). Ink tool added to ToolPickerView (now 7 tools).
+- Reader theming — `Shared/PaperTheme.swift`, the **écri** palette (parchment/bone/dusk/sage/night),
+  drives reader bg + body text + underline/highlight colours + ink canvas. `DocumentStore.paperTheme`
+  persisted; picker in Format menu + Typography toolbar menu. `night` = explicit dark paper (chrome
+  light-lock untouched). Built on BOTH Swift apps. Android: do NOT port colours (greyscale e-ink) —
+  only `écri-font` matters there. See leamh_tracker.md "Reader theming" + "écri front-matter interop".
+
 **Pending (priority order):**
-1. Font size preference (body text size user setting)
-2. Two-column layout
-3. Reader full-text search
-4. App icon (placeholder only)
+1. App icon (placeholder only)
+2. Device/usability pass — screen-flip pagination + ink not yet runtime-tested on-device
 
 ### Coding standards — Swift / macos_native
 

@@ -19,6 +19,7 @@ struct ToolPickerView: View {
         Tool(tool: .strikethrough,   icon: "strikethrough", color: .red,    label: "Strike"),
         Tool(tool: .comment,         icon: "text.bubble",   color: .green,  label: "Comment"),
         Tool(tool: .bookmark,        icon: "bookmark.fill", color: .orange, label: "Bookmark"),
+        Tool(tool: .inkAnnotation,   icon: "pencil.tip",    color: .purple, label: "Ink"),
     ]
 
     var body: some View {

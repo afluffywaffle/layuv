@@ -38,6 +38,11 @@ struct HomeView: View {
     @State private var showImportFolderPicker = false
 
     private var docxType: UTType { UTType(filenameExtension: "docx") ?? .data }
+    /// Open accepts DOCX plus plain text (.txt/.md/écri) — text is converted to a working .docx.
+    private var openTypes: [UTType] {
+        [UTType(filenameExtension: "docx"), .plainText, .text,
+         UTType(filenameExtension: "md"), UTType(filenameExtension: "markdown")].compactMap { $0 }
+    }
 
     private func triggerFind() {
         if NavMode(rawValue: navModeRaw) != .scroll { searchScrollOverride = true }
@@ -87,10 +92,10 @@ struct HomeView: View {
             }
         }
         .fileImporter(isPresented: $showImporter,
-                      allowedContentTypes: [docxType],
+                      allowedContentTypes: openTypes,
                       allowsMultipleSelection: false) { result in
             if case .success(let urls) = result, let url = urls.first {
-                Task { await store.load(url: url) }
+                Task { await store.openAny(url: url) }
             }
         }
         // Annotation edit sheet + ink cover hosted at the root so they don't conflict
@@ -288,7 +293,7 @@ private struct ReaderScreen: View {
 
     private var isCompact: Bool { onShowPanel != nil }
     private var docTitle: String {
-        store.currentURL?.deletingPathExtension().lastPathComponent ?? "Léamh"
+        store.currentURL?.deletingPathExtension().lastPathComponent ?? "Layuv"
     }
 
     var body: some View {
@@ -298,6 +303,7 @@ private struct ReaderScreen: View {
                        bodyPointSize: store.bodyTextSize.points,
                        twoColumnPaged: store.twoColumnPaged,
                        navMode: effectiveNavMode,
+                       paperTheme: store.paperTheme,
                        findTrigger: findTrigger,
                        scrollToAnnotationId: scrollToAnnotationId)
             .ignoresSafeArea(.container, edges: .bottom)
@@ -328,6 +334,7 @@ private struct ReaderScreen: View {
                         Menu {
                             Menu("Font") { fontMenuItems }
                             Menu("Text Size") { sizeMenuItems }
+                            Menu("Paper Theme") { themeMenuItems }
                             Menu("Navigation Mode") {
                                 ForEach(NavMode.allCases, id: \.rawValue) { mode in
                                     Button {
@@ -355,6 +362,7 @@ private struct ReaderScreen: View {
                         Menu {
                             Menu("Font") { fontMenuItems }
                             Menu("Text Size") { sizeMenuItems }
+                            Menu("Paper Theme") { themeMenuItems }
                             Divider()
                             Button {
                                 store.twoColumnPaged.toggle()
@@ -423,6 +431,20 @@ private struct ReaderScreen: View {
                     Label(size.label, systemImage: "checkmark")
                 } else {
                     Text(size.label)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var themeMenuItems: some View {
+        ForEach(PaperTheme.allCases, id: \.rawValue) { theme in
+            Button {
+                store.paperTheme = theme
+            } label: {
+                if store.paperTheme == theme {
+                    Label(theme.label, systemImage: "checkmark")
+                } else {
+                    Text(theme.label)
                 }
             }
         }

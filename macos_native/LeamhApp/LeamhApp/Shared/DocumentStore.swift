@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 #if os(macOS)
 import AppKit
 #elseif os(iOS)
@@ -34,6 +35,45 @@ final class DocumentStore: ObservableObject {
             guard oldValue != bodyTextSize else { return }
             UserDefaults.standard.set(bodyTextSize.rawValue, forKey: fontSizeKey)
         }
+    }
+
+    private let paperThemeKey = "com.afluffywaffle.layuv.paperTheme"
+
+    /// Reader paper theme (écri-style: parchment/bone/dusk/sage/night). Reader-only. The @Published
+    /// re-renders the reader; the didSet pushes into `AppTheme.currentTheme` (the static the reader's
+    /// attributed-string builders read) and persists.
+    @Published var paperTheme: PaperTheme {
+        didSet {
+            guard oldValue != paperTheme else { return }
+            AppTheme.currentTheme = paperTheme
+            UserDefaults.standard.set(paperTheme.rawValue, forKey: paperThemeKey)
+        }
+    }
+
+    private let followsDarkModeKey = "com.afluffywaffle.layuv.followsDarkMode"
+    private let leftHandedNavKey    = "com.afluffywaffle.layuv.leftHandedNav"
+
+    /// When ON, the reader switches to the Night paper theme while the OS is in dark mode (the user's
+    /// chosen `paperTheme` stays the light pick, écri-style). When OFF, the app is pinned light and the
+    /// reader always uses `paperTheme` regardless of the system appearance.
+    @Published var followsDarkMode: Bool {
+        didSet {
+            guard oldValue != followsDarkMode else { return }
+            UserDefaults.standard.set(followsDarkMode, forKey: followsDarkModeKey)
+        }
+    }
+
+    /// Left-handed navigation: WASD + Q/E page keys (so the off-hand can turn pages on a trackpad).
+    @Published var leftHandedNav: Bool {
+        didSet {
+            guard oldValue != leftHandedNav else { return }
+            UserDefaults.standard.set(leftHandedNav, forKey: leftHandedNavKey)
+        }
+    }
+
+    /// The reader theme to actually render: the user's pick, or Night while following a dark OS.
+    func effectiveTheme(systemDark: Bool) -> PaperTheme {
+        (followsDarkMode && systemDark) ? .night : paperTheme
     }
 
     private let twoColumnKey = "com.afluffywaffle.layuv.twoColumnPaged"
@@ -91,6 +131,12 @@ final class DocumentStore: ObservableObject {
         fontChoice = choice
         bodyTextSize = UserDefaults.standard.string(forKey: fontSizeKey)
             .flatMap(BodyTextSize.init(rawValue:)) ?? .medium
+        let theme = UserDefaults.standard.string(forKey: paperThemeKey)
+            .flatMap(PaperTheme.init(rawValue:)) ?? .parchment
+        paperTheme = theme
+        AppTheme.currentTheme = theme
+        followsDarkMode = UserDefaults.standard.bool(forKey: followsDarkModeKey)
+        leftHandedNav   = UserDefaults.standard.bool(forKey: leftHandedNavKey)
         twoColumnPaged = (UserDefaults.standard.object(forKey: twoColumnKey) as? Bool) ?? true
         aiExportFolder = nil
         aiImportFolder = nil
@@ -105,13 +151,62 @@ final class DocumentStore: ObservableObject {
     #if os(macOS)
     func openFilePanel() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.init(filenameExtension: "docx")].compactMap { $0 }
+        panel.allowedContentTypes = [
+            UTType(filenameExtension: "docx"),
+            .plainText, .text, UTType(filenameExtension: "md"), UTType(filenameExtension: "markdown"),
+        ].compactMap { $0 }
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        Task { await load(url: url) }
+        Task { await openAny(url: url) }
     }
     #endif
+
+    /// Routes an opened file by type: DOCX opens directly; anything else (.txt/.md/écri) is converted
+    /// to a working .docx first. The original file is never modified (CLAUDE.md invariant).
+    func openAny(url: URL) async {
+        if url.pathExtension.lowercased() == "docx" { await load(url: url) }
+        else { await importTextFile(url: url) }
+    }
+
+    // MARK: - Text import (non-DOCX → flatten to .docx)
+
+    /// Imports a plain-text file into a NEW working `.docx` and opens it. Recognises the écri
+    /// front-matter header (theme/font/page) and seeds the reader prefs from it; non-écri text
+    /// imports verbatim. The source text file is left untouched.
+    func importTextFile(url: URL) async {
+        isLoading = true
+        let scoped = url.startAccessingSecurityScopedResource()
+        let raw = (try? String(contentsOf: url, encoding: .utf8))
+        if scoped { url.stopAccessingSecurityScopedResource() }
+        guard let raw else { isLoading = false; return }
+
+        let parsed = TextImport.parse(raw)
+        // Honour écri per-document prefs (rawValues match 1:1; font serif/sans → FontChoice).
+        if let t = parsed.ecriThemeRaw, let theme = PaperTheme(rawValue: t) { paperTheme = theme }
+        if let serif = parsed.ecriFontSerif { fontChoice = serif ? .serif : .sans }
+
+        do {
+            let data = try TextImport.docx(from: parsed.text)
+            guard let dest = writeConvertedDocx(data, sourceURL: url) else { isLoading = false; return }
+            await load(url: dest)   // load() manages isLoading + recents + security scope
+        } catch {
+            print("[DocumentStore] text import failed: \(error)")
+            isLoading = false
+        }
+    }
+
+    /// Writes the converted DOCX next to the source if that's writable, else into app Documents.
+    private func writeConvertedDocx(_ data: Data, sourceURL: URL) -> URL? {
+        let name = sourceURL.deletingPathExtension().lastPathComponent + ".docx"
+        let sibling = sourceURL.deletingLastPathComponent().appendingPathComponent(name)
+        if (try? data.write(to: sibling)) != nil { return sibling }
+        if let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let u = docs.appendingPathComponent(name)
+            if (try? data.write(to: u)) != nil { return u }
+        }
+        return nil
+    }
 
     func load(url: URL) async {
         isLoading = true
@@ -230,14 +325,10 @@ final class DocumentStore: ObservableObject {
     }
 
     /// Route a tapped/selected annotation to the right editor: ink canvas vs note sheet.
-    /// macOS has no ink editor, so ink rows fall back to the note sheet there.
+    /// Both iOS and macOS have ink editors now (macOS uses a mouse/trackpad/tablet canvas).
     func openAnnotation(_ annotation: Annotation) {
-        #if os(macOS)
-        editingAnnotation = annotation
-        #else
         if annotation.hasInk { inkEditingAnnotation = annotation }
         else { editingAnnotation = annotation }
-        #endif
     }
 
     /// Cancel the ink editor. A brand-new annotation with no committed ink is discarded;
@@ -464,7 +555,7 @@ final class DocumentStore: ObservableObject {
             }
         }
         let docName  = currentURL?.deletingPathExtension().lastPathComponent ?? "Document"
-        let header   = "=== EXPORT FOR AI — Léamh ===\n\(docName)\n\n"
+        let header   = "=== EXPORT FOR AI — Layuv ===\n\(docName)\n\n"
         let footer   = images.isEmpty ? "" :
             "\n=== IMAGE FILES ===\n" + images.map(\.0).joined(separator: "\n") + "\n"
         return (header + body.text + footer, images)

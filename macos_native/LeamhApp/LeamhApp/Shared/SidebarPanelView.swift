@@ -58,7 +58,7 @@ struct SidebarPanelView: View {
         // navigationTitle and Open toolbar button sit here; AnnotationsPanel's own
         // .navigationTitle("Annotations") and sort button override these when that
         // tab is active (SwiftUI propagates the deepest values).
-        .navigationTitle("Léamh")
+        .navigationTitle("Layuv")
         .toolbar {
             ToolbarItem(placement: openPlacement) {
                 Button("Open…", systemImage: "folder") { onOpenFile() }

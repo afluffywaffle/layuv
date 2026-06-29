@@ -86,11 +86,11 @@ final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestu
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor          = AppTheme.warmPaperUI
+        view.backgroundColor          = AppTheme.currentTheme.uiPaper
         textView.isEditable           = false
         textView.isSelectable         = true
         textView.delegate             = self
-        textView.backgroundColor      = AppTheme.warmPaperUI
+        textView.backgroundColor      = AppTheme.currentTheme.uiPaper
         textView.textContainerInset   = insets
         // Match TextPaginator (which uses lineFragmentPadding = 0) so per-page line breaking is
         // identical to the paginator's — otherwise columns wrap extra lines and clip the overflow.
@@ -343,7 +343,7 @@ final class ReaderPageViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = AppTheme.warmPaperUI
+        view.backgroundColor = AppTheme.currentTheme.uiPaper
 
         let stack = UIStackView()
         stack.axis         = .horizontal

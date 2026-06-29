@@ -42,6 +42,7 @@ struct ReaderTextView: UIViewControllerRepresentable {
     var bodyPointSize: CGFloat = AppTheme.bodySize
     var twoColumnPaged: Bool = true
     var navMode: NavMode = .scroll
+    var paperTheme: PaperTheme = .parchment
     var findTrigger: Int = 0
     /// Set to an annotation ID to scroll the reader to that annotation (one-shot; stays set).
     var scrollToAnnotationId: String? = nil
@@ -65,6 +66,7 @@ struct ReaderTextView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ vc: ReaderViewController, context: Context) {
+        vc.setTheme(paperTheme)
         vc.update(document: document, annotations: annotations,
                   documentURL: documentURL, bodySize: bodyPointSize)
         if vc.twoColumnEnabled != twoColumnPaged {
@@ -86,10 +88,12 @@ struct ReaderTextView: UIViewControllerRepresentable {
 
     static func makeAttributedString(document doc: LoadedDocument,
                                      annotations: [ResolvedAnnotation],
-                                     bodySize: CGFloat = AppTheme.bodySize) -> NSAttributedString {
+                                     bodySize: CGFloat = AppTheme.bodySize,
+                                     theme: PaperTheme = AppTheme.currentTheme) -> NSAttributedString {
+        let ink = theme.uiInk
         let str = NSMutableAttributedString(string: doc.plainText, attributes: [
             .font:            AppTheme.uiBody(size: bodySize),
-            .foregroundColor: UIColor.label,
+            .foregroundColor: ink,
         ])
         let utf16len = doc.plainText.utf16.count
 
@@ -114,17 +118,16 @@ struct ReaderTextView: UIViewControllerRepresentable {
 
             switch resolved.annotation.tool {
             case .highlight:
-                str.addAttribute(.backgroundColor,
-                                 value: UIColor.systemYellow.withAlphaComponent(0.45), range: r)
+                str.addAttribute(.backgroundColor, value: theme.uiHighlight, range: r)
             case .underline:
                 str.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: r)
-                str.addAttribute(.underlineColor, value: UIColor.label, range: r)
+                str.addAttribute(.underlineColor, value: ink, range: r)
             case .doubleUnderline:
                 str.addAttribute(.underlineStyle, value: NSUnderlineStyle.double.rawValue, range: r)
-                str.addAttribute(.underlineColor, value: UIColor.label, range: r)
+                str.addAttribute(.underlineColor, value: ink, range: r)
             case .strikethrough:
                 str.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: r)
-                str.addAttribute(.strikethroughColor, value: UIColor.label, range: r)
+                str.addAttribute(.strikethroughColor, value: ink, range: r)
             case .wavyUnderline:
                 let style = NSUnderlineStyle.patternDash.rawValue | NSUnderlineStyle.thick.rawValue
                 str.addAttribute(.underlineStyle, value: style, range: r)
@@ -164,8 +167,28 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
     private var fullPlainText: NSString = ""
     private var currentAnnotations: [ResolvedAnnotation] = []
     private var bodySize = AppTheme.bodySize
+    private var paperTheme: PaperTheme = .parchment
     private var lastDocumentURL: URL?
     private var hasRendered = false
+
+    /// Apply a new reader paper theme: repaint surface backgrounds. Text colours are baked into the
+    /// attributed string, which the subsequent `update(...)` call rebuilds (it reads the active theme).
+    func setTheme(_ theme: PaperTheme) {
+        guard theme != paperTheme else { return }
+        paperTheme = theme
+        let paper = theme.uiPaper
+        view.backgroundColor = paper
+        scrollSurface?.view.backgroundColor = paper
+        scrollSurface?.textView.backgroundColor = paper
+        pageVC?.view.backgroundColor = paper
+        if let page = pageVC?.viewControllers?.first as? ReaderPageViewController {
+            page.view.backgroundColor = paper
+            for col in page.columns {
+                col.view.backgroundColor = paper
+                col.textView.backgroundColor = paper
+            }
+        }
+    }
 
     var navMode: NavMode = .scroll {
         didSet { guard oldValue != navMode else { return }; installMode() }
@@ -202,7 +225,7 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = AppTheme.warmPaperUI
+        view.backgroundColor = AppTheme.currentTheme.uiPaper
         edgeTap = UITapGestureRecognizer(target: self, action: #selector(handleEdgeTap(_:)))
         edgeTap.cancelsTouchesInView = false
         edgeTap.isEnabled = false

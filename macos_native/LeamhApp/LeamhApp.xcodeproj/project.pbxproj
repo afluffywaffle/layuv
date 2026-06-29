@@ -429,7 +429,7 @@
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "Léamh";
+				INFOPLIST_KEY_CFBundleDisplayName = "Layuv";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2024 Jayrom Acorda. GPL v3.";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -439,7 +439,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.afluffywaffle.layuv";
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = "Layuv";
 				SDKROOT = macosx;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.9;
@@ -458,7 +458,7 @@
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "Léamh";
+				INFOPLIST_KEY_CFBundleDisplayName = "Layuv";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2024 Jayrom Acorda. GPL v3.";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -468,7 +468,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.afluffywaffle.layuv";
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = "Layuv";
 				SDKROOT = macosx;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.9;
@@ -491,7 +491,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.afluffywaffle.layuv";
-				PRODUCT_NAME = LeamhApp;
+				PRODUCT_NAME = "Layuv";
 				SDKROOT = iphoneos;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.9;
@@ -515,7 +515,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.afluffywaffle.layuv";
-				PRODUCT_NAME = LeamhApp;
+				PRODUCT_NAME = "Layuv";
 				SDKROOT = iphoneos;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.9;

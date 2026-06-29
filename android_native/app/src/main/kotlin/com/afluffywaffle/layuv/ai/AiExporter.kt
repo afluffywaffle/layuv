@@ -25,7 +25,7 @@ object AiExporter {
     class Export(val files: List<Artifact>, val markdownName: String, val imageCount: Int)
 
     private const val BODY_HEADER =
-        "This is a manuscript chapter exported from Léamh for revision. Below is the " +
+        "This is a manuscript chapter exported from Layuv for revision. Below is the " +
         "chapter text, then the author's annotations on specific passages. Rewrite the " +
         "chapter to address every annotation while preserving the author's voice and " +
         "anything not flagged; follow this project's style guide and story bible. " +

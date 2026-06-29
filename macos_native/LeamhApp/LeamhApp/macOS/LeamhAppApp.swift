@@ -8,9 +8,9 @@ struct LeamhAppApp: App {
         WindowGroup {
             HomeView()
                 .environmentObject(store)
-                // Léamh is a warm-paper reading surface (light by design); lock to a light
-                // appearance so dark mode doesn't wash out ink on paper or clash the chrome.
-                .preferredColorScheme(.light)
+                // Layuv is a warm-paper reading surface (light by design): pin to light UNLESS the
+                // user opts into following the OS dark mode (then the reader uses the Night paper).
+                .preferredColorScheme(store.followsDarkMode ? nil : .light)
         }
         .windowResizability(.contentSize)
         .commands {
@@ -37,6 +37,16 @@ struct LeamhAppApp: App {
                     }
                 }
                 .pickerStyle(.inline)
+                Divider()
+                Picker("Paper Theme", selection: $store.paperTheme) {
+                    ForEach(PaperTheme.allCases, id: \.rawValue) { theme in
+                        Text(theme.label).tag(theme)
+                    }
+                }
+                .pickerStyle(.inline)
+                Divider()
+                Toggle("Follow System Dark Mode (Night)", isOn: $store.followsDarkMode)
+                Toggle("Left-Handed Navigation (WASD)", isOn: $store.leftHandedNav)
             }
         }
     }

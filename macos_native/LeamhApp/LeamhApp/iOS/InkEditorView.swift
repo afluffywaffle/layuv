@@ -121,7 +121,7 @@ final class InkCanvasViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = AppTheme.warmPaperUI
+        view.backgroundColor = AppTheme.currentTheme.uiPaper
 
         // View-only legacy/foreign ink: show its flattened PNG behind a non-interactive canvas.
         if let backdropPNG, let image = UIImage(data: backdropPNG) {
@@ -139,7 +139,7 @@ final class InkCanvasViewController: UIViewController {
 
         canvas.drawing = initialDrawing
         canvas.drawingPolicy = .anyInput            // draw with finger or Apple Pencil
-        canvas.backgroundColor = backdropPNG == nil ? AppTheme.warmPaperUI : .clear
+        canvas.backgroundColor = backdropPNG == nil ? AppTheme.currentTheme.uiPaper : .clear
         canvas.isOpaque = backdropPNG == nil
         canvas.isUserInteractionEnabled = !readOnly
         canvas.alwaysBounceVertical = false

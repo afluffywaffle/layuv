@@ -25,6 +25,8 @@ enum FontChoice: String, CaseIterable {
         case .sans:  return .default
         }
     }
+    /// The choice's own typeface, for previewing the option label in the picker.
+    var previewFont: Font { .system(size: 15, design: design) }
 }
 
 /// Reader body text size. Mirrors Android's 3-step `body_font_size` (small/medium/large).
@@ -70,6 +72,11 @@ enum AppTheme {
     /// seeds it at launch; the @Published is what re-renders the reader (this static alone
     /// invalidates nothing).
     static var current: FontChoice = .serif
+
+    /// Process-wide active reader PAPER theme (écri-style). Like `current` (font), this is the static
+    /// the reader's attributed-string builders read; `DocumentStore.paperTheme`'s didSet keeps it in
+    /// sync and seeds it at launch. Only the reader surface honours it; chrome stays system-appearance.
+    static var currentTheme: PaperTheme = .parchment
 
     // SwiftUI chrome fonts — always San Francisco (system default), independent of the reader
     // font choice. The serif/sans selection applies to the reader body only.

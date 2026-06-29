@@ -1,10 +1,10 @@
 import SwiftUI
-import UIKit
+import AppKit
 
-// The AskAiViewModel lives in Shared/AskAiViewModel.swift (cross-platform, used by macOS too).
-
-// MARK: - Root view
-
+/// Ask-AI conversation sheet (macOS). Mirrors the iOS AskAiView: a scrolling conversation,
+/// streaming assistant reply, a "Save as Draft" rewrite card, and a reply input bar. Uses the
+/// shared AskAiViewModel; the only platform differences are the chrome (custom header instead of
+/// a navigation bar) and "Save as Draft" routing through an NSSavePanel rather than a share sheet.
 struct AskAiView: View {
     @EnvironmentObject private var store: DocumentStore
     @Environment(\.dismiss)  private var dismiss
@@ -13,67 +13,75 @@ struct AskAiView: View {
     @State private var inputText      = ""
     @State private var showSettings   = false
     @State private var showClearAlert = false
-    @State private var scrollProxy: ScrollViewProxy?
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                conversationArea
-                Divider()
-                inputBar
+        VStack(spacing: 0) {
+            header
+            Divider()
+            conversationArea
+            Divider()
+            inputBar
+        }
+        .frame(minWidth: 520, idealWidth: 620, minHeight: 460, idealHeight: 640)
+        .background(AppTheme.panelBackground)
+        .sheet(isPresented: $showSettings) {
+            AiSettingsView().environmentObject(store)
+        }
+        .alert("Error", isPresented: Binding(
+            get: { vm.errorMessage != nil },
+            set: { if !$0 { vm.errorMessage = nil } }
+        )) {
+            Button("OK") { vm.errorMessage = nil }
+        } message: {
+            Text(vm.errorMessage ?? "")
+        }
+        .confirmationDialog("Clear the entire conversation?",
+                            isPresented: $showClearAlert,
+                            titleVisibility: .visible) {
+            Button("Clear", role: .destructive) {
+                Task { await vm.clearConversation(store: store) }
             }
-            .navigationTitle("Ask AI")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Done") { dismiss() }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button {
-                            showSettings = true
-                        } label: {
-                            Label("AI Settings", systemImage: "gear")
-                        }
-                        if !vm.turns.isEmpty {
-                            Button(role: .destructive) {
-                                showClearAlert = true
-                            } label: {
-                                Label("Clear Conversation", systemImage: "trash")
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                }
-            }
-            .sheet(isPresented: $showSettings) {
-                AiSettingsView()
-            }
-            .sheet(item: $vm.draftURL) { url in
-                ShareSheet(items: [url])
-            }
-            .alert("Error", isPresented: Binding(
-                get: { vm.errorMessage != nil },
-                set: { if !$0 { vm.errorMessage = nil } }
-            )) {
-                Button("OK") { vm.errorMessage = nil }
-            } message: {
-                Text(vm.errorMessage ?? "")
-            }
-            .confirmationDialog("Clear the entire conversation?",
-                                isPresented: $showClearAlert,
-                                titleVisibility: .visible) {
-                Button("Clear", role: .destructive) {
-                    Task { await vm.clearConversation(store: store) }
-                }
-                Button("Cancel", role: .cancel) {}
-            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .onChange(of: vm.draftURL) { _, url in
+            if let url { presentSavePanel(for: url) }
         }
         .task {
             await vm.loadHistory(from: store)
             if vm.turns.isEmpty { await startIfConfigured() }
         }
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        HStack {
+            Text("Ask AI")
+                .font(.headline)
+            Spacer()
+            Menu {
+                Button {
+                    showSettings = true
+                } label: {
+                    Label("AI Settings…", systemImage: "gearshape")
+                }
+                if !vm.turns.isEmpty {
+                    Button(role: .destructive) {
+                        showClearAlert = true
+                    } label: {
+                        Label("Clear Conversation", systemImage: "trash")
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            Button("Done") { dismiss() }
+                .keyboardShortcut(.cancelAction)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 
     // MARK: - Conversation area
@@ -115,14 +123,12 @@ struct AskAiView: View {
 
     private func userBubble(turn: AiTurn, index: Int) -> some View {
         let isSeed = index == 0 && turn.text.contains("=== CHAPTER ===")
-        let displayText = isSeed
-            ? "📖 Manuscript sent"
-            : turn.text
+        let displayText = isSeed ? "📖 Manuscript sent" : turn.text
 
         return HStack {
             Spacer(minLength: 60)
             Text(displayText)
-                .font(.body)
+                .textSelection(.enabled)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background(Color.accentColor.opacity(0.15))
@@ -137,10 +143,10 @@ struct AskAiView: View {
         return VStack(alignment: .leading, spacing: 8) {
             if !parsed.conversation.isEmpty {
                 Text(parsed.conversation)
-                    .font(.body)
+                    .textSelection(.enabled)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(Color(.systemBackground))
+                    .background(AppTheme.controlFieldBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
                     .frame(maxWidth: 520, alignment: .leading)
             }
@@ -158,10 +164,10 @@ struct AskAiView: View {
     private var streamingBubble: some View {
         HStack(alignment: .top, spacing: 8) {
             ProgressView()
-                .scaleEffect(0.75)
+                .scaleEffect(0.6)
                 .padding(.top, 4)
             Text(vm.partialText.isEmpty ? " " : vm.partialText)
-                .font(.body)
+                .textSelection(.enabled)
                 .frame(maxWidth: 520, alignment: .leading)
         }
         .padding(.horizontal)
@@ -172,7 +178,7 @@ struct AskAiView: View {
             Label("Rewrite ready", systemImage: "doc.text.fill")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.teal)
-            Text("The revised chapter is ready. Save it as a new DOCX draft to review in the Files app.")
+            Text("The revised chapter is ready. Save it as a new DOCX draft to review.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Button {
@@ -197,7 +203,6 @@ struct AskAiView: View {
             Label("Continue…", systemImage: "arrow.forward")
         }
         .buttonStyle(.bordered)
-        .tint(.secondary)
     }
 
     private var emptyState: some View {
@@ -216,7 +221,7 @@ struct AskAiView: View {
                 Button {
                     showSettings = true
                 } label: {
-                    Label("Configure AI Endpoint", systemImage: "gear")
+                    Label("Configure AI Endpoint", systemImage: "gearshape")
                 }
                 .buttonStyle(.bordered)
             }
@@ -230,62 +235,63 @@ struct AskAiView: View {
     private var inputBar: some View {
         HStack(alignment: .bottom, spacing: 10) {
             TextField("Reply…", text: $inputText, axis: .vertical)
+                .textFieldStyle(.plain)
                 .lineLimit(1...6)
                 .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(Color(.secondarySystemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 20))
+                .padding(.vertical, 8)
+                .background(AppTheme.controlFieldBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
                 .disabled(vm.isStreaming)
+                .onSubmit { send() }
 
             if vm.isStreaming {
                 Button {
                     vm.cancelStream()
                 } label: {
                     Image(systemName: "stop.circle.fill")
-                        .font(.system(size: 30))
+                        .font(.system(size: 26))
                         .foregroundStyle(.red)
                 }
+                .buttonStyle(.plain)
             } else {
                 Button {
-                    let text = inputText
-                    inputText = ""
-                    Task { await vm.sendMessage(text, store: store) }
+                    send()
                 } label: {
                     Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 30))
+                        .font(.system(size: 26))
                         .foregroundStyle(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                          ? Color.secondary : Color.accentColor)
                 }
+                .buttonStyle(.plain)
                 .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
-        .padding(.horizontal)
+        .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(Color(.systemBackground))
     }
 
     // MARK: - Helpers
+
+    private func send() {
+        let text = inputText
+        inputText = ""
+        Task { await vm.sendMessage(text, store: store) }
+    }
 
     private func startIfConfigured() async {
         guard AiProviderSettings.shared.isConfigured, store.document != nil else { return }
         await vm.sendSeed(store: store)
     }
-}
 
-// MARK: - Share sheet
-
-struct ShareSheet: UIViewControllerRepresentable {
-    let items: [Any]
-
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    /// Save the freshly built draft DOCX to a user-chosen location, then clear the trigger.
+    private func presentSavePanel(for tempURL: URL) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = tempURL.lastPathComponent
+        panel.allowedContentTypes = [.init(filenameExtension: "docx")].compactMap { $0 }
+        if panel.runModal() == .OK, let dest = panel.url {
+            try? FileManager.default.removeItem(at: dest)
+            try? FileManager.default.copyItem(at: tempURL, to: dest)
+        }
+        vm.draftURL = nil
     }
-
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
-}
-
-// MARK: - URL: Identifiable for .sheet(item:)
-
-extension URL: @retroactive Identifiable {
-    public var id: String { absoluteString }
 }
