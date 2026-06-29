@@ -37,17 +37,48 @@ final class DocumentStore: ObservableObject {
         }
     }
 
-    private let paperThemeKey = "com.afluffywaffle.layuv.paperTheme"
+    private let paperThemeKey  = "com.afluffywaffle.layuv.paperTheme"      // global default / last-used
+    private let docThemesKey   = "com.afluffywaffle.layuv.docThemes"        // [docPath: themeRawValue]
 
-    /// Reader paper theme (écri-style: parchment/bone/dusk/sage/night). Reader-only. The @Published
-    /// re-renders the reader; the didSet pushes into `AppTheme.currentTheme` (the static the reader's
-    /// attributed-string builders read) and persists.
+    /// When true, an in-flight `load()` is applying a document's stored theme — didSet then updates
+    /// only the render static, skipping persistence so opening a doc never rewrites the global default.
+    private var suppressThemePersist = false
+
+    /// Reader paper theme (écri-style: parchment/bone/dusk/sage/night), modelled on écri's per-document
+    /// theming. Reader-only. The @Published re-renders the reader; the didSet pushes into
+    /// `AppTheme.currentTheme` (the static the reader's attributed-string builders read) and persists
+    /// BOTH the global default (last-used, seeds un-themed docs) and a per-document override keyed by
+    /// path. Engine-free: nothing is written into the DOCX. E-ink ignores colour entirely.
     @Published var paperTheme: PaperTheme {
         didSet {
             guard oldValue != paperTheme else { return }
             AppTheme.currentTheme = paperTheme
+            guard !suppressThemePersist else { return }
             UserDefaults.standard.set(paperTheme.rawValue, forKey: paperThemeKey)
+            if let url = currentURL { setDocTheme(paperTheme, for: url) }
         }
+    }
+
+    /// The per-document theme map (path → rawValue). App-local, plist-backed.
+    private func docThemeMap() -> [String: String] {
+        UserDefaults.standard.dictionary(forKey: docThemesKey) as? [String: String] ?? [:]
+    }
+    private func docTheme(for url: URL) -> PaperTheme? {
+        docThemeMap()[url.path].flatMap(PaperTheme.init(rawValue:))
+    }
+    private func setDocTheme(_ theme: PaperTheme, for url: URL) {
+        var map = docThemeMap()
+        map[url.path] = theme.rawValue
+        UserDefaults.standard.set(map, forKey: docThemesKey)
+    }
+    /// Applies the document's stored theme (or the global default if none) WITHOUT rewriting prefs.
+    private func applyDocTheme(for url: URL) {
+        let resolved = docTheme(for: url)
+            ?? UserDefaults.standard.string(forKey: paperThemeKey).flatMap(PaperTheme.init(rawValue:))
+            ?? .parchment
+        suppressThemePersist = true
+        paperTheme = resolved
+        suppressThemePersist = false
     }
 
     private let followsDarkModeKey = "com.afluffywaffle.layuv.followsDarkMode"
@@ -182,14 +213,15 @@ final class DocumentStore: ObservableObject {
         guard let raw else { isLoading = false; return }
 
         let parsed = TextImport.parse(raw)
-        // Honour écri per-document prefs (rawValues match 1:1; font serif/sans → FontChoice).
-        if let t = parsed.ecriThemeRaw, let theme = PaperTheme(rawValue: t) { paperTheme = theme }
-        if let serif = parsed.ecriFontSerif { fontChoice = serif ? .serif : .sans }
 
         do {
             let data = try TextImport.docx(from: parsed.text)
             guard let dest = writeConvertedDocx(data, sourceURL: url) else { isLoading = false; return }
-            await load(url: dest)   // load() manages isLoading + recents + security scope
+            await load(url: dest)   // load() manages isLoading + recents + security scope + per-doc theme
+            // Honour écri per-document prefs AFTER load so the theme persists against the NEW doc's
+            // path (rawValues match écri 1:1; font serif/sans → FontChoice). Font is app-global.
+            if let t = parsed.ecriThemeRaw, let theme = PaperTheme(rawValue: t) { paperTheme = theme }
+            if let serif = parsed.ecriFontSerif { fontChoice = serif ? .serif : .sans }
         } catch {
             print("[DocumentStore] text import failed: \(error)")
             isLoading = false
@@ -222,6 +254,7 @@ final class DocumentStore: ObservableObject {
             self.document = doc
             self.annotations = doc.annotations
             self.currentURL = url
+            applyDocTheme(for: url)   // per-doc theme (or global default), without rewriting prefs
             addRecent(url)
         } catch {
             print("[DocumentStore] load failed: \(error)")
@@ -464,34 +497,149 @@ final class DocumentStore: ObservableObject {
         return url
     }
 
-    /// Writes the AI export package (Markdown + ink PNGs) directly into `folder`. Returns true on success.
+    /// Writes the AI export package into `folder`, mirroring Android's full workflow so the
+    /// cross-platform expectation is identical (see ReaderActivity.exportForAi):
+    ///  • A per-chapter container `<base>/`; each pass in its own `<base>_v<N>_export/` (chapter.md
+    ///    + ink PNGs). Repeated exports never overwrite.
+    ///  • Version is deterministic from the working filename (`_draft_v<N>` → N+1), exactly like
+    ///    Android — possible here because the bumped draft copy is reopened (below).
+    ///  • A `<base>_draft_v<N>.docx` copy of the source is written; the newest 3 are kept and older
+    ///    ones moved to `<base> archive/`.
+    ///  • The app then reopens that draft, so the next export bumps to N+1.
+    /// Android writes the draft next to the source file; sandboxed macOS can't create siblings of the
+    /// user's original (file-scoped bookmark only), so the whole container lives in the user-chosen
+    /// export `folder`, which IS folder-scoped. The workflow is unchanged — only the on-disk root
+    /// differs, and it's a folder the user picked. Returns true on success.
     func exportForAi(toFolder folder: URL) async -> Bool {
-        let (text, images) = await buildAiExportItems()
-        let docName = currentURL?.deletingPathExtension().lastPathComponent ?? "Document"
-        let scoped  = folder.startAccessingSecurityScopedResource()
-        defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
+        guard let src = currentURL else { return false }
+        let rawName     = src.deletingPathExtension().lastPathComponent
+        let fileVersion = Self.draftVersion(of: rawName)        // 0 if not a _draft_vN file
+        let cleanBase   = Self.stripDraftSuffix(rawName)
+        let version     = fileVersion + 1
+        let (body, images) = await buildAiExportItems()
+        let text = Self.exportHeader(cleanBase: cleanBase, version: version) + body
+        let srcBytes = await Task.detached(priority: .userInitiated) {
+            (try? Data(contentsOf: src)) ?? Data()
+        }.value
+
+        let scoped = folder.startAccessingSecurityScopedResource()
+        // NOTE: scope is held across the reopen below (load() reads a child of `folder`); released after.
+        var draftURL: URL?
         do {
+            let fm = FileManager.default
+            let chapterDir = folder.appendingPathComponent(cleanBase, isDirectory: true)
+            try fm.createDirectory(at: chapterDir, withIntermediateDirectories: true)
+
+            let outputDir = chapterDir.appendingPathComponent("\(cleanBase)_v\(version)_export",
+                                                              isDirectory: true)
+            try fm.createDirectory(at: outputDir, withIntermediateDirectories: true)
             try (text.data(using: .utf8) ?? Data())
-                .write(to: folder.appendingPathComponent("\(docName)_for_ai.md"))
+                .write(to: outputDir.appendingPathComponent("chapter.md"))
             for (name, data) in images {
-                try data.write(to: folder.appendingPathComponent(name))
+                try data.write(to: outputDir.appendingPathComponent(name))
             }
-            return true
+
+            // Bump the working copy: write <base>_draft_v<version>.docx, keep newest 3, archive rest.
+            if !srcBytes.isEmpty {
+                let next = chapterDir.appendingPathComponent("\(cleanBase)_draft_v\(version).docx")
+                if !fm.fileExists(atPath: next.path) {
+                    let tmp = next.appendingPathExtension("tmp")
+                    try srcBytes.write(to: tmp)
+                    _ = try? fm.replaceItemAt(next, withItemAt: tmp)
+                    if fm.fileExists(atPath: tmp.path) { try? fm.removeItem(at: tmp) }
+                }
+                Self.archiveOldDrafts(in: chapterDir, cleanBase: cleanBase, keep: 3)
+                draftURL = next
+            }
         } catch {
             print("[DocumentStore] export-to-folder failed: \(error)")
+            if scoped { folder.stopAccessingSecurityScopedResource() }
             return false
+        }
+
+        // Reopen the bumped draft so the next export advances the version (Android parity).
+        // The draft lives inside the still-scoped export folder; load() reads it before we release.
+        if let draftURL { await load(url: draftURL) }
+        if scoped { folder.stopAccessingSecurityScopedResource() }
+        return true
+    }
+
+    /// Strips a trailing `_draft_v<N>` so repeated passes for the same chapter share one container.
+    private static func stripDraftSuffix(_ name: String) -> String {
+        let cleaned = name.replacing(/_draft_v\d+$/.ignoresCase(), with: "")
+        return cleaned.isEmpty ? "chapter" : cleaned
+    }
+
+    /// The version embedded in a `_draft_v<N>` filename, or 0 if the name carries none.
+    private static func draftVersion(of name: String) -> Int {
+        guard let m = name.firstMatch(of: /_draft_v(\d+)$/.ignoresCase()) else { return 0 }
+        return Int(m.1) ?? 0
+    }
+
+    /// Header that tells the AI which version this is and how to name its rewrite, so Import rewrite
+    /// can auto-find it. Mirrors AiExporter.buildHeader.
+    private static func exportHeader(cleanBase: String, version: Int) -> String {
+        "Export v\(version) of \"\(cleanBase)\". " +
+        "When returning the rewrite as a .docx file, name it \(cleanBase)_draft_v\(version).docx.\n\n"
+    }
+
+    /// Keeps the newest `keep` `<cleanBase>_draft_v<N>.docx` files; moves older ones to `<base> archive/`.
+    private static func archiveOldDrafts(in dir: URL, cleanBase: String, keep: Int) {
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: dir.path) else { return }
+        let re = try! Regex("^\(NSRegularExpression.escapedPattern(for: cleanBase))_draft_v(\\d+)\\.docx$")
+            .ignoresCase()
+        let drafts = names.compactMap { name -> (Int, String)? in
+            guard let m = try? re.firstMatch(in: name), let r = m[1].substring, let v = Int(r) else { return nil }
+            return (v, name)
+        }.sorted { $0.0 > $1.0 }
+        let toArchive = drafts.dropFirst(keep)
+        guard !toArchive.isEmpty else { return }
+        let archiveDir = dir.appendingPathComponent("\(cleanBase) archive", isDirectory: true)
+        try? fm.createDirectory(at: archiveDir, withIntermediateDirectories: true)
+        for (_, name) in toArchive {
+            let dest = archiveDir.appendingPathComponent(name)
+            if !fm.fileExists(atPath: dest.path) {
+                try? fm.moveItem(at: dir.appendingPathComponent(name), to: dest)
+            }
         }
     }
 
-    /// Looks for an AI-rewritten draft in the import folder matching the open doc's name
-    /// (the "<docName> Draft.docx" produced by saveAiDraft). Returns its URL if present.
+    /// Looks for the AI-rewritten draft for the open doc. Probes BOTH naming schemes Layuv produces:
+    ///  • Export for AI (Android-parity): `<base>_draft_v<N>.docx`, where N comes from the working
+    ///    filename — the name the export header told the AI to use. Searched in the import folder,
+    ///    then the export-folder layout (`<base>/…` and the `_v<N>_export/` subfolder).
+    ///  • Save as Draft (AI-chat rewrite card): `<docName> Draft.docx`, searched in the import folder.
+    /// Returns the first existing candidate, scanning each folder within its own security scope.
     func autoFindRewrite() -> URL? {
-        guard let folder = aiImportFolder,
-              let docName = currentURL?.deletingPathExtension().lastPathComponent else { return nil }
-        let scoped = folder.startAccessingSecurityScopedResource()
-        defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
-        let candidate = folder.appendingPathComponent("\(docName) Draft.docx")
-        return FileManager.default.fileExists(atPath: candidate.path) ? candidate : nil
+        guard let rawName = currentURL?.deletingPathExtension().lastPathComponent else { return nil }
+
+        func firstExisting(in folder: URL, _ relativePaths: [String]) -> URL? {
+            let scoped = folder.startAccessingSecurityScopedResource()
+            defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
+            for rel in relativePaths {
+                let candidate = folder.appendingPathComponent(rel)
+                if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+            }
+            return nil
+        }
+
+        // Export-for-AI versioned naming (only when the working file carries a _draft_vN version).
+        let v = Self.draftVersion(of: rawName)
+        if v > 0 {
+            let base = Self.stripDraftSuffix(rawName)
+            let rewriteName = "\(base)_draft_v\(v).docx"
+            if let f = aiImportFolder, let hit = firstExisting(in: f, [rewriteName]) { return hit }
+            if let f = aiExportFolder, let hit = firstExisting(in: f, [
+                "\(base)/\(rewriteName)",
+                rewriteName,
+                "\(base)/\(base)_v\(v)_export/\(rewriteName)",
+            ]) { return hit }
+        }
+
+        // Save-as-Draft naming (the "<docName> Draft.docx" produced by saveAiDraft).
+        if let f = aiImportFolder, let hit = firstExisting(in: f, ["\(rawName) Draft.docx"]) { return hit }
+        return nil
     }
 
     /// Replaces the open document's bytes with the chosen rewritten DOCX, then reloads.
