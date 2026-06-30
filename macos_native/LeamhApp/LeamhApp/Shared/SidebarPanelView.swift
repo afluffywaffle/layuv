@@ -1,23 +1,39 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 // MARK: - Sidebar panel (shared: iPad NavigationSplitView sidebar + macOS sidebar)
 
-/// Three-tab sidebar that lives in the NavigationSplitView's sidebar column.
-/// Annotations: the full AnnotationsPanel (Android-parity: search, tag filter, sort, rich rows).
-/// Bookmarks:   compact list of .bookmark annotations sorted by document position — quick TOC nav.
-/// Find:        triggers the reader's find UI (iOS UIFindInteraction / macOS find bar) via `onFind`.
+/// Four-tab sidebar: Outline | Annotations | Bookmarks | Find.
+/// Outline: document-structure headings for quick navigation.
+/// Annotations: full AnnotationsPanel (search, tag filter, sort, rich rows).
+/// Bookmarks: compact list of .bookmark annotations sorted by document position.
+/// Find: triggers the reader's find UI (iOS UIFindInteraction / macOS find bar) via `onFind`.
+///
+/// The page shuttle appears at the bottom when the reader is in paged mode (paged=true).
+/// On macOS it drives live page-turning; on iOS it is only available when screenFlip is active.
 struct SidebarPanelView: View {
     @EnvironmentObject var store: DocumentStore
-    /// Triggers the reader's find UI. iOS bumps a findTrigger; macOS calls the reader coordinator.
+
+    /// Triggers the reader's find UI.
     let onFind: () -> Void
     let onScrollTo: (Annotation) -> Void
     let onOpenFile: () -> Void
-    /// iPhone hosts Find on the reader toolbar (a sheet would cover the system find bar),
-    /// so the panel hides its Find tab in compact width.
+    /// Jump the reader to an arbitrary char offset (used by Outline rows).
+    let onScrollToCharOffset: (Int) -> Void
+    /// Current page index (0-based), total page count, and whether the reader is in paged mode.
+    /// When paged=true the shuttle is shown and changes call onGoToPage.
+    let onGoToPage: (Int) -> Void
+    @Binding var currentPage: Int
+    @Binding var pageCount: Int
+    @Binding var paged: Bool
+
+    /// iPhone hosts Find on the reader toolbar, so the panel hides its Find tab in compact width.
     var showFindTab: Bool = true
 
-    enum Tab { case annotations, bookmarks, find }
-    @State private var tab: Tab = .annotations
+    enum Tab { case outline, annotations, bookmarks, find }
+    @State private var tab: Tab = .outline
 
     private var openPlacement: ToolbarItemPlacement {
         #if os(iOS)
@@ -30,6 +46,7 @@ struct SidebarPanelView: View {
     var body: some View {
         VStack(spacing: 0) {
             Picker("Panel", selection: $tab) {
+                Text("Outline").tag(Tab.outline)
                 Text("Annotations").tag(Tab.annotations)
                 Text("Bookmarks").tag(Tab.bookmarks)
                 if showFindTab {
@@ -43,6 +60,8 @@ struct SidebarPanelView: View {
             Divider()
 
             switch tab {
+            case .outline:
+                OutlineListView(onScrollToCharOffset: onScrollToCharOffset)
             case .annotations:
                 AnnotationsPanel()
             case .bookmarks:
@@ -54,16 +73,139 @@ struct SidebarPanelView: View {
                     AnnotationsPanel()
                 }
             }
+
+            // Page shuttle — only visible in paged mode.
+            if paged && pageCount > 1 {
+                Divider()
+                PageShuttleView(
+                    currentPage: $currentPage,
+                    pageCount: pageCount,
+                    onGoToPage: onGoToPage
+                )
+            }
         }
-        // navigationTitle and Open toolbar button sit here; AnnotationsPanel's own
-        // .navigationTitle("Annotations") and sort button override these when that
-        // tab is active (SwiftUI propagates the deepest values).
         .navigationTitle("Layuv")
         .toolbar {
             ToolbarItem(placement: openPlacement) {
                 Button("Open…", systemImage: "folder") { onOpenFile() }
             }
         }
+    }
+}
+
+// MARK: - Outline tab
+
+private struct OutlineListView: View {
+    @EnvironmentObject var store: DocumentStore
+    let onScrollToCharOffset: (Int) -> Void
+
+    private var headings: [Heading] {
+        store.document?.headings ?? []
+    }
+
+    var body: some View {
+        List(headings.indices, id: \.self) { i in
+            let h = headings[i]
+            Button {
+                onScrollToCharOffset(h.charOffset)
+            } label: {
+                HStack(spacing: 0) {
+                    // Indent by level: 12 pt per level (0-based), capped at 4 for legibility.
+                    Spacer().frame(width: CGFloat(min(h.level, 4)) * 12)
+                    Text(h.text)
+                        .font(h.level == 0 ? AppTheme.chromeBold() : AppTheme.chrome())
+                        .foregroundStyle(h.level == 0 ? .primary : .secondary)
+                        .lineLimit(2)
+                }
+                .padding(.vertical, 1)
+            }
+            .buttonStyle(.plain)
+        }
+        .listStyle(.plain)
+        .navigationTitle("Outline")
+        .overlay {
+            if headings.isEmpty {
+                ContentUnavailableView(
+                    "No Headings",
+                    systemImage: "text.alignleft",
+                    description: Text("This document has no heading paragraphs.")
+                )
+            }
+        }
+    }
+}
+
+// MARK: - Page shuttle (paged mode only)
+
+/// Live-updating slider for paged navigation. Dragging turns pages immediately
+/// (on macOS/iOS backlit screens this is safe — no e-ink refresh concern).
+/// Chevron buttons on each end step ±1 page for fine-tuning (as the user specified).
+private struct PageShuttleView: View {
+    @Binding var currentPage: Int
+    let pageCount: Int
+    let onGoToPage: (Int) -> Void
+
+    // Slider value is a Double 0..<pageCount so we can use SwiftUI Slider natively.
+    @State private var sliderValue: Double = 0
+
+    var body: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 4) {
+                // Left chevron — step back.
+                Button { step(-1) } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .disabled(currentPage <= 0)
+
+                Slider(
+                    value: $sliderValue,
+                    in: 0...Double(max(1, pageCount - 1)),
+                    step: 1
+                ) {
+                    EmptyView()
+                } minimumValueLabel: {
+                    EmptyView()
+                } maximumValueLabel: {
+                    EmptyView()
+                } onEditingChanged: { _ in }
+                .onChange(of: sliderValue) { newVal in
+                    let target = Int(newVal.rounded())
+                    if target != currentPage { onGoToPage(target) }
+                }
+
+                // Right chevron — step forward.
+                Button { step(1) } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .disabled(currentPage >= pageCount - 1)
+            }
+            .padding(.horizontal, 12)
+
+            Text("\(currentPage + 1) / \(pageCount)")
+                .font(AppTheme.chrome(size: 11))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 8)
+        .onChange(of: currentPage) { newPage in
+            // Keep slider in sync when the reader turns pages by other means (edge click etc.)
+            sliderValue = Double(newPage)
+        }
+        .onAppear { sliderValue = Double(currentPage) }
+    }
+
+    private func step(_ delta: Int) {
+        let target = (currentPage + delta).clamped(to: 0...(pageCount - 1))
+        onGoToPage(target)
+    }
+}
+
+private extension Comparable {
+    func clamped(to range: ClosedRange<Self>) -> Self {
+        min(max(self, range.lowerBound), range.upperBound)
     }
 }
 

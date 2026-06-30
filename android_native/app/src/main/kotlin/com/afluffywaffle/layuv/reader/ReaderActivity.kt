@@ -22,6 +22,7 @@ import android.graphics.Canvas
 import android.graphics.drawable.ColorDrawable
 import android.text.TextUtils
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.TextView
@@ -71,8 +72,10 @@ class ReaderActivity : Activity() {
     private lateinit var moreButton: ChromeIconButton
     private var lockSlot: LockSlotView? = null
 
-    // Bookmark button — inside the pill; dimmed when current page has no bookmark.
-    private lateinit var bookmarkButton: ChromeIconButton
+    // Contents button — inside the pill; opens the full-screen nav pane (Outline | Bookmarks).
+    private lateinit var contentsButton: ChromeIconButton
+    // Bookmark toggle — inline ImageView inside the page capsule; filled = page is bookmarked.
+    private lateinit var bookmarkToggle: ImageView
     private lateinit var searchButton: ChromeIconButton
     private lateinit var aiMenuButton: AiChatButton
 
@@ -139,49 +142,40 @@ class ReaderActivity : Activity() {
 
         pillRow = buildPill()
 
-        pageIndicator = TextView(this).apply {
-            typeface = ReaderTheme.body(this@ReaderActivity)
-            setTextColor(ReaderTheme.INK_87)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            gravity = Gravity.CENTER
-            setPadding(dp(12f), dp(6f), dp(12f), dp(6f))
-            minWidth = dp(80f)
+        // Combined capsule: "5 / 53  ⌖" — page text + bookmark icon share one pill border.
+        val pageCapsule = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             background = android.graphics.drawable.GradientDrawable().apply {
                 shape = android.graphics.drawable.GradientDrawable.RECTANGLE
                 cornerRadius = ReaderTheme.dp(this@ReaderActivity, ReaderTheme.RADIUS_PILL)
                 setColor(ReaderTheme.PAPER)
                 setStroke(dp(1f), ReaderTheme.INK_26)
             }
-            setOnTouchListener(PenTapListener(this@ReaderActivity) {
-                if (lastPageCount > 1) {
-                    val overlay = pageJumpOverlay ?: PageJumpOverlay(
-                        this@ReaderActivity,
-                        previewProvider = { page -> readerView.previewTextForPage(page) },
-                        onConfirm = { page -> readerView.jumpToPage(page) },
-                        bodySizeSp = ReaderTheme.bodySizeSp(prefs.getString(KEY_FONT_SIZE, "medium") ?: "medium"),
-                        onDismiss = { initDrawPathLasso() },
-                    ).also { pageJumpOverlay = it }
-                    if (DrawPathClient.available()) {
-                        // Clear any drawn ink and blacklist the full screen so DrawPath
-                        // doesn't render over the overlay. initDrawPathLasso() on dismiss restores.
-                        val sw = resources.displayMetrics.widthPixels
-                        val sh = resources.displayMetrics.heightPixels
-                        DrawPathClient.clearScreen(packageName)
-                        DrawPathClient.setWritableAreas(
-                            packageName,
-                            listOf(intArrayOf(0, 0, sw, sh, 0)),
-                            "overlay-suppress",
-                        )
-                    }
-                    overlay.show(
-                        pageIndicator, lastPageIndex, lastPageCount,
-                        readerView.bookmarkScrubberFractions(),
-                        readerView.bookmarkPageIndices(),
-                    )
-                }
-            })
+            setPadding(dp(12f), dp(6f), dp(8f), dp(6f))
+            setOnTouchListener(PenTapListener(this@ReaderActivity) { openNavOverlay() })
+        }
+
+        pageIndicator = TextView(this).apply {
+            typeface = ReaderTheme.body(this@ReaderActivity)
+            setTextColor(ReaderTheme.INK_87)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            gravity = Gravity.CENTER_VERTICAL
             text = ""
         }
+
+        val bookmarkIconPx = dp(20f).toInt()
+        bookmarkToggle = ImageView(this).apply {
+            setImageResource(R.drawable.ic_bookmark_outline)
+            setColorFilter(ReaderTheme.INK_26, android.graphics.PorterDuff.Mode.SRC_IN)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setOnTouchListener(PenTapListener(this@ReaderActivity) { togglePageBookmark() })
+        }
+
+        pageCapsule.addView(pageIndicator, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
+        pageCapsule.addView(bookmarkToggle, LinearLayout.LayoutParams(bookmarkIconPx, bookmarkIconPx).apply {
+            marginStart = dp(6f)
+        })
 
         titleLabel = TextView(this).apply {
             typeface = ReaderTheme.body(this@ReaderActivity)
@@ -197,7 +191,7 @@ class ReaderActivity : Activity() {
             FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.START or Gravity.CENTER_VERTICAL),
         )
         toolbar.addView(
-            pageIndicator,
+            pageCapsule,
             FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.CENTER),
         )
         // Fixed-width slot so the title never overlaps the centred page indicator.
@@ -329,7 +323,7 @@ class ReaderActivity : Activity() {
         return rootOverlay
     }
 
-    /** The AppBarPill: annotations | bookmark | search | (lock) | more on a 6%-black rounded pill. */
+    /** The AppBarPill: annotations | contents | search | (lock) | more on a 6%-black rounded pill. */
     private fun buildPill(): LinearLayout {
         val pill = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -338,15 +332,13 @@ class ReaderActivity : Activity() {
             setPadding(dp(4f), dp(4f), dp(4f), dp(4f))
         }
         annotationsButton = ChromeIconButton(this, R.drawable.ic_list_alt) { launchAnnotationsPanel() }
-        bookmarkButton = ChromeIconButton(this, R.drawable.ic_bookmark_outline) { togglePageBookmark() }.also {
-            it.dimmed = true
-        }
+        contentsButton = ChromeIconButton(this, R.drawable.ic_toc) { openNavOverlay() }
         moreButton = ChromeIconButton(this, R.drawable.ic_more_horiz) { showOverflowMenu() }
         searchButton = ChromeIconButton(this, R.drawable.ic_search) { launchSearch() }
         aiMenuButton = AiChatButton(this) { showAiMenu() }
         pill.addView(annotationsButton)
         pill.addView(divider())
-        pill.addView(bookmarkButton)
+        pill.addView(contentsButton)
         pill.addView(divider())
         pill.addView(searchButton)
         pill.addView(divider())
@@ -397,10 +389,57 @@ class ReaderActivity : Activity() {
                 ?: (resolved.annotation.position * textLen).toInt()
             readerView.pageForCharOffset(charOffset) == page
         } ?: false
-        bookmarkButton.setIconRes(
+        bookmarkToggle.setImageResource(
             if (hasBookmark) R.drawable.ic_bookmark_filled else R.drawable.ic_bookmark_outline
         )
-        bookmarkButton.dimmed = !hasBookmark
+        bookmarkToggle.setColorFilter(
+            if (hasBookmark) ReaderTheme.INK_87 else ReaderTheme.INK_26,
+            android.graphics.PorterDuff.Mode.SRC_IN
+        )
+    }
+
+    /** Map the document's headings to outline rows, resolving each to a page index. */
+    private fun outlineItems(): List<OutlineItem> {
+        val doc = book?.doc ?: return emptyList()
+        val textLen = readerView.textLength().coerceAtLeast(1)
+        return doc.headings.map { h ->
+            val page = readerView.pageForCharOffset(h.charOffset.coerceIn(0, textLen))
+            OutlineItem(h.text, h.level, page)
+        }
+    }
+
+    /** Open the full-screen navigation pane (Outline | Bookmarks + page shuttle). */
+    private fun openNavOverlay() {
+        if (book == null) return
+        val overlay = pageJumpOverlay ?: PageJumpOverlay(
+            this,
+            previewProvider = { page -> readerView.previewTextForPage(page) },
+            onConfirm = { page -> readerView.jumpToPage(page) },
+            bodySizeSp = ReaderTheme.bodySizeSp(prefs.getString(KEY_FONT_SIZE, "medium") ?: "medium"),
+            onDismiss = { initDrawPathLasso() },
+        ).also {
+            it.onBookmarkPage  = { page -> toggleBookmarkForPage(page) }
+            it.isPageBookmarked = { page -> isPageBookmarkedAt(page) }
+            pageJumpOverlay = it
+        }
+        if (DrawPathClient.available()) {
+            // Clear any drawn ink and blacklist the full screen so DrawPath doesn't
+            // render over the overlay. initDrawPathLasso() on dismiss restores.
+            val sw = resources.displayMetrics.widthPixels
+            val sh = resources.displayMetrics.heightPixels
+            DrawPathClient.clearScreen(packageName)
+            DrawPathClient.setWritableAreas(
+                packageName,
+                listOf(intArrayOf(0, 0, sw, sh, 0)),
+                "overlay-suppress",
+            )
+        }
+        overlay.show(
+            pageIndicator, lastPageIndex, lastPageCount,
+            readerView.bookmarkScrubberFractions(),
+            readerView.bookmarkPageIndices(),
+            outlineItems(),
+        )
     }
 
     /**
@@ -431,6 +470,62 @@ class ReaderActivity : Activity() {
             saveAnnotations(opened, file, newList)
         } else {
             val charOffset = readerView.currentCharOffset()
+            val position = charOffset.toDouble() / textLen.coerceAtLeast(1)
+            val annotation = Annotation(
+                id = newId(),
+                selectedText = "",
+                prefix = "",
+                suffix = "",
+                tool = AnnotationTool.bookmark,
+                position = position,
+                timestamp = java.time.Instant.now(),
+            )
+            val optimistic = ResolvedAnnotation(annotation, null)
+            val optimisticAnnotations = opened.doc.annotations + optimistic
+            val optimisticDoc = LoadedDocument(opened.doc.plainMap, optimisticAnnotations, opened.doc.position)
+            book = OpenBook(opened.displayName, opened.bytes, optimisticDoc, file)
+            readerView.updateAnnotations(optimisticAnnotations)
+            updateBookmarkButton()
+            saveAnnotations(opened, file, optimisticAnnotations.map { it.annotation })
+        }
+    }
+
+    private fun isPageBookmarkedAt(pageIndex: Int): Boolean {
+        val opened = book ?: return false
+        val textLen = readerView.textLength()
+        return opened.doc.annotations.any { resolved ->
+            if (resolved.annotation.tool != AnnotationTool.bookmark) return@any false
+            val charOffset = resolved.span?.start
+                ?: (resolved.annotation.position * textLen).toInt()
+            readerView.pageForCharOffset(charOffset) == pageIndex
+        }
+    }
+
+    /** Toggle a bookmark for [pageIndex] (may differ from the current reader page). */
+    private fun toggleBookmarkForPage(pageIndex: Int) {
+        val opened = book ?: return
+        val file = opened.file ?: run {
+            android.widget.Toast.makeText(this, "File is read-only — can't save bookmark.", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        val textLen = readerView.textLength()
+        val existing = opened.doc.annotations.firstOrNull { resolved ->
+            if (resolved.annotation.tool != AnnotationTool.bookmark) return@firstOrNull false
+            val charOffset = resolved.span?.start
+                ?: (resolved.annotation.position * textLen).toInt()
+            readerView.pageForCharOffset(charOffset) == pageIndex
+        }
+        if (existing != null) {
+            val newList = opened.doc.annotations.map { it.annotation }.filter { it.id != existing.annotation.id }
+            val optimistic = opened.doc.annotations.filter { it.annotation.id != existing.annotation.id }
+            val optimisticDoc = LoadedDocument(opened.doc.plainMap, optimistic, opened.doc.position)
+            book = OpenBook(opened.displayName, opened.bytes, optimisticDoc, file)
+            readerView.updateAnnotations(optimistic)
+            updateBookmarkButton()
+            saveAnnotations(opened, file, newList)
+        } else {
+            val startOffsets = readerView.pageStartOffsets()
+            val charOffset = startOffsets?.getOrNull(pageIndex) ?: (pageIndex.toDouble() / lastPageCount.coerceAtLeast(1) * textLen).toInt()
             val position = charOffset.toDouble() / textLen.coerceAtLeast(1)
             val annotation = Annotation(
                 id = newId(),
@@ -1198,6 +1293,10 @@ class ReaderActivity : Activity() {
                 }
                 readerView.post { initDrawPathLasso() }
             }
+            REQ_AI_EXPAND -> if (resultCode == RESULT_OK) {
+                val text = data?.getStringExtra(AiReplyActivity.EXTRA_REPLY) ?: return
+                aiPanel?.onExpandResult(text)
+            }
             REQ_ANNOTATIONS -> {
                 when (resultCode) {
                     RESULT_OK -> {
@@ -1847,6 +1946,7 @@ class ReaderActivity : Activity() {
         private const val REQ_PICK_AI_DIR = 1009
         private const val REQ_IMPORT_REWRITE = 1010
         private const val REQ_SET_IMPORT_FOLDER = 1011
+        private const val REQ_AI_EXPAND = AiReplyActivity.REQUEST_CODE
         private const val KEY_IMPORT_FOLDER = "ai_import_folder"
         private const val PREFS = "leamh"
         private const val KEY_AI_EXPORT_FOLDER = "ai_export_folder"

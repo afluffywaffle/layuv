@@ -25,9 +25,23 @@ struct HomeView: View {
     var body: some View {
         NavigationSplitView {
             SidebarPanelView(
-                onFind:     { readerCoordinator.find() },
-                onScrollTo: { readerCoordinator.scrollTo(annotationId: $0.id) },
-                onOpenFile: { store.openFilePanel() }
+                onFind:               { readerCoordinator.find() },
+                onScrollTo:           { readerCoordinator.scrollTo(annotationId: $0.id) },
+                onOpenFile:           { store.openFilePanel() },
+                onScrollToCharOffset: { readerCoordinator.scrollToCharOffset($0) },
+                onGoToPage:           { readerCoordinator.goToPage($0) },
+                currentPage: Binding(
+                    get: { readerCoordinator.currentPage },
+                    set: { readerCoordinator.goToPage($0) }
+                ),
+                pageCount: Binding(
+                    get: { readerCoordinator.pageCount },
+                    set: { _ in }
+                ),
+                paged: Binding(
+                    get: { readerCoordinator.paged },
+                    set: { _ in }
+                )
             )
             .navigationSplitViewColumnWidth(min: 240, ideal: 300)
         } detail: {

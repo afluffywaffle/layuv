@@ -40,6 +40,8 @@ final class ReaderCoordinator: NSObject, ObservableObject {
 
     func find()                          { viewController?.presentFind() }
     func scrollTo(annotationId: String)  { viewController?.scrollToAnnotation(id: annotationId) }
+    func goToPage(_ page: Int)           { viewController?.goToPage(page); sync() }
+    func scrollToCharOffset(_ offset: Int) { viewController?.scrollToCharOffset(offset); sync() }
 
     func sync() {
         currentPage = viewController?.currentPage ?? 0
@@ -567,6 +569,36 @@ final class ReaderViewController: NSViewController {
         let item = NSMenuItem()
         item.tag = Int(NSTextFinder.Action.showFindInterface.rawValue)
         tv.performTextFinderAction(item)
+    }
+
+    /// Jumps directly to a page screen (0-based). Works in both modes.
+    func goToPage(_ page: Int) {
+        let clamped = max(0, min(page, pageCount - 1))
+        switch navMode {
+        case .scroll:
+            scrollToPage(clamped)
+        case .pageFlip:
+            currentPage = clamped
+            relayoutPaged()
+        }
+        onPageChanged?()
+    }
+
+    /// Jumps to the screen that contains the given UTF-16 char offset into the full text.
+    func scrollToCharOffset(_ offset: Int) {
+        switch navMode {
+        case .scroll:
+            let clamped = max(0, min(offset, fullText.length - 1))
+            scrollTextView.scrollRangeToVisible(NSRange(location: clamped, length: 1))
+            currentPage = Int((scrollTextView.visibleRect.minY / Self.pageHeight).rounded())
+            onPageChanged?()
+        case .pageFlip:
+            if let pageIdx = pageRanges.firstIndex(where: { offset >= $0.location && offset < $0.location + $0.length }) {
+                currentPage = pageIdx / columnsPerScreen
+                relayoutPaged()
+                onPageChanged?()
+            }
+        }
     }
 
     /// Scrolls/pages the reader so the annotation's span is visible.

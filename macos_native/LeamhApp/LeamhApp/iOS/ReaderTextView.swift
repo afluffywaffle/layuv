@@ -22,6 +22,8 @@ enum NavMode: String, CaseIterable {
         case .screenFlip: return "hand.tap"
         }
     }
+    /// True when the reader shows discrete pages (not continuous scroll).
+    var isPaged: Bool { self != .scroll }
 }
 
 // MARK: - Representable
@@ -46,6 +48,12 @@ struct ReaderTextView: UIViewControllerRepresentable {
     var findTrigger: Int = 0
     /// Set to an annotation ID to scroll the reader to that annotation (one-shot; stays set).
     var scrollToAnnotationId: String? = nil
+    /// Set to a char offset to jump the reader to that offset (one-shot; stays set).
+    var scrollToCharOffsetValue: Int? = nil
+    /// When non-nil, the reader jumps to this page (0-based) and the value is consumed.
+    var goToPageValue: Int? = nil
+    /// Reports (currentPage, pageCount) whenever the visible page changes.
+    var onPageChanged: ((Int, Int) -> Void)? = nil
     @EnvironmentObject var store: DocumentStore
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -53,6 +61,8 @@ struct ReaderTextView: UIViewControllerRepresentable {
     final class Coordinator {
         var lastFindTrigger = 0
         var lastScrollAnnotationId: String? = nil
+        var lastScrollCharOffset: Int? = nil
+        var lastGoToPage: Int? = nil
     }
 
     func makeUIViewController(context: Context) -> ReaderViewController {
@@ -62,6 +72,7 @@ struct ReaderTextView: UIViewControllerRepresentable {
         vc.onDeleteAnnotation       = { [weak store] id  in store?.deleteAnnotation(id: id) }
         vc.onInkAnnotationRequested = { [weak store] ann in store?.beginInkAnnotation(ann) }
         vc.onEditInk                = { [weak store] ann in store?.editInkAnnotation(ann) }
+        vc.onPageChanged            = { pg, cnt in onPageChanged?(pg, cnt) }
         return vc
     }
 
@@ -82,6 +93,16 @@ struct ReaderTextView: UIViewControllerRepresentable {
             context.coordinator.lastScrollAnnotationId = id
             vc.scrollToAnnotation(id: id)
         }
+        if let offset = scrollToCharOffsetValue, offset != context.coordinator.lastScrollCharOffset {
+            context.coordinator.lastScrollCharOffset = offset
+            vc.scrollToCharOffset(offset)
+        }
+        if let page = goToPageValue, page != context.coordinator.lastGoToPage {
+            context.coordinator.lastGoToPage = page
+            vc.goToPage(page)
+        }
+        // Wire page-change callback (idempotent; closure captures are stable).
+        vc.onPageChanged = { pg, cnt in onPageChanged?(pg, cnt) }
     }
 
     // MARK: - Attributed string (shared with the VC; mirrors the macOS reader)
@@ -162,6 +183,8 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
     var onDeleteAnnotation:  ((String) -> Void)?
     var onInkAnnotationRequested: ((Annotation) -> Void)?
     var onEditInk:           ((Annotation) -> Void)?
+    /// Called when the visible page changes. Parameters: (currentPage, pageCount) — 0-based.
+    var onPageChanged: ((Int, Int) -> Void)?
 
     private var fullAttributed = NSAttributedString()
     private var fullPlainText: NSString = ""
@@ -429,13 +452,30 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
         }
     }
 
-    private func goToPage(_ target: Int) {
+    func goToPage(_ target: Int) {
         guard target >= 0, target < pages.count, target != pageIndex,
               let page = makePage(target) else { return }
         let direction: UIPageViewController.NavigationDirection = target > pageIndex ? .forward : .reverse
         let animated = (navMode == .pageTurn)
         pageVC?.setViewControllers([page], direction: direction, animated: animated)
         pageIndex = target
+        onPageChanged?(pageIndex, pages.count)
+    }
+
+    /// Total number of pages in the current pagination (1 in scroll mode).
+    var pageCount: Int { pages.isEmpty ? 1 : pages.count }
+
+    /// Jumps to the page that contains the given UTF-16 char offset.
+    func scrollToCharOffset(_ offset: Int) {
+        if let s = scrollSurface {
+            let clamped = max(0, min(offset, (s.textView.text as NSString).length - 1))
+            s.textView.scrollRangeToVisible(NSRange(location: clamped, length: 1))
+        } else if !pages.isEmpty {
+            let target = pages.firstIndex { cols in
+                cols.contains { offset >= $0.location && offset < $0.location + $0.length }
+            }
+            goToPage(target ?? 0)
+        }
     }
 
     // MARK: UIPageViewControllerDataSource / Delegate
@@ -458,6 +498,7 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
                             transitionCompleted completed: Bool) {
         if completed, let p = pvc.viewControllers?.first as? ReaderPageViewController {
             pageIndex = p.pageNumber
+            onPageChanged?(pageIndex, pages.count)
         }
     }
 }

@@ -25,6 +25,11 @@ struct HomeView: View {
     // and the Bookmarks tab can scroll the reader to a tapped annotation.
     @State private var findTrigger            = 0
     @State private var scrollToAnnotationId: String? = nil
+    @State private var scrollToCharOffsetValue: Int? = nil
+    @State private var goToPageValue: Int? = nil
+    // Page state reported by the reader for the sidebar shuttle.
+    @State private var readerCurrentPage = 0
+    @State private var readerPageCount   = 1
     // System find is per-text-view, so it can't search across the discrete pages of a paged mode.
     // Tapping Find in a paged mode transiently drops the reader to scroll (full-document system
     // find); picking a nav mode from the menu clears the override and returns to pages.
@@ -154,9 +159,14 @@ struct HomeView: View {
     private var regularRoot: some View {
         NavigationSplitView {
             SidebarPanelView(
-                onFind:      { triggerFind() },
-                onScrollTo:  { ann in scrollToAnnotationId = ann.id },
-                onOpenFile:  { showImporter = true }
+                onFind:               { triggerFind() },
+                onScrollTo:           { ann in scrollToAnnotationId = ann.id },
+                onOpenFile:           { showImporter = true },
+                onScrollToCharOffset: { scrollToCharOffsetValue = $0 },
+                onGoToPage:           { goToPageValue = $0 },
+                currentPage:          $readerCurrentPage,
+                pageCount:            .constant(readerPageCount),
+                paged:                .constant(NavMode(rawValue: navModeRaw)?.isPaged ?? false)
             )
         } detail: {
             readerDetail(onShowPanel: nil)
@@ -172,16 +182,15 @@ struct HomeView: View {
         .sheet(isPresented: $showPanel) {
             NavigationStack {
                 SidebarPanelView(
-                    onFind:      { triggerFind() },
-                    onScrollTo:  { ann in
-                        showPanel = false
-                        scrollToAnnotationId = ann.id
-                    },
-                    onOpenFile:  {
-                        showPanel = false
-                        showImporter = true
-                    },
-                    showFindTab: false
+                    onFind:               { triggerFind() },
+                    onScrollTo:           { ann in showPanel = false; scrollToAnnotationId = ann.id },
+                    onOpenFile:           { showPanel = false; showImporter = true },
+                    onScrollToCharOffset: { scrollToCharOffsetValue = $0; showPanel = false },
+                    onGoToPage:           { goToPageValue = $0; showPanel = false },
+                    currentPage:          $readerCurrentPage,
+                    pageCount:            .constant(readerPageCount),
+                    paged:                .constant(NavMode(rawValue: navModeRaw)?.isPaged ?? false),
+                    showFindTab:          false
                 )
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
@@ -206,6 +215,8 @@ struct HomeView: View {
             ReaderScreen(document: doc,
                          findTrigger: findTrigger,
                          scrollToAnnotationId: scrollToAnnotationId,
+                         scrollToCharOffsetValue: scrollToCharOffsetValue,
+                         goToPageValue: goToPageValue,
                          onShowPanel: onShowPanel,
                          onFind:   { triggerFind() },
                          onAskAi:  { showAskAi = true },
@@ -215,7 +226,8 @@ struct HomeView: View {
                          onSetExportFolder: { showExportFolderPicker = true },
                          onSetImportFolder: { showImportFolderPicker = true },
                          searchScrollOverride: searchScrollOverride,
-                         onClearSearch: { searchScrollOverride = false })
+                         onClearSearch: { searchScrollOverride = false },
+                         onPageChanged: { pg, cnt in readerCurrentPage = pg; readerPageCount = cnt })
         } else {
             emptyState
         }
@@ -273,6 +285,8 @@ private struct ReaderScreen: View {
     let document: LoadedDocument
     let findTrigger: Int
     let scrollToAnnotationId: String?
+    let scrollToCharOffsetValue: Int?
+    let goToPageValue: Int?
     /// Non-nil only in compact width (iPhone) — shows a toolbar button to present the panel sheet.
     let onShowPanel: (() -> Void)?
     let onFind: () -> Void
@@ -286,6 +300,7 @@ private struct ReaderScreen: View {
     /// `onClearSearch` returns to the saved nav mode.
     let searchScrollOverride: Bool
     let onClearSearch: () -> Void
+    let onPageChanged: ((Int, Int) -> Void)?
 
     @AppStorage("com.afluffywaffle.layuv.navMode") private var navModeRaw = NavMode.scroll.rawValue
     private var navMode: NavMode { NavMode(rawValue: navModeRaw) ?? .scroll }
@@ -305,7 +320,10 @@ private struct ReaderScreen: View {
                        navMode: effectiveNavMode,
                        paperTheme: store.paperTheme,
                        findTrigger: findTrigger,
-                       scrollToAnnotationId: scrollToAnnotationId)
+                       scrollToAnnotationId: scrollToAnnotationId,
+                       scrollToCharOffsetValue: scrollToCharOffsetValue,
+                       goToPageValue: goToPageValue,
+                       onPageChanged: onPageChanged)
             .ignoresSafeArea(.container, edges: .bottom)
             .navigationTitle(docTitle)
             .navigationBarTitleDisplayMode(.inline)

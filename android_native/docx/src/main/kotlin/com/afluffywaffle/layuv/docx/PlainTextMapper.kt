@@ -4,6 +4,14 @@ package com.afluffywaffle.layuv.docx
 data class FormatSpan(val start: Int, val end: Int, val bold: Boolean, val italic: Boolean)
 
 /**
+ * A heading paragraph for the document-outline navigator. [level] is 0-based
+ * (0 = Heading 1). [charOffset] is the start of the heading's text in
+ * [PlainMap.plain] — divide by `plain.length` for the 0.0–1.0 jump fraction,
+ * the same coordinate system as annotation positions.
+ */
+data class Heading(val text: String, val level: Int, val charOffset: Int)
+
+/**
  * The canonical plain text [plain] plus, for each of its UTF-16 code units,
  * the char offset [xmlOffsets] into the source document.xml. The two arrays
  * are parallel: `xmlOffsets.size == plain.length`.
@@ -16,6 +24,8 @@ class PlainMap(
     val plain: String,
     val xmlOffsets: IntArray,
     val formats: List<FormatSpan> = emptyList(),
+    /** Heading paragraphs in document order — drives the navigation outline. */
+    val headings: List<Heading> = emptyList(),
 )
 
 /**
@@ -63,6 +73,11 @@ object PlainTextMapper {
         val sb = StringBuilder()
         val offsets = ArrayList<Int>()
         val formats = ArrayList<FormatSpan>()
+        val headings = ArrayList<Heading>()
+        // Outline tracking: where the current paragraph's text begins in [sb], and
+        // its heading level (null = not a heading), captured from <w:pStyle>.
+        var paraStart = 0
+        var paraHeadingLevel: Int? = null
         // Direct run formatting, tracked inside <w:r>.
         var inRun = false
         var runBold = false
@@ -139,8 +154,16 @@ object PlainTextMapper {
                 // New paragraph: reset paragraph-level style state.
                 !isEnd && !isSelfClose && name == "w:p" -> {
                     pStyleBold = false; pStyleItalic = false; inPPr = false
+                    paraStart = sb.length; paraHeadingLevel = null
                 }
                 isEnd && name == "w:p" -> {
+                    // Record the outline entry from this paragraph's text BEFORE the
+                    // trailing newline is appended. Skip blank headings.
+                    val lvl = paraHeadingLevel
+                    if (lvl != null) {
+                        val text = sb.substring(paraStart, sb.length).trim()
+                        if (text.isNotEmpty()) headings.add(Heading(text, lvl, paraStart))
+                    }
                     sb.append('\n'); offsets.add(lt)
                 }
                 // Paragraph properties block (only outside runs).
@@ -152,6 +175,7 @@ object PlainTextMapper {
                     val sp = if (sid != null) styles[sid] else null
                     pStyleBold   = sp?.bold   ?: false
                     pStyleItalic = sp?.italic ?: false
+                    paraHeadingLevel = sp?.outlineLevel
                 }
                 // Run open/close.
                 !isEnd && !isSelfClose && name == "w:r" -> {
@@ -178,6 +202,6 @@ object PlainTextMapper {
             }
             i = gt + 1
         }
-        return PlainMap(sb.toString(), offsets.toIntArray(), formats)
+        return PlainMap(sb.toString(), offsets.toIntArray(), formats, headings)
     }
 }

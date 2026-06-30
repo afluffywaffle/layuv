@@ -11,11 +11,22 @@ package com.afluffywaffle.layuv.docx
  */
 object StyleResolver {
 
-    data class Props(val bold: Boolean, val italic: Boolean)
+    /**
+     * [outlineLevel] is the document-outline depth (0 = top level / Heading 1)
+     * when this style is a heading, or null for body styles. Derived from an
+     * explicit `<w:outlineLvl>` in the style's `<w:pPr>`, falling back to the
+     * conventional `Heading N` styleId. Used to build the navigation outline;
+     * does NOT affect plain text or anchoring.
+     */
+    data class Props(val bold: Boolean, val italic: Boolean, val outlineLevel: Int? = null)
 
     private val STYLE_ID   = Regex("""w:styleId="([^"]+)"""")
     private val BASED_ON   = Regex("""<w:basedOn\s+w:val="([^"]+)"\s*/>""")
     private val PPR_BLOCK  = Regex("""<w:pPr>.*?</w:pPr>""", RegexOption.DOT_MATCHES_ALL)
+    private val OUTLINE_LVL = Regex("""<w:outlineLvl\s+w:val="(\d+)"\s*/>""")
+    // Word/Pages/Google Docs all keep the English internal styleId "Heading1".."Heading9"
+    // (the localized label lives in <w:name>, not styleId). Tolerate an optional space.
+    private val HEADING_ID = Regex("""^heading\s*([1-9])$""", RegexOption.IGNORE_CASE)
     private val RPR_BLOCK  = Regex("""<w:rPr>(.*?)</w:rPr>""", RegexOption.DOT_MATCHES_ALL)
     // <w:b> / <w:i> but NOT <w:bCs> / <w:iCs> (complex-script equivalents)
     private val B_ELEM     = Regex("""<w:b(?!C)(?:\s[^>]*)?>""")
@@ -42,11 +53,20 @@ object StyleResolver {
             val styleId = STYLE_ID.find(block)?.groupValues?.get(1) ?: continue
             val basedOn = BASED_ON.find(block)?.groupValues?.get(1)
 
+            // Outline level must be read BEFORE stripping <w:pPr> (it lives there).
+            // Explicit <w:outlineLvl> wins; else infer from a conventional Heading styleId.
+            val outline = OUTLINE_LVL.find(block)?.groupValues?.get(1)?.toIntOrNull()
+                ?: HEADING_ID.find(styleId)?.groupValues?.get(1)?.toIntOrNull()?.let { it - 1 }
+
             // Strip <w:pPr> so we only see the style-level <w:rPr>.
             val blockNoPPr = PPR_BLOCK.replace(block, "")
             val rprContent = RPR_BLOCK.find(blockNoPPr)?.groupValues?.get(1) ?: ""
 
-            raw[styleId] = basedOn to Props(bold = hasBold(rprContent), italic = hasItalic(rprContent))
+            raw[styleId] = basedOn to Props(
+                bold = hasBold(rprContent),
+                italic = hasItalic(rprContent),
+                outlineLevel = outline,
+            )
         }
 
         // Resolve inheritance transitively.
@@ -56,8 +76,11 @@ object StyleResolver {
             if (depth > 20) return Props(false, false)
             val (basedOn, direct) = raw[id] ?: return Props(false, false)
             val parent = if (basedOn != null) resolve(basedOn, depth + 1) else Props(false, false)
-            return Props(direct.bold || parent.bold, direct.italic || parent.italic)
-                .also { resolved[id] = it }
+            return Props(
+                bold = direct.bold || parent.bold,
+                italic = direct.italic || parent.italic,
+                outlineLevel = direct.outlineLevel ?: parent.outlineLevel,
+            ).also { resolved[id] = it }
         }
         raw.keys.forEach { resolve(it) }
         return resolved

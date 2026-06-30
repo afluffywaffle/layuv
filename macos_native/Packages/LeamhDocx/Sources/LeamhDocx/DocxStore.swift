@@ -18,6 +18,7 @@ public struct LoadedDocument {
 
     public var plainText: String { plainMap.plain }
     public var formatSpans: [FormatSpan] { plainMap.formats }
+    public var headings: [Heading] { plainMap.headings }
 }
 
 /// Read/write entry point for the DOCX engine. Mirror of DocxStore.kt.

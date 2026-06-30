@@ -16,11 +16,36 @@ public struct PlainMap {
     public let plain: String
     public let xmlOffsets: [Int]
     public let formats: [FormatSpan]
+    /// Heading paragraphs in document order — drives the navigation outline.
+    public let headings: [Heading]
 
-    public init(plain: String, xmlOffsets: [Int], formats: [FormatSpan] = []) {
+    public init(plain: String, xmlOffsets: [Int], formats: [FormatSpan] = [], headings: [Heading] = []) {
         self.plain = plain
         self.xmlOffsets = xmlOffsets
         self.formats = formats
+        self.headings = headings
+    }
+}
+
+/// A heading paragraph for the document-outline navigator. level is 0-based
+/// (0 = Heading 1). charOffset is the start of the heading's text in PlainMap.plain
+/// — divide by plain.utf16.count for the 0.0–1.0 jump fraction (same coordinate
+/// system as annotation positions).
+///
+/// Parity note vs PlainTextMapper.kt: the Swift mapper has no styles.xml
+/// resolution, so the heading level is inferred from the conventional
+/// `Heading N` pStyle val (Word/Pages/Google Docs all emit this). It does not
+/// read an explicit `<w:outlineLvl>` from a custom style. For standard documents
+/// the result is identical.
+public struct Heading: Equatable {
+    public let text: String
+    public let level: Int
+    public let charOffset: Int
+
+    public init(text: String, level: Int, charOffset: Int) {
+        self.text = text
+        self.level = level
+        self.charOffset = charOffset
     }
 }
 
@@ -37,6 +62,15 @@ public enum PlainTextMapper {
 
     private static let wtClose = "</w:t>"
     private static let valRE = try! NSRegularExpression(pattern: #"w:val="([^"]*)""#)
+    // Conventional heading styleId "Heading1".."Heading9" (optional space), case-insensitive.
+    private static let headingRE = try! NSRegularExpression(pattern: #"^[Hh]eading\s*([1-9])$"#)
+
+    /// The 0-based outline level for a pStyle val, or nil if it isn't a heading.
+    private static func headingLevel(_ val: String) -> Int? {
+        guard let m = headingRE.firstMatch(in: val, range: NSRange(val.startIndex..., in: val)) else { return nil }
+        guard let n = Int((val as NSString).substring(with: m.range(at: 1))) else { return nil }
+        return n - 1
+    }
 
     private static func toggleOn(_ tag: String) -> Bool {
         guard let m = valRE.firstMatch(in: tag, range: NSRange(tag.startIndex..., in: tag)) else { return true }
@@ -48,6 +82,11 @@ public enum PlainTextMapper {
         var plain = ""
         var offsets: [Int] = []
         var formats: [FormatSpan] = []
+        var headings: [Heading] = []
+        // Outline tracking: where the current paragraph's text begins in plain (UTF-16),
+        // and its heading level (nil = not a heading), captured from <w:pStyle>.
+        var paraStart = 0
+        var paraHeadingLevel: Int? = nil
 
         var inRun = false
         var runBold = false
@@ -107,8 +146,23 @@ public enum PlainTextMapper {
                 plain += "\t"; offsets.append(tagStartUtf16)
             case (false, _, "w:br"), (false, _, "w:cr"):
                 plain += "\n"; offsets.append(tagStartUtf16)
+            case (false, false, "w:p"):
+                paraStart = plain.utf16.count
+                paraHeadingLevel = nil
             case (true, _, "w:p"):
+                // Record the outline entry from this paragraph's text BEFORE the
+                // trailing newline is appended. Skip blank headings.
+                if let lvl = paraHeadingLevel {
+                    let lo = plain.utf16.index(plain.utf16.startIndex, offsetBy: paraStart)
+                    let text = String(decoding: Array(plain.utf16[lo...]), as: UTF16.self)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !text.isEmpty { headings.append(Heading(text: text, level: lvl, charOffset: paraStart)) }
+                }
                 plain += "\n"; offsets.append(tagStartUtf16)
+            case (false, _, "w:pStyle") where !inRun:
+                if let m = valRE.firstMatch(in: tag, range: NSRange(tag.startIndex..., in: tag)) {
+                    paraHeadingLevel = headingLevel((tag as NSString).substring(with: m.range(at: 1)))
+                }
             case (false, false, "w:r"):
                 inRun = true; runBold = false; runItalic = false
             case (true, _, "w:r"):
@@ -124,6 +178,6 @@ public enum PlainTextMapper {
             i = xml.index(after: gtIdx)
         }
 
-        return PlainMap(plain: plain, xmlOffsets: offsets, formats: formats)
+        return PlainMap(plain: plain, xmlOffsets: offsets, formats: formats, headings: headings)
     }
 }

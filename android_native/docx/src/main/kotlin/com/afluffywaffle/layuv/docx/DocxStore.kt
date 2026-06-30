@@ -16,6 +16,7 @@ class LoadedDocument(
 ) {
     val plainText: String get() = plainMap.plain
     val formatSpans: List<FormatSpan> get() = plainMap.formats
+    val headings: List<Heading> get() = plainMap.headings
 }
 
 /**
