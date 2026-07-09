@@ -421,12 +421,19 @@ final class DocumentStore: ObservableObject {
         }.value
     }
 
-    // Unique tmp name per write so even an accidental overlap can't collide on a shared path.
+    // Sandbox-safe atomic replace. A file-scoped security bookmark grants read/write on the
+    // file itself but NOT permission to create sibling files in its parent directory — so a
+    // `.name.tmp` next to the target fails with "Operation not permitted" (esp. in iCloud Drive).
+    // Instead we stage the temp in the system item-replacement directory (same volume, always
+    // writable by the sandbox), then let `replaceItemAt` perform the atomic swap into place.
     private nonisolated static func atomicReplace(_ data: Data, at url: URL) throws {
-        let tmpURL = url.deletingLastPathComponent()
-            .appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
+        let fm = FileManager.default
+        let tmpDir = try fm.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                                appropriateFor: url, create: true)
+        defer { try? fm.removeItem(at: tmpDir) }
+        let tmpURL = tmpDir.appendingPathComponent(url.lastPathComponent)
         try data.write(to: tmpURL)
-        _ = try FileManager.default.replaceItemAt(url, withItemAt: tmpURL)
+        _ = try fm.replaceItemAt(url, withItemAt: tmpURL)
     }
 
     // MARK: - Recents (security-scoped bookmarks)
