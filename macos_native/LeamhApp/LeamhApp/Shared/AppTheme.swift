@@ -50,6 +50,27 @@ enum BodyTextSize: String, CaseIterable {
     }
 }
 
+/// Reader line spacing. Mirrors Android's `line_spacing` pref and the multipliers in
+/// `ReaderTheme.lineSpacingMult` (normal 1.15 / comfortable 1.25 / spacious 1.32).
+enum LineSpacing: String, CaseIterable {
+    case normal, comfortable, spacious
+
+    var label: String {
+        switch self {
+        case .normal:      return "Normal"
+        case .comfortable: return "Comfortable"
+        case .spacious:    return "Spacious"
+        }
+    }
+    var multiple: CGFloat {
+        switch self {
+        case .normal:      return 1.15
+        case .comfortable: return 1.25
+        case .spacious:    return 1.32
+        }
+    }
+}
+
 enum AppTheme {
     // CLAUDE.md: warm paper background #F5F0E8
     static let warmPaper = Color(red: 245/255, green: 240/255, blue: 232/255)
@@ -65,6 +86,19 @@ enum AppTheme {
 
     static let bodySize:   CGFloat = 17
     static let chromeSize: CGFloat = 13
+
+    /// Reader body line-height multiple. Mirrors Android's default "comfortable"
+    /// (`ReaderTheme.lineSpacingMult("comfortable")` == 1.25). Applied as an
+    /// `NSMutableParagraphStyle.lineHeightMultiple` on the reader's base attributes.
+    static let readerLineHeightMultiple: CGFloat = LineSpacing.comfortable.multiple
+
+    /// Paragraph style carrying the reader body line spacing. Baked into the base
+    /// attributes of both readers' attributed strings so paged slices inherit it.
+    static func readerParagraphStyle(lineHeight: CGFloat = readerLineHeightMultiple) -> NSParagraphStyle {
+        let p = NSMutableParagraphStyle()
+        p.lineHeightMultiple = lineHeight
+        return p
+    }
 
     /// Process-wide active READER font (Android `ReaderTheme.bodyFont` analogue). ONLY the
     /// reader body honours this (the ui*/ns* helpers below); all SwiftUI chrome stays on San

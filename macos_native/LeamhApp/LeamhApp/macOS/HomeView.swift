@@ -185,6 +185,10 @@ struct ReaderScreen: View {
                             ForEach(BodyTextSize.allCases, id: \.rawValue) { Text($0.label).tag($0) }
                         }
                         .pickerStyle(.inline)
+                        Picker("Line Spacing", selection: $store.lineSpacing) {
+                            ForEach(LineSpacing.allCases, id: \.rawValue) { Text($0.label).tag($0) }
+                        }
+                        .pickerStyle(.inline)
                         Picker("Paper Theme", selection: $store.paperTheme) {
                             ForEach(PaperTheme.allCases, id: \.rawValue) { Text($0.label).tag($0) }
                         }

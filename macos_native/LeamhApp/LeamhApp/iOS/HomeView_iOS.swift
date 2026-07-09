@@ -352,6 +352,7 @@ private struct ReaderScreen: View {
                         Menu {
                             Menu("Font") { fontMenuItems }
                             Menu("Text Size") { sizeMenuItems }
+                            Menu("Line Spacing") { lineSpacingMenuItems }
                             Menu("Paper Theme") { themeMenuItems }
                             Menu("Navigation Mode") {
                                 ForEach(NavMode.allCases, id: \.rawValue) { mode in
@@ -380,6 +381,7 @@ private struct ReaderScreen: View {
                         Menu {
                             Menu("Font") { fontMenuItems }
                             Menu("Text Size") { sizeMenuItems }
+                            Menu("Line Spacing") { lineSpacingMenuItems }
                             Menu("Paper Theme") { themeMenuItems }
                             Divider()
                             Button {
@@ -449,6 +451,20 @@ private struct ReaderScreen: View {
                     Label(size.label, systemImage: "checkmark")
                 } else {
                     Text(size.label)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var lineSpacingMenuItems: some View {
+        ForEach(LineSpacing.allCases, id: \.rawValue) { spacing in
+            Button {
+                store.lineSpacing = spacing
+            } label: {
+                if store.lineSpacing == spacing {
+                    Label(spacing.label, systemImage: "checkmark")
+                } else {
+                    Text(spacing.label)
                 }
             }
         }

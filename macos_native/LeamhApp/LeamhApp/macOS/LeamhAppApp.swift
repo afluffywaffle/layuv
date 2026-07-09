@@ -38,6 +38,13 @@ struct LeamhAppApp: App {
                 }
                 .pickerStyle(.inline)
                 Divider()
+                Picker("Line Spacing", selection: $store.lineSpacing) {
+                    ForEach(LineSpacing.allCases, id: \.rawValue) { spacing in
+                        Text(spacing.label).tag(spacing)
+                    }
+                }
+                .pickerStyle(.inline)
+                Divider()
                 Picker("Paper Theme", selection: $store.paperTheme) {
                     ForEach(PaperTheme.allCases, id: \.rawValue) { theme in
                         Text(theme.label).tag(theme)

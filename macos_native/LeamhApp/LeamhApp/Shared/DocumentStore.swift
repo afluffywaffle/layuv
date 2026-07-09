@@ -37,6 +37,17 @@ final class DocumentStore: ObservableObject {
         }
     }
 
+    private let lineSpacingKey = "com.afluffywaffle.layuv.lineSpacing"
+
+    /// Reader line spacing (normal/comfortable/spacious). Reader-only, like Android's `line_spacing`.
+    /// The @Published re-renders the reader; the readers read `lineSpacing.multiple` directly.
+    @Published var lineSpacing: LineSpacing {
+        didSet {
+            guard oldValue != lineSpacing else { return }
+            UserDefaults.standard.set(lineSpacing.rawValue, forKey: lineSpacingKey)
+        }
+    }
+
     private let paperThemeKey  = "com.afluffywaffle.layuv.paperTheme"      // global default / last-used
     private let docThemesKey   = "com.afluffywaffle.layuv.docThemes"        // [docPath: themeRawValue]
 
@@ -162,6 +173,8 @@ final class DocumentStore: ObservableObject {
         fontChoice = choice
         bodyTextSize = UserDefaults.standard.string(forKey: fontSizeKey)
             .flatMap(BodyTextSize.init(rawValue:)) ?? .medium
+        lineSpacing = UserDefaults.standard.string(forKey: lineSpacingKey)
+            .flatMap(LineSpacing.init(rawValue:)) ?? .comfortable
         let theme = UserDefaults.standard.string(forKey: paperThemeKey)
             .flatMap(PaperTheme.init(rawValue:)) ?? .parchment
         paperTheme = theme

@@ -79,7 +79,8 @@ struct ReaderTextView: UIViewControllerRepresentable {
     func updateUIViewController(_ vc: ReaderViewController, context: Context) {
         vc.setTheme(paperTheme)
         vc.update(document: document, annotations: annotations,
-                  documentURL: documentURL, bodySize: bodyPointSize)
+                  documentURL: documentURL, bodySize: bodyPointSize,
+                  lineHeight: store.lineSpacing.multiple)
         if vc.twoColumnEnabled != twoColumnPaged {
             vc.twoColumnEnabled = twoColumnPaged
             vc.invalidatePagination()
@@ -110,11 +111,13 @@ struct ReaderTextView: UIViewControllerRepresentable {
     static func makeAttributedString(document doc: LoadedDocument,
                                      annotations: [ResolvedAnnotation],
                                      bodySize: CGFloat = AppTheme.bodySize,
+                                     lineHeight: CGFloat = AppTheme.readerLineHeightMultiple,
                                      theme: PaperTheme = AppTheme.currentTheme) -> NSAttributedString {
         let ink = theme.uiInk
         let str = NSMutableAttributedString(string: doc.plainText, attributes: [
             .font:            AppTheme.uiBody(size: bodySize),
             .foregroundColor: ink,
+            .paragraphStyle:  AppTheme.readerParagraphStyle(lineHeight: lineHeight),
         ])
         let utf16len = doc.plainText.utf16.count
 
@@ -190,6 +193,7 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
     private var fullPlainText: NSString = ""
     private var currentAnnotations: [ResolvedAnnotation] = []
     private var bodySize = AppTheme.bodySize
+    private var lineHeight = AppTheme.readerLineHeightMultiple
     private var paperTheme: PaperTheme = .parchment
     private var lastDocumentURL: URL?
     private var hasRendered = false
@@ -269,18 +273,20 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
     // MARK: Content update
 
     func update(document: LoadedDocument, annotations: [ResolvedAnnotation],
-                documentURL: URL?, bodySize: CGFloat) {
+                documentURL: URL?, bodySize: CGFloat, lineHeight: CGFloat) {
         let isNew = !hasRendered || documentURL != lastDocumentURL
         currentAnnotations = annotations
         self.bodySize      = bodySize
+        self.lineHeight    = lineHeight
         fullPlainText      = document.plainText as NSString
         fullAttributed     = ReaderTextView.makeAttributedString(document: document,
                                                                  annotations: annotations,
-                                                                 bodySize: bodySize)
+                                                                 bodySize: bodySize,
+                                                                 lineHeight: lineHeight)
         if isNew { lastDocumentURL = documentURL; hasRendered = true; pageIndex = 0 }
         scrollSurface?.fullPlainText = fullPlainText
 
-        let key = "\(fullPlainText.length)-\(bodySize)"
+        let key = "\(fullPlainText.length)-\(bodySize)-\(lineHeight)"
         let layoutChanged = key != lastPaginationKey
         lastPaginationKey = key
 
@@ -363,6 +369,8 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
             pageVC?.setViewControllers([page], direction: .forward, animated: false)
         }
         if let p = pageVC { restrictPagingToFinger(p) }
+        // Notify the sidebar shuttle of the real page count now that pagination is complete.
+        onPageChanged?(pageIndex, pages.count)
     }
 
     /// Restricts the page-view's paging gestures (pageCurl pan/tap, or the .scroll style's inner

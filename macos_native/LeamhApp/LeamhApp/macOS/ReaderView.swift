@@ -89,6 +89,7 @@ struct ReaderView: NSViewControllerRepresentable {
         vc.leftHanded = leftHanded
         vc.update(document: doc, annotations: store.annotations,
                   bodySize: store.bodyTextSize.points,
+                  lineHeight: store.lineSpacing.multiple,
                   navMode: navMode, twoColumn: twoColumn, theme: theme, font: font)
         DispatchQueue.main.async { coordinator.sync() }
     }
@@ -176,6 +177,7 @@ final class ReaderViewController: NSViewController {
     private var fullText: NSString = ""
     private var currentAnnotations: [ResolvedAnnotation] = []
     private var bodySize: CGFloat = AppTheme.bodySize
+    private var lineHeight: CGFloat = AppTheme.readerLineHeightMultiple
     private var theme: PaperTheme = .parchment
     private var font: FontChoice = .serif
     var leftHanded = false
@@ -273,6 +275,8 @@ final class ReaderViewController: NSViewController {
         if navMode == .pageFlip {
             paginationDirty = true
             relayoutPaged()
+            // Notify after layout so the sidebar shuttle gets the real page count.
+            onPageChanged?()
         }
     }
 
@@ -374,9 +378,10 @@ final class ReaderViewController: NSViewController {
     // MARK: Content update
 
     func update(document: LoadedDocument, annotations: [ResolvedAnnotation],
-                bodySize: CGFloat, navMode: NavMode, twoColumn: Bool,
+                bodySize: CGFloat, lineHeight: CGFloat, navMode: NavMode, twoColumn: Bool,
                 theme: PaperTheme, font: FontChoice) {
         let contentChanged = bodySize != self.bodySize
+            || lineHeight != self.lineHeight
             || theme != self.theme
             || font != self.font
             || document.plainText as NSString != fullText
@@ -385,6 +390,7 @@ final class ReaderViewController: NSViewController {
         let themeChanged = theme != self.theme
 
         self.bodySize = bodySize
+        self.lineHeight = lineHeight
         self.navMode = navMode
         self.twoColumn = twoColumn
         self.theme = theme
@@ -397,7 +403,8 @@ final class ReaderViewController: NSViewController {
         if contentChanged {
             fullAttributed = Self.makeAttributedString(document: document,
                                                        annotations: annotations,
-                                                       bodySize: bodySize, theme: theme)
+                                                       bodySize: bodySize, lineHeight: lineHeight,
+                                                       theme: theme)
             setScrollContent()
             paginationDirty = true
         }
@@ -726,11 +733,13 @@ final class ReaderViewController: NSViewController {
     static func makeAttributedString(document doc: LoadedDocument,
                                      annotations: [ResolvedAnnotation],
                                      bodySize: CGFloat,
+                                     lineHeight: CGFloat = AppTheme.readerLineHeightMultiple,
                                      theme: PaperTheme = AppTheme.currentTheme) -> NSAttributedString {
         let ink = theme.nsInk
         let str = NSMutableAttributedString(string: doc.plainText, attributes: [
             .font:            AppTheme.nsBody(size: bodySize),
             .foregroundColor: ink,
+            .paragraphStyle:  AppTheme.readerParagraphStyle(lineHeight: lineHeight),
         ])
         let utf16len = doc.plainText.utf16.count
 
