@@ -43,6 +43,7 @@ struct AnnotationEditSheet: View {
                     Text("Strikethrough").tag(AnnotationTool.strikethrough)
                     Text("Double Underline").tag(AnnotationTool.doubleUnderline)
                     Text("Wavy Underline").tag(AnnotationTool.wavyUnderline)
+                    Text("Highlight Paragraph").tag(AnnotationTool.blockquote)
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
