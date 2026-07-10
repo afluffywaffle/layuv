@@ -199,6 +199,13 @@ final class DocumentStore: ObservableObject {
 
     #if os(macOS)
     func openFilePanel() {
+        guard let url = DocumentStore.runOpenPanel() else { return }
+        Task { await openAny(url: url) }
+    }
+
+    /// Presents the standard open panel and returns the chosen file WITHOUT loading it, so the
+    /// caller can open it in a NEW window (multi-window model) rather than mutating this store.
+    static func runOpenPanel() -> URL? {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [
             UTType(filenameExtension: "docx"),
@@ -206,8 +213,8 @@ final class DocumentStore: ObservableObject {
         ].compactMap { $0 }
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        Task { await openAny(url: url) }
+        guard panel.runModal() == .OK else { return nil }
+        return panel.url
     }
     #endif
 

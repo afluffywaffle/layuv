@@ -1,7 +1,10 @@
 import SwiftUI
 
 final class LeamhAppDelegate: NSObject, NSApplicationDelegate {
-    var store: DocumentStore? {
+    /// The SwiftUI open-window action, captured from a live window's environment. Finder/`open`
+    /// file requests are routed through this so each file lands in its OWN window (multi-window
+    /// model) instead of mutating a single shared document store.
+    var openWindow: OpenWindowAction? {
         didSet { flushPendingURLs() }
     }
     private var pendingURLs: [URL] = []
@@ -18,12 +21,12 @@ final class LeamhAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func flushPendingURLs() {
-        guard let store, !pendingURLs.isEmpty else { return }
+        guard let openWindow, !pendingURLs.isEmpty else { return }
         let urls = pendingURLs
         pendingURLs.removeAll()
-        for url in urls {
-            Task { await store.openAny(url: url) }
-        }
+        // WindowGroup(for: URL.self) dedupes by value, so opening a file already shown just
+        // focuses its existing window instead of spawning a duplicate.
+        for url in urls { openWindow(value: url) }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -33,60 +36,91 @@ final class LeamhAppDelegate: NSObject, NSApplicationDelegate {
 
 @main
 struct LeamhAppApp: App {
-    @StateObject private var store = DocumentStore()
     @NSApplicationDelegateAdaptor(LeamhAppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        WindowGroup {
-            HomeView()
-                .environmentObject(store)
-                .onAppear { appDelegate.store = store }
-                // Layuv is a warm-paper reading surface (light by design): pin to light UNLESS the
-                // user opts into following the OS dark mode (then the reader uses the Night paper).
-                .preferredColorScheme(store.followsDarkMode ? nil : .light)
+        // Value-based window group: each window owns its own DocumentStore, keyed by the file
+        // URL it was opened with. Opening another file spawns a NEW window and never disturbs
+        // the document already shown in existing windows.
+        WindowGroup(for: URL.self) { $url in
+            HomeWindow(url: url)
         }
         .windowResizability(.contentSize)
         .commands {
             CommandGroup(replacing: .newItem) { }
-            CommandGroup(after: .newItem) {
-                Button("Open…") { store.openFilePanel() }
-                    .keyboardShortcut("o")
+            DocumentCommands()
+        }
+    }
+}
+
+/// One window's worth of state: a private DocumentStore that loads the window's URL. The store is
+/// exposed to the menu bar via `focusedSceneObject` so File/Format commands act on the focused
+/// window, and the open-window action is handed to the app delegate for Finder file opens.
+private struct HomeWindow: View {
+    let url: URL?
+    @StateObject private var store = DocumentStore()
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        HomeView()
+            .environmentObject(store)
+            .focusedSceneObject(store)
+            // Layuv is a warm-paper reading surface (light by design): pin to light UNLESS the
+            // user opts into following the OS dark mode (then the reader uses the Night paper).
+            .preferredColorScheme(store.followsDarkMode ? nil : .light)
+            .onAppear {
+                (NSApp.delegate as? LeamhAppDelegate)?.openWindow = openWindow
             }
-            CommandGroup(after: .saveItem) {
-                Button("Save") { Task { await store.save() } }
-                    .keyboardShortcut("s")
+            .task(id: url) {
+                if let url, store.currentURL != url {
+                    await store.openAny(url: url)
+                }
             }
-            CommandMenu("Format") {
-                Picker("Font", selection: $store.fontChoice) {
-                    ForEach(FontChoice.allCases, id: \.rawValue) { choice in
-                        Text(choice.label).tag(choice)
-                    }
+    }
+}
+
+/// Menu-bar commands routed to the focused window's DocumentStore. `Open…` and recents open a NEW
+/// window rather than replacing the focused document.
+private struct DocumentCommands: Commands {
+    @FocusedObject private var store: DocumentStore?
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(after: .newItem) {
+            Button("Open…") {
+                if let url = DocumentStore.runOpenPanel() { openWindow(value: url) }
+            }
+            .keyboardShortcut("o")
+        }
+        CommandGroup(after: .saveItem) {
+            Button("Save") { if let store { Task { await store.save() } } }
+                .keyboardShortcut("s")
+                .disabled(store == nil)
+        }
+        CommandMenu("Format") {
+            if let store {
+                Picker("Font", selection: Binding(get: { store.fontChoice }, set: { store.fontChoice = $0 })) {
+                    ForEach(FontChoice.allCases, id: \.rawValue) { Text($0.label).tag($0) }
                 }
                 .pickerStyle(.inline)
                 Divider()
-                Picker("Text Size", selection: $store.bodyTextSize) {
-                    ForEach(BodyTextSize.allCases, id: \.rawValue) { size in
-                        Text(size.label).tag(size)
-                    }
+                Picker("Text Size", selection: Binding(get: { store.bodyTextSize }, set: { store.bodyTextSize = $0 })) {
+                    ForEach(BodyTextSize.allCases, id: \.rawValue) { Text($0.label).tag($0) }
                 }
                 .pickerStyle(.inline)
                 Divider()
-                Picker("Line Spacing", selection: $store.lineSpacing) {
-                    ForEach(LineSpacing.allCases, id: \.rawValue) { spacing in
-                        Text(spacing.label).tag(spacing)
-                    }
+                Picker("Line Spacing", selection: Binding(get: { store.lineSpacing }, set: { store.lineSpacing = $0 })) {
+                    ForEach(LineSpacing.allCases, id: \.rawValue) { Text($0.label).tag($0) }
                 }
                 .pickerStyle(.inline)
                 Divider()
-                Picker("Paper Theme", selection: $store.paperTheme) {
-                    ForEach(PaperTheme.allCases, id: \.rawValue) { theme in
-                        Text(theme.label).tag(theme)
-                    }
+                Picker("Paper Theme", selection: Binding(get: { store.paperTheme }, set: { store.paperTheme = $0 })) {
+                    ForEach(PaperTheme.allCases, id: \.rawValue) { Text($0.label).tag($0) }
                 }
                 .pickerStyle(.inline)
                 Divider()
-                Toggle("Follow System Dark Mode (Night)", isOn: $store.followsDarkMode)
-                Toggle("Left-Handed Navigation (WASD)", isOn: $store.leftHandedNav)
+                Toggle("Follow System Dark Mode (Night)", isOn: Binding(get: { store.followsDarkMode }, set: { store.followsDarkMode = $0 }))
+                Toggle("Left-Handed Navigation (WASD)", isOn: Binding(get: { store.leftHandedNav }, set: { store.leftHandedNav = $0 }))
             }
         }
     }

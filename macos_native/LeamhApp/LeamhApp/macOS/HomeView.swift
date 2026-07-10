@@ -21,13 +21,20 @@ private struct HiddenToolbarBackground: ViewModifier {
 struct HomeView: View {
     @EnvironmentObject var store: DocumentStore
     @StateObject private var readerCoordinator = ReaderCoordinator()
+    @Environment(\.openWindow) private var openWindow
+
+    /// Open a file in a NEW window (multi-window model) rather than replacing this window's document.
+    private func openInNewWindow(_ url: URL) { openWindow(value: url) }
+    private func promptOpenInNewWindow() {
+        if let url = DocumentStore.runOpenPanel() { openWindow(value: url) }
+    }
 
     var body: some View {
         NavigationSplitView {
             SidebarPanelView(
                 onFind:               { readerCoordinator.find() },
                 onScrollTo:           { readerCoordinator.scrollTo(annotationId: $0.id) },
-                onOpenFile:           { store.openFilePanel() },
+                onOpenFile:           { promptOpenInNewWindow() },
                 onScrollToCharOffset: { readerCoordinator.scrollToCharOffset($0) },
                 onGoToPage:           { readerCoordinator.goToPage($0) },
                 currentPage: Binding(
@@ -71,7 +78,7 @@ struct HomeView: View {
                 Text("Open a DOCX file to begin reading.")
                     .font(AppTheme.chrome())
                     .foregroundStyle(AppTheme.warmPaperInkMuted)
-                Button("Open…") { store.openFilePanel() }
+                Button("Open…") { promptOpenInNewWindow() }
                     .buttonStyle(.borderedProminent)
                     .padding(.top, 4)
             }
