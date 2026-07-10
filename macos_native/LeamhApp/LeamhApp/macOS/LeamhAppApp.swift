@@ -43,7 +43,7 @@ struct LeamhAppApp: App {
         // URL it was opened with. Opening another file spawns a NEW window and never disturbs
         // the document already shown in existing windows.
         WindowGroup(for: URL.self) { $url in
-            HomeWindow(url: url)
+            HomeWindow(url: url, appDelegate: appDelegate)
         }
         .windowResizability(.contentSize)
         .commands {
@@ -58,6 +58,9 @@ struct LeamhAppApp: App {
 /// window, and the open-window action is handed to the app delegate for Finder file opens.
 private struct HomeWindow: View {
     let url: URL?
+    /// The REAL delegate adaptor instance. `NSApp.delegate` is SwiftUI's own forwarding
+    /// AppDelegate (not our type), so we must inject the adaptor directly rather than casting it.
+    let appDelegate: LeamhAppDelegate
     @StateObject private var store = DocumentStore()
     @Environment(\.openWindow) private var openWindow
 
@@ -69,7 +72,7 @@ private struct HomeWindow: View {
             // user opts into following the OS dark mode (then the reader uses the Night paper).
             .preferredColorScheme(store.followsDarkMode ? nil : .light)
             .onAppear {
-                (NSApp.delegate as? LeamhAppDelegate)?.openWindow = openWindow
+                appDelegate.openWindow = openWindow
             }
             .task(id: url) {
                 if let url, store.currentURL != url {
