@@ -18,7 +18,7 @@ DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}
 # builds should stay in DerivedData (use xcodebuild directly to just check that
 # it compiles). This keeps /Applications/Layuv.app always pointing at a real
 # commit, never at uncommitted or half-finished work.
-if [[ -n "$(git -C "$REPO_DIR" status --porcelain)" ]]; then
+if [[ -n "$(git -C "$REPO_DIR" status --porcelain --untracked-files=no)" ]]; then
   echo "error: working tree has uncommitted changes — commit first, then install." >&2
   echo "(to just check that it compiles without installing, run xcodebuild directly)" >&2
   exit 1
