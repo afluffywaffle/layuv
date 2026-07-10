@@ -64,6 +64,9 @@ struct HomeView: View {
                 emptyState
             }
         }
+        // Per-window title from the document (dc:title → file name), so the Dock/Window menu and
+        // title bar identify which document each window holds.
+        .navigationTitle(store.document != nil ? store.windowTitle : "Layuv")
     }
 
     private var emptyState: some View {

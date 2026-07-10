@@ -25,6 +25,18 @@ final class DocumentStore: ObservableObject {
     @Published var lockedTool: AnnotationTool?
 
     @Published private(set) var currentURL: URL?
+
+    /// Title for the document window: the DOCX `dc:title` when meaningful, else the file name.
+    /// Generic placeholders Word/Pages leave behind ("Untitled", "Document") fall back to the name.
+    var windowTitle: String {
+        let fileName = currentURL?.deletingPathExtension().lastPathComponent
+        if let t = document?.title?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty {
+            let generic: Set<String> = ["untitled", "untitled document", "document", "untitled.docx"]
+            if !generic.contains(t.lowercased()) { return t }
+        }
+        return fileName ?? "Layuv"
+    }
+
     // Track the URL whose security scope we're holding so we can release on next load.
     private var accessedURL: URL?
 

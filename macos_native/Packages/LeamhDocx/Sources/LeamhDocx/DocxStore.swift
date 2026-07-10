@@ -15,6 +15,9 @@ public struct LoadedDocument {
     public let plainMap: PlainMap
     public let annotations: [ResolvedAnnotation]
     public let position: ReadingPosition?
+    /// `dc:title` from docProps/core.xml, trimmed; nil when absent/empty. Callers fall back to the
+    /// file name for display (window titles). Read-only, so existing goldens are unaffected.
+    public var title: String? = nil
 
     public var plainText: String { plainMap.plain }
     public var formatSpans: [FormatSpan] { plainMap.formats }
@@ -40,6 +43,7 @@ public enum DocxStore {
     private static let docRelsPath      = "word/_rels/document.xml.rels"
     private static let commentsRelsPath = "word/_rels/comments.xml.rels"
     private static let contentTypesPath = "[Content_Types].xml"
+    private static let corePropsPath    = "docProps/core.xml"
 
     public static func load(_ docxData: Data, now: Date = Date()) throws -> LoadedDocument {
         let archive = try DocxArchive.read(docxData)
@@ -48,8 +52,21 @@ public enum DocxStore {
         return LoadedDocument(
             plainMap: map,
             annotations: loadAnnotations(archive: archive, map: map, documentXml: documentXml, now: now),
-            position: loadPosition(archive: archive)
+            position: loadPosition(archive: archive),
+            title: loadTitle(archive: archive)
         )
+    }
+
+    /// Extracts a trimmed `<dc:title>` from docProps/core.xml. Returns nil when the element is
+    /// absent or empty so callers fall back to the file name.
+    static func loadTitle(archive: DocxArchive) -> String? {
+        guard let xml = archive.text(named: corePropsPath) else { return nil }
+        guard let open = xml.range(of: "<dc:title>"),
+              let close = xml.range(of: "</dc:title>"),
+              open.upperBound <= close.lowerBound else { return nil }
+        let raw = XmlEntities.decode(String(xml[open.upperBound..<close.lowerBound]))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return raw.isEmpty ? nil : raw
     }
 
     public static func loadAnnotations(
