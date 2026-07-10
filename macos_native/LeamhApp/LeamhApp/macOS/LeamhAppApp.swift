@@ -1,5 +1,6 @@
 import SwiftUI
 
+@MainActor
 final class LeamhAppDelegate: NSObject, NSApplicationDelegate {
     /// The SwiftUI open-window action, captured from a live window's environment. Finder/`open`
     /// file requests are routed through this so each file lands in its OWN window (multi-window
@@ -8,6 +9,17 @@ final class LeamhAppDelegate: NSObject, NSApplicationDelegate {
         didSet { flushPendingURLs() }
     }
     private var pendingURLs: [URL] = []
+
+    /// The empty (url == nil) launch window's store, offered up so a Finder/`open` document loads
+    /// straight INTO it instead of spawning a separate window. SwiftUI always creates one empty
+    /// window scene at launch; reusing it means a double-click shows just the document — not the
+    /// document plus a stray blank window. Weak so a genuinely-closed empty window drops out.
+    private weak var emptyStore: DocumentStore?
+
+    func registerEmptyStore(_ store: DocumentStore) {
+        emptyStore = store
+        flushPendingURLs()
+    }
 
     func application(_ application: NSApplication, open urls: [URL]) {
         pendingURLs.append(contentsOf: urls)
@@ -21,12 +33,21 @@ final class LeamhAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func flushPendingURLs() {
-        guard let openWindow, !pendingURLs.isEmpty else { return }
-        let urls = pendingURLs
-        pendingURLs.removeAll()
+        guard !pendingURLs.isEmpty else { return }
+        // Reuse the empty launch window for the FIRST url (no stray blank window). Once it holds a
+        // document it's no longer empty, so drop the reference and route the rest to new windows.
+        if let store = emptyStore, store.currentURL == nil {
+            let first = pendingURLs.removeFirst()
+            emptyStore = nil
+            Task { @MainActor in await store.openAny(url: first) }
+        }
+        // Remaining urls each get their own window (needs the captured openWindow action).
         // WindowGroup(for: URL.self) dedupes by value, so opening a file already shown just
         // focuses its existing window instead of spawning a duplicate.
-        for url in urls { openWindow(value: url) }
+        guard let openWindow, !pendingURLs.isEmpty else { return }
+        let rest = pendingURLs
+        pendingURLs.removeAll()
+        for url in rest { openWindow(value: url) }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -73,6 +94,9 @@ private struct HomeWindow: View {
             .preferredColorScheme(store.followsDarkMode ? nil : .light)
             .onAppear {
                 appDelegate.openWindow = openWindow
+                // Offer an empty launch window up for reuse, so a Finder/`open` document loads
+                // into it rather than spawning a second, blank window alongside the document.
+                if url == nil { appDelegate.registerEmptyStore(store) }
             }
             .task(id: url) {
                 if let url, store.currentURL != url {
