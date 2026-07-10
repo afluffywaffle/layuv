@@ -79,6 +79,7 @@ class ToolIconRenderer(private val context: Context) {
             AnnotationTool.bookmark        -> drawVecIcon(canvas, R.drawable.ic_bookmark_outline, cx, cy, size)
             AnnotationTool.comment         -> drawVecIcon(canvas, R.drawable.ic_chat_outline, cx, cy, size)
             AnnotationTool.inkAnnotation   -> drawVecIcon(canvas, R.drawable.ic_edit_outline, cx, cy, size)
+            AnnotationTool.blockquote      -> drawBlockquote(canvas, cx, cy, size)
         }
     }
 
@@ -92,6 +93,16 @@ class ToolIconRenderer(private val context: Context) {
         canvas.drawRect(rect, hlFill)
         hlBorder.strokeWidth = px(0.6f)
         canvas.drawRect(rect, hlBorder)
+    }
+
+    /** Same grey swatch as [drawHighlight] plus a solid left border bar — e-ink blockquote glyph. */
+    private fun drawBlockquote(canvas: Canvas, cx: Float, cy: Float, size: Float) {
+        val halfW = size / 2f
+        val halfH = size * 0.35f
+        rect.set(cx - halfW, cy - halfH, cx + halfW, cy + halfH)
+        canvas.drawRect(rect, hlFill)
+        val barWidth = px(2.5f)
+        canvas.drawRect(rect.left, rect.top, rect.left + barWidth, rect.bottom, fill)
     }
 
     /**

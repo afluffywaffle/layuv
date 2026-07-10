@@ -167,6 +167,10 @@ object LegacyComments {
                 note = if (note.isNullOrEmpty()) null else note,
                 timestamp = rc.timestamp,
                 position = legacyMatch.groupValues[3].toInt() / 100.0,
+                paragraph = PlainTextMapper.paragraphIndex(
+                    map.plain,
+                    (legacyMatch.groupValues[3].toInt() / 100.0 * map.plain.length).toInt(),
+                ),
             )
         }
 
@@ -184,6 +188,7 @@ object LegacyComments {
             note = note.ifEmpty { null },
             timestamp = rc.timestamp,
             position = ex.position,
+            paragraph = ex.paragraph,
         )
     }
 
@@ -213,7 +218,13 @@ object LegacyComments {
     private fun nativeNoteText(texts: List<String>): String =
         texts.filter { it.trim().isNotEmpty() }.joinToString(" ").trim()
 
-    private data class Extracted(val text: String, val prefix: String, val suffix: String, val position: Double)
+    private data class Extracted(
+        val text: String,
+        val prefix: String,
+        val suffix: String,
+        val position: Double,
+        val paragraph: Int = 0,
+    )
 
     private fun extractFromCommentRange(documentXml: String, commentId: String, map: PlainMap): Extracted {
         val startMarker = "<w:commentRangeStart w:id=\"$commentId\"/>"
@@ -242,6 +253,7 @@ object LegacyComments {
             prefix = plain.substring((plainIdx - 20).coerceIn(0, plainIdx), plainIdx),
             suffix = plain.substring(plainEnd, (plainEnd + 20).coerceIn(plainEnd, plain.length)),
             position = position,
+            paragraph = PlainTextMapper.paragraphIndex(plain, plainIdx),
         )
     }
 }

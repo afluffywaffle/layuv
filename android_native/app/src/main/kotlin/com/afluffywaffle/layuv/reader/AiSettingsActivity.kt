@@ -22,6 +22,7 @@ import com.afluffywaffle.layuv.ai.AiProviderFactory
 import com.afluffywaffle.layuv.ai.AiResult
 import com.afluffywaffle.layuv.ai.CleartextPolicy
 import com.afluffywaffle.layuv.ai.SecureKeyStore
+import java.io.File
 import java.util.concurrent.Executors
 
 /**
@@ -45,6 +46,9 @@ class AiSettingsActivity : Activity() {
     private lateinit var keyField: EditText
     private lateinit var keyToggle: TextView
     private var keyVisible = false
+    private lateinit var contextLimitField: EditText
+    private lateinit var libraryDirLabel: TextView
+    private lateinit var libraryWarning: TextView
     private lateinit var statusLabel: TextView
     private var testing = false
 
@@ -199,6 +203,81 @@ class AiSettingsActivity : Activity() {
             setTextColor(ReaderTheme.INK_54)
         }, lp(topMargin = dp(8f)))
 
+        // Context window (experimental) — optional, for local models only.
+        body.addView(sectionLabel("Context window (tokens) — experimental"), lp(topMargin = dp(24f)))
+        body.addView(TextView(this).apply {
+            text = "For local models only. Cloud providers (Claude, Gemini, OpenAI) manage context automatically."
+            typeface = ReaderTheme.body(this@AiSettingsActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextColor(ReaderTheme.INK_54)
+        }, lp(topMargin = dp(4f)))
+        contextLimitField = EditText(this).apply {
+            typeface = ReaderTheme.body(this@AiSettingsActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, ReaderTheme.BODY_TEXT_SP)
+            setTextColor(ReaderTheme.INK_87)
+            setHintTextColor(HINT)
+            setHighlightColor(android.graphics.Color.argb(60, 0, 0, 0))
+            inputType = InputType.TYPE_CLASS_NUMBER
+            isSingleLine = true
+            hint = "e.g. 32768 — leave blank for cloud models"
+            val saved = prefs().getInt("ai_context_limit", 0)
+            if (saved > 0) setText(saved.toString())
+            setPadding(dp(12f), dp(10f), dp(12f), dp(10f))
+            background = popupBackground()
+            minimumHeight = dp(48f)
+        }
+        body.addView(contextLimitField, lp(topMargin = dp(8f)))
+
+        // Reference library — folder of .md/.txt files injected as a system message on every send.
+        body.addView(sectionLabel("Reference library"), lp(topMargin = dp(24f)))
+        body.addView(TextView(this).apply {
+            text = "These files are sent with every request so the AI has context about your project."
+            typeface = ReaderTheme.body(this@AiSettingsActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextColor(ReaderTheme.INK_54)
+        }, lp(topMargin = dp(4f)))
+        libraryDirLabel = TextView(this).apply {
+            typeface = ReaderTheme.body(this@AiSettingsActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setTextColor(ReaderTheme.INK_87)
+            setPadding(dp(12f), dp(10f), dp(12f), dp(10f))
+            background = popupBackground()
+            minimumHeight = dp(48f)
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val libraryRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        libraryRow.addView(libraryDirLabel, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+        libraryRow.addView(
+            textButton("Choose", bold = true) {
+                @Suppress("DEPRECATION")
+                startActivityForResult(
+                    Intent(this@AiSettingsActivity, FileBrowserActivity::class.java)
+                        .putExtra(FileBrowserActivity.EXTRA_PICK_DIR, true),
+                    REQUEST_PICK_DIR,
+                )
+            },
+            LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.leftMargin = dp(4f) },
+        )
+        libraryRow.addView(
+            textButton("Clear", bold = true) {
+                prefs().edit().remove("ai_library_dir").apply()
+                updateLibraryDisplay(null)
+            },
+            LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).also { it.leftMargin = dp(4f) },
+        )
+        body.addView(libraryRow, lp(topMargin = dp(8f)))
+        libraryWarning = TextView(this).apply {
+            typeface = ReaderTheme.body(this@AiSettingsActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextColor(ReaderTheme.INK_54)
+            visibility = View.GONE
+        }
+        body.addView(libraryWarning, lp(topMargin = dp(4f)))
+        updateLibraryDisplay(prefs().getString("ai_library_dir", "")?.trim()?.ifEmpty { null })
+
         // Save + full removal.
         val btnRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         btnRow.addView(pillButton("Save", filled = true) { save() })
@@ -266,9 +345,11 @@ class AiSettingsActivity : Activity() {
      *  Called by Save AND onPause, so pasting one value at a time across app switches is never lost. */
     private fun persistFields() {
         if (!::baseUrlField.isInitialized) return // locked screen has no fields
+        val limit = contextLimitField.text.toString().trim().toIntOrNull() ?: 0
         prefs().edit()
             .putString("ai_base_url", baseUrlField.text.toString().trim())
             .putString("ai_model", modelField.text.toString().trim())
+            .putInt("ai_context_limit", limit)
             .apply()
         keyField.text.toString().trim().takeIf { it.isNotEmpty() }?.let { SecureKeyStore.write(this, it) }
     }
@@ -307,13 +388,67 @@ class AiSettingsActivity : Activity() {
                 SecureKeyStore.clear(this)
                 val e = prefs().edit().putBoolean(KEY_DISCLOSURE, false)
                 ACK_KEYS.forEach { e.putBoolean(it, false) }
-                // Clear endpoint config too → a clean no-AI state.
+                // Clear endpoint config + library settings → a clean no-AI state.
                 e.remove("ai_base_url").remove("ai_model")
+                    .remove("ai_library_dir").remove("ai_context_limit")
                 e.apply()
                 toast("AI configuration removed.")
                 finish()
             },
         )
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_PICK_DIR && resultCode == RESULT_OK) {
+            val path = data?.getStringExtra(FileBrowserActivity.EXTRA_PATH) ?: return
+            prefs().edit().putString("ai_library_dir", path).apply()
+            if (::libraryDirLabel.isInitialized) updateLibraryDisplay(path)
+        }
+    }
+
+    private fun updateLibraryDisplay(dir: String?) {
+        val (label, warning) = calcLibraryDisplay(dir)
+        libraryDirLabel.text = label
+        if (warning != null) {
+            libraryWarning.text = warning
+            libraryWarning.visibility = View.VISIBLE
+        } else {
+            libraryWarning.visibility = View.GONE
+        }
+    }
+
+    private fun calcLibraryDisplay(dir: String?): Pair<String, String?> {
+        if (dir.isNullOrBlank()) return "Not set" to null
+        val folder = File(dir)
+        if (!folder.isDirectory) return "${folder.name}/ — folder not found" to null
+        val exts = setOf(".md", ".markdown", ".txt", ".text", ".rst", ".org")
+        val files = folder.listFiles()
+            ?.filter { it.isFile && ".${it.extension.lowercase()}" in exts }
+            ?: emptyList()
+        if (files.isEmpty()) return "${folder.name}/ — no reference files found" to null
+        val estTokens = files.sumOf { it.length() } / 4
+        val label = "${folder.name}/ — ${files.size} file${if (files.size == 1) "" else "s"} · ~${formatTokens(estTokens)} tokens"
+        val limit = if (::contextLimitField.isInitialized) {
+            contextLimitField.text.toString().trim().toIntOrNull() ?: 0
+        } else {
+            prefs().getInt("ai_context_limit", 0)
+        }
+        val warning = if (limit > 0) {
+            val budget = limit - 16_000 - 8_000
+            if (budget > 0 && estTokens > budget) {
+                "Library (~${formatTokens(estTokens)} tokens) may exceed the available budget " +
+                    "(~${formatTokens(budget.toLong())} tokens) — some files will be skipped."
+            } else null
+        } else null
+        return label to warning
+    }
+
+    private fun formatTokens(n: Long): String = when {
+        n >= 1_000_000 -> "${n / 1_000_000}M"
+        n >= 1_000 -> "${n / 1_000}k"
+        else -> n.toString()
     }
 
     private fun prefs() = getSharedPreferences("leamh", MODE_PRIVATE)
@@ -445,5 +580,6 @@ class AiSettingsActivity : Activity() {
         private const val KEY_DISCLOSURE = "ai_disclosure_accepted"
         private val ACK_KEYS = listOf("ai_ack_privacy", "ai_ack_storage", "ai_ack_encryption", "ai_ack_verify")
         private const val HINT = 0xFF9E9A92.toInt()
+        private const val REQUEST_PICK_DIR = 1001
     }
 }

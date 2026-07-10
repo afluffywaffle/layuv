@@ -21,6 +21,11 @@ enum AnnotationSortOrder: String, CaseIterable {
 struct AnnotationsPanel: View {
     @EnvironmentObject var store: DocumentStore
 
+    /// Jump the reader to this annotation's position. Tapping a row jumps; editing/deleting
+    /// moves to the row's context menu so the panel stays a persistent nav surface (unlike
+    /// Android's full-screen panel, which closes on tap).
+    let onScrollTo: (Annotation) -> Void
+
     @State private var searchText  = ""
     @State private var activeTags: Set<AnnotationTag> = []
     @State private var sortOrder: AnnotationSortOrder = .position
@@ -166,9 +171,9 @@ struct AnnotationsPanel: View {
     private var annotationList: some View {
         // Button wrapping is required on macOS — onTapGesture is swallowed by the List.
         List(filtered, id: \.annotation.id) { resolved in
-            // Route by kind: ink rows open the ink canvas; others the note sheet (openAnnotation
-            // falls back to the note sheet on macOS, which has no ink editor).
-            Button { store.openAnnotation(resolved.annotation) } label: {
+            // Tap jumps the reader to the annotation's position; edit/delete live in the
+            // row's context menu (see AnnotationRow).
+            Button { onScrollTo(resolved.annotation) } label: {
                 AnnotationRow(resolved: resolved)
             }
             .buttonStyle(.plain)
@@ -260,6 +265,18 @@ struct AnnotationRow: View {
                 Label("Delete", systemImage: "trash")
             }
         }
+        .contextMenu {
+            Button {
+                store.openAnnotation(a)
+            } label: {
+                Label("Edit…", systemImage: "pencil")
+            }
+            Button(role: .destructive) {
+                store.deleteAnnotation(id: a.id)
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
     }
 
     @ViewBuilder private var toolIcon: some View {
@@ -272,6 +289,7 @@ struct AnnotationRow: View {
         case .bookmark:        Image(systemName: "bookmark.fill").foregroundStyle(.orange)
         case .inkAnnotation:   Image(systemName: "pencil.tip").foregroundStyle(.purple)
         case .comment:         Image(systemName: "text.bubble").foregroundStyle(.green)
+        case .blockquote:      Image(systemName: "text.quote").foregroundStyle(Color(red: 0.753, green: 0.439, blue: 0.188))
         }
     }
 

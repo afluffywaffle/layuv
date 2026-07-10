@@ -78,6 +78,9 @@ struct ReaderView: NSViewControllerRepresentable {
             Task { @MainActor in store?.beginInkAnnotation(annotation) }
         }
         vc.onPageChanged = { [weak coordinator] in coordinator?.sync() }
+        vc.onToolLocked = { [weak store] tool in
+            Task { @MainActor in store?.lockedTool = tool }
+        }
         return vc
     }
 
@@ -87,6 +90,7 @@ struct ReaderView: NSViewControllerRepresentable {
         AppTheme.currentTheme = theme
         AppTheme.current = font
         vc.leftHanded = leftHanded
+        vc.lockedTool = store.lockedTool
         vc.update(document: doc, annotations: store.annotations,
                   bodySize: store.bodyTextSize.points,
                   lineHeight: store.lineSpacing.multiple,
@@ -105,8 +109,38 @@ final class AnnotatingTextView: NSTextView {
     /// Set on paged columns (not the scroll surface): forwards wheel/swipe to page-flip handling.
     var onScrollWheelForward: ((NSEvent) -> Void)?
 
+    /// Block-quote paragraph ranges (imported Word w:pBdr/paragraph w:shd) — a solid
+    /// left border is drawn alongside the grey background already baked into the
+    /// attributed string. TextKit has no native per-paragraph border attribute, so
+    /// this is drawn directly; see PaperTheme.nsBlockquoteBorder for the colour.
+    var blockquoteRanges: [NSRange] = []
+    var blockquoteBorderColor: NSColor = .black
+
     override func scrollWheel(with event: NSEvent) {
         if let fwd = onScrollWheelForward { fwd(event) } else { super.scrollWheel(with: event) }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard !blockquoteRanges.isEmpty, let lm = layoutManager, let tc = textContainer else { return }
+        let inset = textContainerInset
+        let totalLen = (string as NSString).length
+        blockquoteBorderColor.setFill()
+        for range in blockquoteRanges {
+            let r = NSRange(location: max(0, min(range.location, totalLen)),
+                             length: max(0, min(range.length, totalLen - max(0, min(range.location, totalLen)))))
+            guard r.length > 0 else { continue }
+            let glyphRange = lm.glyphRange(forCharacterRange: r, actualCharacterRange: nil)
+            var top: CGFloat?
+            var bottom: CGFloat = 0
+            lm.enumerateLineFragments(forGlyphRange: glyphRange) { _, usedRect, _, _, _ in
+                if top == nil { top = usedRect.minY }
+                bottom = usedRect.maxY
+            }
+            guard let t = top else { continue }
+            let borderRect = NSRect(x: inset.width, y: t + inset.height, width: 3, height: bottom - t)
+            borderRect.fill()
+        }
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -159,6 +193,12 @@ final class ReaderViewController: NSViewController {
     var onAnnotationTapped:       ((Annotation) -> Void)?
     var onInkAnnotationRequested: ((Annotation) -> Void)?
     var onPageChanged:            (() -> Void)?
+    /// Called when the user locks a tool from the picker — pushes the state up to the store.
+    var onToolLocked:             ((AnnotationTool) -> Void)?
+
+    /// Currently locked tool (pushed down from the store). When set, a new selection is
+    /// auto-annotated with it and the tool popover is skipped.
+    var lockedTool: AnnotationTool?
 
     // Mode
     private(set) var navMode:   NavMode = .scroll
@@ -176,6 +216,9 @@ final class ReaderViewController: NSViewController {
     private var fullAttributed = NSAttributedString(string: "")
     private var fullText: NSString = ""
     private var currentAnnotations: [ResolvedAnnotation] = []
+    /// Block-quote paragraph ranges (global char offsets) — fed into each column's
+    /// AnnotatingTextView.blockquoteRanges (offset-adjusted) so the left border draws.
+    private var blockquoteGlobalRanges: [NSRange] = []
     private var bodySize: CGFloat = AppTheme.bodySize
     private var lineHeight: CGFloat = AppTheme.readerLineHeightMultiple
     private var theme: PaperTheme = .parchment
@@ -352,19 +395,35 @@ final class ReaderViewController: NSViewController {
     // MARK: Trackpad / wheel navigation (screen-flip)
 
     private var scrollAccum: CGFloat = 0
+    /// Set once a page turn fires for the current physical gesture, so the rest of that swipe
+    /// (plus its inertial momentum tail) can't trigger additional turns — one swipe = one page.
+    private var scrollGestureConsumed = false
 
     /// Forwarded from the paged columns / container. Accumulates wheel + two-finger swipe delta and
     /// flips a page once a threshold is crossed (vertical scroll → horizontal page move; horizontal
     /// swipe natural). No-op in scroll mode (the NSScrollView handles its own wheel there).
     func handlePagedScroll(_ event: NSEvent) {
         guard navMode == .pageFlip else { return }
+        if event.phase == .began || event.momentumPhase == .began {
+            scrollAccum = 0
+            scrollGestureConsumed = false
+        }
+        if event.phase == .ended || event.phase == .cancelled
+            || event.momentumPhase == .ended || event.momentumPhase == .cancelled {
+            scrollGestureConsumed = false
+        }
+        guard !scrollGestureConsumed else { return }
         let dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
         let delta = abs(dx) > abs(dy) ? dx : dy
-        if event.phase == .began || event.momentumPhase == .began { scrollAccum = 0 }
         scrollAccum += delta
-        let threshold: CGFloat = 40
-        if scrollAccum <= -threshold { scrollAccum = 0; nextPage() }       // content up / swipe left → next
-        else if scrollAccum >= threshold { scrollAccum = 0; previousPage() }
+        // Raised from 40 — a light/accidental trackpad touch shouldn't flip a page; this now
+        // requires a deliberate swipe (still well short of a full-length swipe gesture).
+        let threshold: CGFloat = 90
+        if scrollAccum <= -threshold {           // content up / swipe left → next
+            scrollAccum = 0; scrollGestureConsumed = true; nextPage()
+        } else if scrollAccum >= threshold {
+            scrollAccum = 0; scrollGestureConsumed = true; previousPage()
+        }
     }
 
     /// The base (global) offset for a given column text view.
@@ -405,9 +464,15 @@ final class ReaderViewController: NSViewController {
                                                        annotations: annotations,
                                                        bodySize: bodySize, lineHeight: lineHeight,
                                                        theme: theme)
+            blockquoteGlobalRanges = annotations
+                .filter { $0.annotation.tool == .blockquote }
+                .compactMap { $0.span }
+                .map { NSRange(location: $0.start, length: $0.end - $0.start) }
             setScrollContent()
             paginationDirty = true
         }
+        scrollTextView.blockquoteBorderColor = theme.nsBlockquoteBorder
+        for tv in columns { tv.blockquoteBorderColor = theme.nsBlockquoteBorder }
 
         if contentChanged || modeChanged {
             applyMode()
@@ -429,6 +494,7 @@ final class ReaderViewController: NSViewController {
         } else {
             scrollTextView.textStorage?.setAttributedString(fullAttributed)
         }
+        scrollTextView.blockquoteRanges = blockquoteGlobalRanges
     }
 
     /// Repaints the reader surface backgrounds from the active theme (text colours are baked into
@@ -500,13 +566,37 @@ final class ReaderViewController: NSViewController {
 
             let pageIdx = currentPage * cols + i
             if pageRanges.indices.contains(pageIdx) {
-                let sub = fullAttributed.attributedSubstring(from: pageRanges[pageIdx])
+                let pageRange = pageRanges[pageIdx]
+                let sub = fullAttributed.attributedSubstring(from: pageRange)
                 tv.textStorage?.setAttributedString(sub)
+                tv.blockquoteRanges = Self.localize(blockquoteGlobalRanges, to: pageRange)
                 tv.isHidden = false
             } else {
                 tv.textStorage?.setAttributedString(NSAttributedString(string: ""))
+                tv.blockquoteRanges = []
                 tv.isHidden = true
             }
+        }
+    }
+
+    /// Expands `range` to the bounds of its enclosing paragraph in `text` — scanning outward
+    /// to the nearest newlines (or the string ends). Used by "Highlight Paragraph".
+    private static func expandToParagraph(_ range: NSRange, in text: NSString) -> NSRange {
+        var start = range.location
+        while start > 0, text.character(at: start - 1) != 0x0A { start -= 1 }
+        var end = range.location + range.length
+        while end < text.length, text.character(at: end) != 0x0A { end += 1 }
+        return NSRange(location: start, length: end - start)
+    }
+
+    /// Intersects each global range with `page` and offsets the result into `page`-local
+    /// coordinates. Used to slice `blockquoteGlobalRanges` for a single paged column.
+    private static func localize(_ globalRanges: [NSRange], to page: NSRange) -> [NSRange] {
+        globalRanges.compactMap { g in
+            let start = max(g.location, page.location)
+            let end = min(g.location + g.length, page.location + page.length)
+            guard start < end else { return nil }
+            return NSRange(location: start - page.location, length: end - start)
         }
     }
 
@@ -643,7 +733,12 @@ final class ReaderViewController: NSViewController {
             if global.location != lastShownRange.location || global.length != lastShownRange.length {
                 lastShownRange = global
                 pendingRange   = global
-                showToolPopover(on: tv, forLocalRange: sel)
+                if let locked = lockedTool {
+                    // A tool is locked — skip the picker and annotate directly (mirrors Android).
+                    commitAnnotation(tool: locked)
+                } else {
+                    showToolPopover(on: tv, forLocalRange: sel)
+                }
             }
         } else if lastShownRange.length > 0, tv === activeTextView {
             lastShownRange = NSRange(location: NSNotFound, length: 0)
@@ -671,11 +766,21 @@ final class ReaderViewController: NSViewController {
             let popover = NSPopover()
             popover.behavior = .transient
             popover.animates = false
-            let pickerVC = NSHostingController(rootView: ToolPickerView { [weak self] tool in
-                self?.commitAnnotation(tool: tool)
-            })
+            let pickerVC = NSHostingController(rootView: ToolPickerView(
+                onSelect: { [weak self] tool in
+                    self?.commitAnnotation(tool: tool)
+                },
+                onLock: { [weak self] tool in
+                    guard let self else { return }
+                    self.toolPopover?.close()
+                    self.onToolLocked?(tool)     // persist lock in the store
+                    self.lockedTool = tool       // apply immediately for this same selection
+                    self.commitAnnotation(tool: tool)
+                }))
+            // Don't pin contentSize — let the SwiftUI hosting controller drive it so the
+            // popover can grow when the Highlight tool's press-and-hold flyout appears.
+            pickerVC.sizingOptions = .preferredContentSize
             popover.contentViewController = pickerVC
-            popover.contentSize = NSSize(width: 392, height: 62)
             toolPopover = popover
         }
 
@@ -684,12 +789,18 @@ final class ReaderViewController: NSViewController {
 
     private func commitAnnotation(tool: AnnotationTool) {
         toolPopover?.close()
-        let range = pendingRange   // GLOBAL range into fullText
+        var range = pendingRange   // GLOBAL range into fullText
         guard range.length > 0, range.location != NSNotFound else { return }
 
         let ns  = fullText
         let len = ns.length
         guard range.location + range.length <= len else { return }
+
+        // "Highlight Paragraph": expand the selection to the whole enclosing paragraph
+        // (bounded by newlines — mirrors PlainTextMapper's `</w:p>` → '\n' convention).
+        if tool == .blockquote {
+            range = Self.expandToParagraph(range, in: ns)
+        }
 
         let selectedText = ns.substring(with: range)
         let prefixStart  = max(0, range.location - 40)
@@ -707,7 +818,8 @@ final class ReaderViewController: NSViewController {
             suffix:       suffix,
             tool:         tool,
             timestamp:    Date(),
-            position:     position
+            position:     position,
+            paragraph:    PlainTextMapper.paragraphIndex(ns as String, range.location)
         )
 
         if tool == .inkAnnotation {
@@ -776,16 +888,15 @@ final class ReaderViewController: NSViewController {
             case .wavyUnderline:
                 let style = NSUnderlineStyle.patternDash.rawValue | NSUnderlineStyle.thick.rawValue
                 str.addAttribute(.underlineStyle, value: style, range: r)
-                str.addAttribute(.underlineColor, value: NSColor.systemTeal, range: r)
+                str.addAttribute(.underlineColor, value: theme.nsWavyUnderline, range: r)
             case .bookmark:
-                str.addAttribute(.backgroundColor, value: NSColor.systemOrange.withAlphaComponent(0.15), range: r)
+                str.addAttribute(.backgroundColor, value: theme.nsBookmarkFill, range: r)
             case .comment:
-                let style = NSUnderlineStyle.patternDot.rawValue | NSUnderlineStyle.thick.rawValue
-                str.addAttribute(.underlineStyle, value: style, range: r)
-                str.addAttribute(.underlineColor, value: NSColor.systemGreen, range: r)
-                str.addAttribute(.backgroundColor, value: NSColor.systemGreen.withAlphaComponent(0.1), range: r)
+                str.addAttribute(.backgroundColor, value: theme.nsCommentFill, range: r)
             case .inkAnnotation:
-                str.addAttribute(.backgroundColor, value: NSColor.systemPurple.withAlphaComponent(0.12), range: r)
+                str.addAttribute(.backgroundColor, value: theme.nsInkFill, range: r)
+            case .blockquote:
+                str.addAttribute(.backgroundColor, value: theme.nsBlockquoteFill, range: r)
             }
         }
         return str

@@ -24,7 +24,9 @@ enum class AnnotationTool {
     wavyUnderline,
     bookmark,
     inkAnnotation,
-    comment;
+    comment,
+    /** Whole-paragraph grey fill + rust left border — Word w:pBdr/paragraph w:shd import, or "Highlight Paragraph". */
+    blockquote;
 
     companion object {
         /**

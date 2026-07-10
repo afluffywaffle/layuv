@@ -19,6 +19,13 @@ object NativeImport {
     private val RUN = Regex("<w:r(?:\\s[^>]*)?>(?<!/>).*?</w:r>", RegexOption.DOT_MATCHES_ALL)
     private val WT = Regex("<w:t(?:[^>]*)>(.*?)</w:t>", RegexOption.DOT_MATCHES_ALL)
     private val RPR = Regex("<w:rPr>(.*?)</w:rPr>", RegexOption.DOT_MATCHES_ALL)
+    private val SHD_FILL = Regex("<w:shd\\s[^>]*\\bw:fill=\"([0-9A-Fa-f]{6})\"")
+
+    /** True for a `w:shd` with a real fill colour (not "auto"/absent) — Word/Docs/Pages highlight. */
+    private fun hasShdHighlight(rPr: String): Boolean {
+        val fill = SHD_FILL.find(rPr)?.groupValues?.get(1) ?: return false
+        return !fill.equals("auto", ignoreCase = true) && !fill.equals("FFFFFF", ignoreCase = true)
+    }
 
     private data class Segment(val tool: AnnotationTool, val plainStart: Int, val plainEnd: Int)
 
@@ -43,6 +50,7 @@ object NativeImport {
 
             val tool = when {
                 rPr.contains("<w:highlight") -> AnnotationTool.highlight
+                hasShdHighlight(rPr) -> AnnotationTool.highlight
                 rPr.contains("w:val=\"wave\"") -> AnnotationTool.wavyUnderline
                 rPr.contains("w:val=\"double\"") -> AnnotationTool.doubleUnderline
                 rPr.contains("<w:u ") || rPr.contains("<w:u/>") -> AnnotationTool.underline
@@ -76,20 +84,29 @@ object NativeImport {
             segments.add(Segment(tool, plainStart, plainEnd))
         }
 
-        if (segments.isEmpty()) return emptyList()
-
         val results = ArrayList<Annotation>()
-        var curr = segments[0]
-        for (i in 1 until segments.size) {
-            val next = segments[i]
-            curr = if (next.tool == curr.tool && next.plainStart <= curr.plainEnd) {
-                Segment(curr.tool, curr.plainStart, maxOf(next.plainEnd, curr.plainEnd))
-            } else {
-                results.add(annotationFromSegment(curr, plain, results.size, baseMicros, now))
-                next
+        if (segments.isNotEmpty()) {
+            var curr = segments[0]
+            for (i in 1 until segments.size) {
+                val next = segments[i]
+                curr = if (next.tool == curr.tool && next.plainStart <= curr.plainEnd) {
+                    Segment(curr.tool, curr.plainStart, maxOf(next.plainEnd, curr.plainEnd))
+                } else {
+                    results.add(annotationFromSegment(curr, plain, results.size, baseMicros, now))
+                    next
+                }
             }
+            results.add(annotationFromSegment(curr, plain, results.size, baseMicros, now))
         }
-        results.add(annotationFromSegment(curr, plain, results.size, baseMicros, now))
+
+        // Whole-paragraph blockquote styling (Word w:pBdr / paragraph w:shd) — a separate,
+        // paragraph-granularity overlay, independent of the run-level segments above.
+        for (para in map.paragraphStyles) {
+            if (!para.blockquote) continue
+            val seg = Segment(AnnotationTool.blockquote, para.start, para.end)
+            results.add(annotationFromSegment(seg, plain, results.size, baseMicros, now))
+        }
+
         return results
     }
 

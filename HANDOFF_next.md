@@ -270,6 +270,35 @@ parity (mirror `ManuscriptSerializer`/`RewriteProtocol`/`DocxFromText`/aichat/in
 
 ---
 
+## ✅ BUILT (2026-06-27) — On-device Reference Library
+
+Users pick a folder of `.md`/`.txt`/`.rst`/`.org` files on the Supernote (characters.md, settings.md, style guide, etc.). On every Ask AI send those files are prepended as a `role="system"` message — client-side in `AskAiPanel.buildLibrarySystemMessage()`, before the request leaves the device. Works for any endpoint: cloud API key (Claude, Gemini, OpenAI) or a direct local LLM (Ollama, LM Studio via Tailscale).
+
+**Two new fields in `AiSettingsActivity`:**
+- **Context window (tokens) — experimental** (`ai_context_limit` pref, 0 = no cap) — for local LLM users who need to cap injection to fit their model's window; labelled experimental because it can't be verified without a local LLM.
+- **Reference library** folder picker (`ai_library_dir` pref) — displays folder name + file count + ~token estimate; warns if the library would exceed the available budget at the configured context limit.
+
+**Budget:** `contextLimit − 16k (response reserve) − 8k (chapter buffer)`; token estimation = `chars÷4`; files injected in sorted-name order until budget exhausted; `Long.MAX_VALUE` when no limit is set (cloud models).
+
+`AiProviderFactory.libraryDir()` / `contextLimit()` are the pref accessors. `OpenAiCompatibleProvider.buildBody()` needed no changes — it already serializes `m.role` as-is, so `"system"` works. System message is prepended on every send including multi-turn replies. Deployed to Manta 2026-06-27; API-key behavioral verify pending (needs a chapter + library folder on-device with a configured key).
+
+Key files: `app/.../reader/AskAiPanel.kt` (`buildLibrarySystemMessage()`), `app/.../reader/AiSettingsActivity.kt` (two new sections + `updateLibraryDisplay()`/`calcLibraryDisplay()`/`onActivityResult` for folder pick), `app/.../ai/AiProviderFactory.kt` (`libraryDir()`, `contextLimit()`).
+
+---
+
+## ✅ BUILT (2026-06-27/28) — Ask AI UX Polish (queued follow-ups #6)
+
+Four items from the queued UX follow-up list (tracked since 2026-06-24), all deployed to Manta:
+
+- **Test connection** — `AiSettingsActivity` already had `testConnection()` wired to a text link; it's now a proper pill/button below the Save row. Flushes the typed endpoint+model to prefs, sends a one-shot ping (`"Reply with exactly: connection ok"`), and shows the result in an inline `statusLabel` ("Connection OK." or the error message).
+- **Settings shortcut in Ask AI pane** — "Settings" text button added to `AskAiPanel.buildHeader()` (between "New" and "Hide"); opens `AiSettingsActivity` directly without closing the panel, so endpoint/model/key changes don't require a round-trip through Help & About.
+- **Reply from expanded viewer** — `AiReplyActivity` is no longer read-only. A reply input + "Reply" button row sits below the body. On tap: `setResult(RESULT_OK, Intent().putExtra(EXTRA_REPLY, text))` + `finish()`. `AskAiPanel.expandLatest()` now uses `@Suppress("DEPRECATION") activity.startActivityForResult(intent, AiReplyActivity.REQUEST_CODE)`. `ReaderActivity.onActivityResult` case `REQ_AI_EXPAND` routes the text to `aiPanel.onExpandResult(text)`, which calls `appendUser()` + `callProvider()` — the conversation continues without the user ever collapsing back to the panel.
+- **Text-only endpoint error/fallback** — landed earlier: `OpenAiCompatibleProvider.mapHttpError()` returns `AiResult.NeedsTextOnlyRetry` when a request carrying images gets a 400/404/415/422; `AskAiPanel.callProvider()` automatically re-sends once without ink images (`omitInk=true`) + appends `INK_OMITTED_NOTE` to the seed so the model knows images were dropped. On-device verify pending (needs a text-only endpoint + a chapter with an ink note).
+
+Key files: `app/.../reader/AskAiPanel.kt` (Settings button, `startActivityForResult`, `onExpandResult()`), `app/.../reader/AiReplyActivity.kt` (`EXTRA_REPLY`, `REQUEST_CODE`, reply bar), `app/.../reader/ReaderActivity.kt` (`REQ_AI_EXPAND`, `onActivityResult` case), `app/.../ai/OpenAiCompatibleProvider.kt` (`NeedsTextOnlyRetry`, `TEXT_ONLY_REJECT_CODES`).
+
+---
+
 ## Key files
 
 | File | Purpose |
@@ -408,21 +437,24 @@ All changes on branch `native-port-drawpath-ink`. Build clean; installed on Noma
 
 ---
 
-## Handoff prompt for a new conversation (current as of 2026-06-26)
+## Handoff prompt for a new conversation (current as of 2026-06-28)
 
 > I'm working on the Léamh/Layuv project (`/Users/jayromacorda/Develop/layuv`), branch
 > `native-port-drawpath-ink`. Read `CLAUDE.md` and this `HANDOFF_next.md` in full first, plus the memory
 > index — especially `native_android_port.md`, `project_ai_workflow_and_export.md`, `project_brain_proxy.md`,
 > `project_ai_networking.md`, and `ios_ipad_port.md`.
 >
-> **State: Android is FEATURE-COMPLETE + AI UX refined (2026-06-26).** Reader + annotations + ink + a full
+> **State: Android is FEATURE-COMPLETE + AI UX refined (2026-06-28).** Reader + annotations + ink + a full
 > **AI layer**: provider-agnostic **Ask AI** (one OpenAI-compatible client → Gemini / Claude / OpenAI /
 > local / Mac brain; verified on-device), **Export for AI** (versioned DOCX copy auto-opened, chapter.md +
 > ink PNGs exported to `AI_exports/<chapter>/<chapter>_v<N>_export/`), **Import rewrite** (auto-detect +
-> file browser fallback), and the **AI submenu** (pill button opens popup with AI Chat / Export for AI… /
-> Import rewrite… / Set AI export folder… / Set import folder…; folder paths shown as subtitles).
-> Code-enforced cleartext guard + GMS-free `SecureKeyStore`. Mac-side `brain/` Phase-1 proxy built +
-> locally verified (on-device Gemini run pending). Engine `:docx:test` green (54 tests).
+> file browser fallback), **AI submenu** (pill button opens popup with AI Chat / Export for AI… / Import
+> rewrite… / Set AI export folder… / Set import folder…; folder paths shown as subtitles), **on-device
+> reference library** (system-message injection of user's `.md`/`.txt` folder with optional context-limit
+> cap), and **Ask AI UX polish** (Test connection button, Settings shortcut in panel, reply from expanded
+> viewer, text-only-endpoint auto-fallback). Code-enforced cleartext guard + GMS-free `SecureKeyStore`.
+> Mac-side `brain/` Phase-1 proxy built + locally verified (on-device Gemini run pending). Engine
+> `:docx:test` green (54 tests).
 >
 > **Primary AI workflow = manual Claude Code on my novel-project folder** (free via Max sub; reads
 > CLAUDE.md + references natively). Layuv's role: annotate + Export for AI (the clean file that folder
@@ -437,12 +469,11 @@ All changes on branch `native-port-drawpath-ink`. Build clean; installed on Noma
 > (2) `ai_create_subfolder` pref orphan in SharedPreferences — include in any future "Reset AI settings" action.
 > (3) `aiMenuButton` always visible in pill (previously gated) — confirm intended.
 > (4) **fully gate "Tap outside: off"** — stray non-tap still reaches `cancelSelection()` after ~3 touches; audit every call site in `ReaderView.kt`.
-> (5) On-device verifies still pending: Export-for-AI tap-through and brain's real Gemini call (`brain/brain.env` needs the AIza key on the Mac).
-> (6) Older queued UX: prominent "Test connection" button, "Settings" shortcut in Ask AI pane, reply-from-expanded-viewer, text-only-endpoint error/fallback (`ai_text_only_endpoint_images.md`).
+> (5) On-device verifies still pending: Export-for-AI tap-through; brain's real Gemini call (`brain/brain.env` needs the AIza key on the Mac); reference library behavioral verify (needs a chapter + library folder + configured key); text-only endpoint fallback (needs a text-only endpoint + ink annotation).
 >
 > Build: `cd android_native && ./gradlew :app:assembleDebug` (run `:docx:test` after any `docx/` change).
-> Devices: **Nomad** `SN078C10005528` (USB) / **Manta** `SN100C10008955`; adb at
-> `$HOME/Library/Android/sdk/platform-tools/adb`; app id `com.afluffywaffle.layuv.dev`. **Heed
-> `native_android_sequencedcollection_trap.md`** (no `List.removeLast()`/`removeFirst()`/`getFirst()` etc.
-> — JDK21 binds to API-35 `SequencedCollection` → runtime crash on the Supernote). Commit/push only when
-> asked.
+> Devices: **Nomad** `SN078C10005528` (USB) / **Manta** `SN100C10008955` (WiFi, DHCP — most recently
+> `192.168.12.183:5555`); adb at `$HOME/Library/Android/sdk/platform-tools/adb`;
+> app id `com.afluffywaffle.layuv.dev`. **Heed `native_android_sequencedcollection_trap.md`**
+> (no `List.removeLast()`/`removeFirst()`/`getFirst()` etc. — JDK21 binds to API-35
+> `SequencedCollection` → runtime crash on the Supernote). Commit/push only when asked.

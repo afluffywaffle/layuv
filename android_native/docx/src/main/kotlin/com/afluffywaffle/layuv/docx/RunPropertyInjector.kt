@@ -53,7 +53,10 @@ object RunPropertyInjector {
         AnnotationTool.doubleUnderline -> "<w:u w:val=\"double\"/>"
         AnnotationTool.strikethrough -> "<w:strike/>"
         AnnotationTool.wavyUnderline -> "<w:u w:val=\"wave\"/>"
-        AnnotationTool.bookmark -> ""
+        // Neither writes a run property: bookmark is margin-icon-only; blockquote is
+        // whole-paragraph and persists purely in the annotations.json sidecar (never
+        // written into document.xml, unlike every other tool here).
+        AnnotationTool.bookmark, AnnotationTool.blockquote -> ""
     }
 
     private data class Anchor(

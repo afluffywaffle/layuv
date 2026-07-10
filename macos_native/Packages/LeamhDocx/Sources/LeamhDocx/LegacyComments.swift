@@ -121,7 +121,8 @@ enum LegacyComments {
                 tool: AnnotationTool.fromName(toolName),
                 note: (note?.isEmpty ?? true) ? nil : note,
                 tag: tagName.isEmpty ? nil : AnnotationTag.fromName(tagName),
-                timestamp: rc.timestamp, position: (Double(pctStr) ?? 0) / 100.0
+                timestamp: rc.timestamp, position: (Double(pctStr) ?? 0) / 100.0,
+                paragraph: PlainTextMapper.paragraphIndex(map.plain, Int((Double(pctStr) ?? 0) / 100.0 * Double(map.plain.utf16.count)))
             )
         }
         // Native Word comment.
@@ -131,7 +132,8 @@ enum LegacyComments {
         let note = nativeNoteText(texts)
         return Annotation(
             id: "word_\(rc.commentId)", selectedText: ex.text, prefix: ex.prefix, suffix: ex.suffix,
-            tool: .comment, note: note.isEmpty ? nil : note, timestamp: rc.timestamp, position: ex.position
+            tool: .comment, note: note.isEmpty ? nil : note, timestamp: rc.timestamp, position: ex.position,
+            paragraph: ex.paragraph
         )
     }
 
@@ -183,7 +185,10 @@ enum LegacyComments {
             .map { ns.substring(with: $0.range(at: 1)) }
     }
 
-    private struct Extracted { let text: String; let prefix: String; let suffix: String; let position: Double }
+    private struct Extracted {
+        let text: String; let prefix: String; let suffix: String; let position: Double
+        var paragraph: Int = 0
+    }
 
     private static func extractFromCommentRange(documentXml: String, commentId: String, map: PlainMap) -> Extracted {
         let startMarker = "<w:commentRangeStart w:id=\"\(commentId)\"/>"
@@ -217,7 +222,8 @@ enum LegacyComments {
         let prefix = plain.utf16Substring(from: prefixStart, length: plainIdx - prefixStart)
         let suffixEnd = min(plainEnd + 20, totalUtf16)
         let suffix = plain.utf16Substring(from: plainEnd, length: suffixEnd - plainEnd)
-        return Extracted(text: text, prefix: prefix, suffix: suffix, position: position)
+        let paragraph = PlainTextMapper.paragraphIndex(plain, plainIdx)
+        return Extracted(text: text, prefix: prefix, suffix: suffix, position: position, paragraph: paragraph)
     }
 
     private static func firstGroup(_ regex: NSRegularExpression, in s: String) -> String? {

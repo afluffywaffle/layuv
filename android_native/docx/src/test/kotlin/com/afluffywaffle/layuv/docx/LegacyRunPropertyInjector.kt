@@ -43,7 +43,7 @@ object LegacyRunPropertyInjector {
         AnnotationTool.doubleUnderline -> "<w:u w:val=\"double\"/>"
         AnnotationTool.strikethrough -> "<w:strike/>"
         AnnotationTool.wavyUnderline -> "<w:u w:val=\"wave\"/>"
-        AnnotationTool.bookmark -> ""
+        AnnotationTool.bookmark, AnnotationTool.blockquote -> ""
     }
 
     private data class Anchor(

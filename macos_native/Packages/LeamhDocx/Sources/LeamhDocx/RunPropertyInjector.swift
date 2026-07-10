@@ -34,7 +34,10 @@ enum RunPropertyInjector {
             return "<w:strike/>"
         case .wavyUnderline:
             return "<w:u w:val=\"wave\"/>"
-        case .bookmark:
+        // Neither writes a run property: bookmark is margin-icon-only; blockquote is
+        // whole-paragraph and persists purely in the annotations.json sidecar (never
+        // written into document.xml, unlike every other tool here).
+        case .bookmark, .blockquote:
             return ""
         }
     }

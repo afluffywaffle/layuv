@@ -77,6 +77,45 @@ public enum ManuscriptSerializer {
 
     /// Full thread text when present (the note is just the first entry), else the note.
     /// Mirrors ManuscriptSerializer.noteText in Kotlin (continuation lines indent under "note: ").
+    /// Annotations-only export: no chapter text, just each annotation's anchor (paragraph
+    /// number, computed from the same exact char offset used to place the DOCX comment range —
+    /// NOT reverse-derived from the position fraction — plus position fraction + prefix/suffix
+    /// context around the quoted passage) plus note/tag/thread. Lets an AI that already has the
+    /// manuscript (e.g. reading the project folder directly) locate each annotation without the
+    /// chapter body being duplicated into the export, and without re-deriving anchoring itself.
+    /// `fileName` identifies which document these anchors belong to once exports from multiple
+    /// chapters sit side by side.
+    public static func buildAnnotationsOnlyExport(fileName: String, annotations: [Annotation]) -> Prompt {
+        let ws = CharacterSet.whitespacesAndNewlines
+        var sb = "=== ANNOTATIONS FOR \"\(fileName)\" (\(annotations.count)) ===\n"
+        var inkIds: [String] = []
+        if annotations.isEmpty {
+            sb += "(none)\n"
+            return Prompt(text: sb, inkAnnotationIds: inkIds)
+        }
+        for (i, a) in annotations.enumerated() {
+            let pct = Int((a.position * 100).rounded())
+            let paraLabel = a.paragraph > 0 ? "paragraph ~\(a.paragraph), " : ""
+            sb += "\(i + 1). [\(label(a.tool))] \(paraLabel)~\(pct)% through the manuscript\n"
+            let prefix = a.prefix.trimmingCharacters(in: ws)
+            let suffix = a.suffix.trimmingCharacters(in: ws)
+            let quoted = a.selectedText.trimmingCharacters(in: ws)
+            var context = ""
+            if !prefix.isEmpty { context += "\u{2026}\(prefix)" }
+            context += "\u{2039}\(quoted)\u{203A}"
+            if !suffix.isEmpty { context += "\(suffix)\u{2026}" }
+            sb += "   context: \(context)\n"
+            let note = noteText(a)
+            if !note.isEmpty { sb += "   note: \(note)\n" }
+            if a.hasInk {
+                inkIds.append(a.id)
+                sb += "   handwritten note: see attached image \(inkIds.count)\n"
+            }
+            if let tag = a.tag { sb += "   tag: \(tag.rawValue)\n" }
+        }
+        return Prompt(text: sb, inkAnnotationIds: inkIds)
+    }
+
     private static func noteText(_ a: Annotation) -> String {
         if !a.threadEntries.isEmpty {
             return a.threadEntries
@@ -96,6 +135,7 @@ public enum ManuscriptSerializer {
         case .bookmark:        return "Bookmark"
         case .inkAnnotation:   return "Ink note"
         case .comment:         return "Comment"
+        case .blockquote:      return "Blockquote"
         }
     }
 }

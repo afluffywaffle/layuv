@@ -37,6 +37,14 @@ object AiProviderFactory {
     fun current(context: android.content.Context): AiProvider =
         OpenAiCompatibleProvider(baseUrl(context), model(context), requireKey = false)
 
+    /** Absolute path to the on-device reference library folder; null if not set. */
+    fun libraryDir(context: android.content.Context): String? =
+        prefs(context).getString("ai_library_dir", "")?.trim()?.ifEmpty { null }
+
+    /** Context window in tokens; 0 = no cap (cloud models). */
+    fun contextLimit(context: android.content.Context): Int =
+        prefs(context).getInt("ai_context_limit", 0)
+
     /** A friendly name for the active endpoint, derived from its host, for chat labels. */
     fun displayName(context: android.content.Context): String {
         val host = try { URL(baseUrl(context)).host.lowercase() } catch (e: Exception) { "" }

@@ -172,6 +172,15 @@ class AskAiPanel(
         open(b)
     }
 
+    /** Called by the host when the user typed a reply in the expanded full-screen viewer. */
+    fun onExpandResult(text: String) {
+        val b = book ?: return
+        if (text.isBlank()) return
+        continuationCount = 0
+        appendUser(text)
+        callProvider(b)
+    }
+
     fun destroy() {
         io.shutdownNow()
     }
@@ -290,7 +299,9 @@ class AskAiPanel(
                     else -> AiMessage(pair.first, pair.second)
                 }
             }
-            val res = provider.send(key, history)
+            val systemMsg = buildLibrarySystemMessage()
+            val payload = if (systemMsg != null) listOf(systemMsg) + history else history
+            val res = provider.send(key, payload)
             main.post {
                 if (book !== b) return@post
                 setSending(false)
@@ -617,6 +628,9 @@ class AskAiPanel(
             it.contentDescription = "Move the scroll buttons to the other side"
         })
         header.addView(activity.textButton("New", bold = true) { newConversation() })
+        header.addView(activity.textButton("Settings", bold = true) {
+            activity.startActivity(Intent(activity, AiSettingsActivity::class.java))
+        })
         header.addView(activity.textButton("Hide", bold = true) { onHide() })
         return header
     }
@@ -675,10 +689,12 @@ class AskAiPanel(
             p.rewrite != null -> p.rewrite
             else -> p.conversation.ifEmpty { last.text }
         }
-        activity.startActivity(
+        @Suppress("DEPRECATION")
+        activity.startActivityForResult(
             Intent(activity, AiReplyActivity::class.java)
                 .putExtra(AiReplyActivity.EXTRA_TITLE, "${providerName()} — latest reply")
                 .putExtra(AiReplyActivity.EXTRA_TEXT, text),
+            AiReplyActivity.REQUEST_CODE,
         )
     }
 
@@ -812,6 +828,36 @@ class AskAiPanel(
             setOnTouchListener(PenTapListener(activity, onTap = onTap))
         }
 
+    // ---- Reference library injection ----------------------------------------
+
+    /** Build a system message from the user's on-device reference library, or null if not set.
+     *  Runs on the io thread — file I/O is safe here. Files are injected whole in sorted order
+     *  up to the token budget (context_limit − response reserve − chapter buffer). */
+    private fun buildLibrarySystemMessage(): AiMessage? {
+        val dir = AiProviderFactory.libraryDir(activity) ?: return null
+        val folder = File(dir)
+        if (!folder.isDirectory) return null
+        val exts = setOf(".md", ".markdown", ".txt", ".text", ".rst", ".org")
+        val files = folder.listFiles()
+            ?.filter { it.isFile && ".${it.extension.lowercase()}" in exts }
+            ?.sortedBy { it.name.lowercase() }
+            ?: return null
+        if (files.isEmpty()) return null
+        val limit = AiProviderFactory.contextLimit(activity)
+        val budget = if (limit > 0) (limit - RESPONSE_RESERVE - CHAPTER_BUFFER).toLong() else Long.MAX_VALUE
+        val parts = mutableListOf(LIBRARY_PREAMBLE)
+        var usedTokens = 0L
+        for (file in files) {
+            val text = try { file.readText(Charsets.UTF_8) } catch (e: Exception) { continue }
+            val est = (text.length / 4).toLong()
+            if (budget != Long.MAX_VALUE && usedTokens + est > budget) break
+            parts += "\n===== ${file.name} =====\n${text.trim()}\n"
+            usedTokens += est
+        }
+        if (parts.size <= 1) return null
+        return AiMessage("system", parts.joinToString("\n"))
+    }
+
     // ---- Small helpers ------------------------------------------------------
 
     /** dp→px. A member (not the Context extension) since this class is a View, not a Context. */
@@ -840,5 +886,14 @@ class AskAiPanel(
         private const val CONTINUE_PROMPT =
             "Continue the rewrite from exactly where the previous message was cut off. " +
                 "Do not repeat any text; continue mid-sentence if needed."
+        private const val RESPONSE_RESERVE = 16_000  // tokens budgeted for the model's response
+        private const val CHAPTER_BUFFER = 8_000     // conservative reserve for chapter + conversation
+        private const val LIBRARY_PREAMBLE =
+            "You are the writer on an ongoing writing project. The reference files below are the " +
+                "project's living 'bible' — characters, world, continuity, voice, and standing " +
+                "instructions. Treat them as authoritative for every revision: keep names, facts, " +
+                "and style consistent with them, and never contradict them. The user is the " +
+                "editor/director; their chapter text and annotations are the editorial instructions " +
+                "for this turn."
     }
 }

@@ -17,6 +17,20 @@ enum NativeImport {
         pattern: #"<w:rPr>(.*?)</w:rPr>"#,
         options: .dotMatchesLineSeparators
     )
+    private static let shdFill = try! NSRegularExpression(
+        pattern: #"<w:shd\s[^>]*\bw:fill="([0-9A-Fa-f]{6})""#
+    )
+
+    /// True for a `w:shd` with a real fill colour (not "auto"/absent) — Word/Docs/Pages highlight.
+    private static func hasShdHighlight(_ rPr: String) -> Bool {
+        let ns = rPr as NSString
+        guard let match = shdFill.firstMatch(in: rPr, range: NSRange(location: 0, length: ns.length)) else {
+            return false
+        }
+        let fill = ns.substring(with: match.range(at: 1))
+        return fill.caseInsensitiveCompare("auto") != .orderedSame
+            && fill.caseInsensitiveCompare("FFFFFF") != .orderedSame
+    }
 
     private struct Segment { let tool: AnnotationTool; let plainStart: Int; let plainEnd: Int }
 
@@ -47,6 +61,7 @@ enum NativeImport {
 
             let tool: AnnotationTool?
             if rPrStr.contains("<w:highlight") { tool = .highlight }
+            else if hasShdHighlight(rPrStr) { tool = .highlight }
             else if rPrStr.contains("w:val=\"wave\"") { tool = .wavyUnderline }
             else if rPrStr.contains("w:val=\"double\"") { tool = .doubleUnderline }
             else if rPrStr.contains("<w:u ") || rPrStr.contains("<w:u/>") { tool = .underline }
@@ -80,20 +95,28 @@ enum NativeImport {
             segments.append(Segment(tool: resolvedTool, plainStart: plainStart, plainEnd: plainEnd))
         }
 
-        guard !segments.isEmpty else { return [] }
-
         var results: [Annotation] = []
-        var curr = segments[0]
-        for i in 1..<segments.count {
-            let next = segments[i]
-            if next.tool == curr.tool && next.plainStart <= curr.plainEnd {
-                curr = Segment(tool: curr.tool, plainStart: curr.plainStart, plainEnd: max(next.plainEnd, curr.plainEnd))
-            } else {
-                results.append(annotationFromSegment(curr, plain: plain, index: results.count, baseMicros: baseMicros, now: now))
-                curr = next
+        if !segments.isEmpty {
+            var curr = segments[0]
+            for i in 1..<segments.count {
+                let next = segments[i]
+                if next.tool == curr.tool && next.plainStart <= curr.plainEnd {
+                    curr = Segment(tool: curr.tool, plainStart: curr.plainStart, plainEnd: max(next.plainEnd, curr.plainEnd))
+                } else {
+                    results.append(annotationFromSegment(curr, plain: plain, index: results.count, baseMicros: baseMicros, now: now))
+                    curr = next
+                }
             }
+            results.append(annotationFromSegment(curr, plain: plain, index: results.count, baseMicros: baseMicros, now: now))
         }
-        results.append(annotationFromSegment(curr, plain: plain, index: results.count, baseMicros: baseMicros, now: now))
+
+        // Whole-paragraph blockquote styling (Word w:pBdr / paragraph w:shd) — a separate,
+        // paragraph-granularity overlay, independent of the run-level segments above.
+        for para in map.paragraphStyles where para.blockquote {
+            let seg = Segment(tool: .blockquote, plainStart: para.start, plainEnd: para.end)
+            results.append(annotationFromSegment(seg, plain: plain, index: results.count, baseMicros: baseMicros, now: now))
+        }
+
         return results
     }
 

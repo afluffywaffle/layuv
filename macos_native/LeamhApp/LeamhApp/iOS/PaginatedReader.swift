@@ -239,12 +239,23 @@ final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestu
         guard localRange.location != NSNotFound, localRange.length > 0,
               localRange.location + localRange.length <= pageNS.length else { return }
 
-        let selected  = pageNS.substring(with: localRange)
-        let globalLoc = baseOffset + localRange.location
-        let globalEnd = globalLoc + localRange.length
+        var globalLoc = baseOffset + localRange.location
+        var globalEnd = globalLoc + localRange.length
         let full      = fullPlainText
         let len       = full.length
         guard globalEnd <= len else { return }
+
+        // "Highlight Paragraph": expand to the whole enclosing paragraph (bounded by
+        // newlines, across the FULL document text — not just this page's slice — so a
+        // paragraph split across a page boundary still expands correctly).
+        if tool == .blockquote {
+            var s = globalLoc
+            while s > 0, full.character(at: s - 1) != 0x0A { s -= 1 }
+            var e = globalEnd
+            while e < len, full.character(at: e) != 0x0A { e += 1 }
+            globalLoc = s; globalEnd = e
+        }
+        let selected = full.substring(with: NSRange(location: globalLoc, length: globalEnd - globalLoc))
 
         let prefixStart = max(0, globalLoc - 40)
         let prefix      = full.substring(with: NSRange(location: prefixStart, length: globalLoc - prefixStart))
@@ -254,7 +265,8 @@ final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestu
 
         let annotation = Annotation(
             id: newId(), selectedText: selected, prefix: prefix, suffix: suffix,
-            tool: tool, timestamp: Date(), position: position
+            tool: tool, timestamp: Date(), position: position,
+            paragraph: PlainTextMapper.paragraphIndex(full as String, globalLoc)
         )
         if tool == .inkAnnotation {
             onInkAnnotationRequested?(annotation)

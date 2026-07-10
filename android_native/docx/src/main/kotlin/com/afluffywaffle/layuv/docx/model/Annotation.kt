@@ -58,6 +58,15 @@ data class Annotation(
     val tag: AnnotationTag? = null,
     val timestamp: Instant,
     val position: Double = 0.0,
+    /**
+     * 1-indexed paragraph number this annotation anchors to, computed via
+     * [com.afluffywaffle.layuv.docx.PlainTextMapper.paragraphIndex] from the exact char
+     * offset available at creation/parse time — NOT reverse-derived from [position]. Like
+     * [position], it reflects the document as of the last (re-)anchor and can go stale if the
+     * document is edited elsewhere without Léamh re-anchoring; 0 means never computed
+     * (legacy record).
+     */
+    val paragraph: Int = 0,
     val hasInk: Boolean = false,
     /**
      * Chronological comment thread. Empty for legacy/single-note annotations
@@ -77,6 +86,7 @@ data class Annotation(
         "tag" to tag?.name,
         "timestamp" to Timestamps.format(timestamp),
         "position" to position,
+        "paragraph" to paragraph,
         "hasInk" to hasInk,
         "threadEntries" to threadEntries.map { it.toMap() },
     )
@@ -98,6 +108,7 @@ data class Annotation(
                 tag = AnnotationTag.fromName(map["tag"] as? String),
                 timestamp = Timestamps.parse(timestampStr),
                 position = (map["position"] as? Number)?.toDouble() ?: 0.0,
+                paragraph = (map["paragraph"] as? Number)?.toInt() ?: 0,
                 hasInk = (map["hasInk"] as? Boolean) ?: false,
                 threadEntries = (map["threadEntries"] as? List<*>)
                     ?.filterIsInstance<Map<String, Any?>>()

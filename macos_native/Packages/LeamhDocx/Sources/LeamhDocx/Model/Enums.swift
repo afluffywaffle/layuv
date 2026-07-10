@@ -15,6 +15,8 @@ public enum AnnotationTool: String {
     case bookmark
     case inkAnnotation
     case comment
+    /// Whole-paragraph grey fill + rust left border — Word w:pBdr/paragraph w:shd import, or "Highlight Paragraph".
+    case blockquote
 
     static func fromName(_ name: String?) -> AnnotationTool {
         guard let name, let tool = AnnotationTool(rawValue: name) else { return .highlight }

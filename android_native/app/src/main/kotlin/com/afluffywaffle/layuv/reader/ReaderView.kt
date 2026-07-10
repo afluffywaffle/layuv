@@ -148,6 +148,18 @@ class ReaderView(context: Context) : View(context) {
         epd.pageTurn(this)
     }
 
+    // Block-quote paragraph styling (Word w:pBdr/paragraph w:shd import) — grey fill
+    // (same tone as annotation HIGHLIGHT_FILL) + solid left border, both greyscale-safe.
+    private val blockquoteFillPaint = Paint().apply {
+        color = ReaderTheme.FILL_06
+        style = Paint.Style.FILL
+    }
+    private val blockquoteBorderPaint = Paint().apply {
+        color = android.graphics.Color.argb(140, 0, 0, 0)
+        style = Paint.Style.FILL
+    }
+    private val blockquoteBorderWidthPx = 4f * resources.displayMetrics.density
+
     fun setJumpHighlight(start: Int, end: Int) {
         removeCallbacks(clearJumpHighlight)
         jumpHighlightStart = start
@@ -645,6 +657,28 @@ class ReaderView(context: Context) : View(context) {
                             jumpHighlightPaint,
                         )
                     }
+                }
+            }
+
+            // Block-quote annotations: full-width grey fill + solid left border, drawn
+            // before text/annotations so glyphs and highlight marks stay on top.
+            if (annotations.isNotEmpty()) {
+                val textLen = pl.layout.text.length
+                for (resolved in annotations) {
+                    if (resolved.annotation.tool != AnnotationTool.blockquote) continue
+                    val span = resolved.span ?: continue
+                    val pS = span.start.coerceIn(0, textLen)
+                    val pE = span.end.coerceIn(0, textLen)
+                    if (pS >= pE) continue
+                    val paraStartLine = pl.layout.getLineForOffset(pS)
+                    val paraEndLine = pl.layout.getLineForOffset(pE - 1)
+                    val overlapS = maxOf(paraStartLine, startLine)
+                    val overlapE = minOf(paraEndLine, endLine - 1)
+                    if (overlapS > overlapE) continue
+                    val top = pl.layout.getLineTop(overlapS).toFloat()
+                    val bottom = pl.layout.getLineBottom(overlapE).toFloat()
+                    canvas.drawRect(0f, top, colWidth.toFloat(), bottom, blockquoteFillPaint)
+                    canvas.drawRect(0f, top, blockquoteBorderWidthPx, bottom, blockquoteBorderPaint)
                 }
             }
 

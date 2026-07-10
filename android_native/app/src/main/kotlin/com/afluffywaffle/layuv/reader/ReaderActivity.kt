@@ -31,6 +31,8 @@ import com.afluffywaffle.layuv.R
 import com.afluffywaffle.layuv.ai.AiExporter
 import com.afluffywaffle.layuv.docx.DocxStore
 import com.afluffywaffle.layuv.docx.LoadedDocument
+import com.afluffywaffle.layuv.docx.ManuscriptSerializer
+import com.afluffywaffle.layuv.docx.PlainTextMapper
 import com.afluffywaffle.layuv.docx.ResolvedAnnotation
 import com.afluffywaffle.layuv.docx.TextSpan
 import com.afluffywaffle.layuv.docx.model.Annotation
@@ -672,6 +674,7 @@ class ReaderActivity : Activity() {
         }
         root.addView(overflowMenuDivider())
         root.addView(overflowActionRow("Export for AI…") { aiPopup?.dismiss(); exportForAi() })
+        root.addView(overflowActionRow("Export Annotations Only…") { aiPopup?.dismiss(); exportAnnotationsOnly() })
         root.addView(overflowActionRow("Import rewrite…") { aiPopup?.dismiss(); importRewrite() })
         root.addView(overflowMenuDivider())
         val exportFolderName = prefs.getString(KEY_AI_EXPORT_FOLDER, null)?.let { p ->
@@ -1025,6 +1028,60 @@ class ReaderActivity : Activity() {
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "AI export failed", e)
+            }
+        }
+    }
+
+    /**
+     * Lightweight sibling to [exportForAi]: writes `<cleanBase>_annotations.md` — annotations
+     * + their anchors (quoted passage, prefix/suffix context, position fraction) only, no
+     * chapter text. For an AI that already has the manuscript file open directly and just
+     * needs to know where each annotation applies, without the chapter body pasted again.
+     * Not versioned (overwrites each pass) since it's a reference artifact, not a draft.
+     */
+    private fun exportAnnotationsOnly() {
+        val opened = book ?: run {
+            Toast.makeText(this, "Open a document first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val configured = prefs.getString(KEY_AI_EXPORT_FOLDER, null)?.let(::File)?.takeIf { it.isDirectory }
+        val dir = configured ?: opened.file?.parentFile ?: run {
+            if (ensureAllFilesAccess()) {
+                startActivityForResult(
+                    Intent(this, FileBrowserActivity::class.java)
+                        .putExtra(FileBrowserActivity.EXTRA_PICK_DIR, true),
+                    REQ_PICK_AI_DIR,
+                )
+            }
+            return
+        }
+        val rawName = opened.file?.name ?: opened.displayName
+        val baseName = (if (rawName.endsWith(".docx", ignoreCase = true)) rawName.dropLast(5) else rawName)
+            .ifBlank { "chapter" }
+        val cleanBase = baseName.replace(Regex("""_draft_v(\d+)$""", RegexOption.IGNORE_CASE), "")
+            .ifBlank { "chapter" }
+        DocxWriteQueue.enqueueRead {
+            try {
+                val src = opened.file?.readBytes() ?: opened.bytes
+                val body = ManuscriptSerializer.buildAnnotationsOnlyExport(
+                    fileName = rawName,
+                    annotations = opened.doc.annotations.map { it.annotation },
+                )
+                val images = body.inkAnnotationIds.mapIndexedNotNull { i, id ->
+                    // Prefixed with the chapter name since this writes flat into a shared
+                    // folder, unlike the full export's per-chapter subdirectory.
+                    DocxStore.readInkPng(src, id)?.let { png -> "${cleanBase}_ink_${i + 1}.png" to png }
+                }
+                val text = if (images.isEmpty()) body.text else {
+                    body.text + "\n=== IMAGE FILES ===\n" + images.joinToString("\n") { it.first } + "\n"
+                }
+                DocxWriteQueue.writeAtomicDurable(
+                    File(dir, "${cleanBase}_annotations.md"),
+                    text.toByteArray(Charsets.UTF_8),
+                )
+                images.forEach { (name, bytes) -> DocxWriteQueue.writeAtomicDurable(File(dir, name), bytes) }
+            } catch (e: Exception) {
+                Log.e(TAG, "Annotations-only export failed", e)
             }
         }
     }
@@ -1428,6 +1485,7 @@ class ReaderActivity : Activity() {
             note = note?.takeIf { it.isNotEmpty() },
             timestamp = Instant.now(),
             position = position,
+            paragraph = PlainTextMapper.paragraphIndex(text, s),
         )
 
         readerView.cancelSelection()
@@ -1495,6 +1553,7 @@ class ReaderActivity : Activity() {
             tool = AnnotationTool.inkAnnotation,
             timestamp = Instant.now(),
             position = position,
+            paragraph = PlainTextMapper.paragraphIndex(text, s),
             hasInk = pngBytes != null,
         )
 

@@ -45,10 +45,18 @@ unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
 DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
   /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift test
 
-# Build the app
+# Build + install (compile-error check only, no install/launch)
 DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcodebuild \
   -project macos_native/LeamhApp/LeamhApp.xcodeproj \
   -scheme LeamhApp -configuration Debug -sdk macosx build
+
+# To actually RUN the app, use the install script instead of launching from
+# DerivedData directly — it always replaces /Applications/Layuv.app so there is
+# never more than one bundle registered under com.afluffywaffle.layuv (running
+# both a DerivedData copy and an /Applications copy at once causes duplicate
+# Dock icons and duplicate file-open instances, since Launch Services can't
+# disambiguate two bundles sharing one bundle ID).
+macos_native/build_and_install.sh Release   # or Debug
 ```
 
 ### Critical Xcode 27 project format note
@@ -322,3 +330,9 @@ confirm the build succeeds.
 
 Do not refactor, rename, or restructure code that is not part of the
 assigned task. Do not add features that were not requested.
+
+## Working with Claude — efficiency
+
+- **Build/test is the checker.** Tight loop = edit → `xcodebuild -scheme "LeamhApp" -destination 'platform=macOS' build` (macOS app) or `./gradlew :app:assembleDebug` (Android app) → read errors → fix. This compile-fix loop is mechanical and can run on a **Sonnet subagent**; reserve the main (Opus) session for design/architecture decisions.
+- **Target, don't sweep.** Grep/Glob to the relevant file or symbol; don't read the whole project tree. Point Claude at the file when you already know where the work is.
+- **Route by task type:** boilerplate / mechanical refactor → **Haiku** subagent; compile-fix loops / tests / straightforward features → **Sonnet** subagent; architecture / concurrency / hard debugging → **Opus** (main session).

@@ -47,6 +47,8 @@ struct HomeView: View {
         } detail: {
             if store.isLoading {
                 ProgressView("Loading…")
+                    .tint(AppTheme.warmPaperInk)
+                    .foregroundStyle(AppTheme.warmPaperInk)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(AppTheme.warmPaper)
             } else if store.document != nil {
@@ -59,20 +61,26 @@ struct HomeView: View {
 
     private var emptyState: some View {
         VStack(spacing: 24) {
-            ContentUnavailableView {
-                Label("No Document Open", systemImage: "doc.text")
-            } description: {
+            VStack(spacing: 12) {
+                Image(systemName: "doc.text")
+                    .font(.system(size: 40))
+                    .foregroundStyle(AppTheme.warmPaperInkMuted)
+                Text("No Document Open")
+                    .font(AppTheme.chromeBold(size: 17))
+                    .foregroundStyle(AppTheme.warmPaperInk)
                 Text("Open a DOCX file to begin reading.")
-            } actions: {
+                    .font(AppTheme.chrome())
+                    .foregroundStyle(AppTheme.warmPaperInkMuted)
                 Button("Open…") { store.openFilePanel() }
                     .buttonStyle(.borderedProminent)
+                    .padding(.top, 4)
             }
 
             if !store.recentURLs.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Recent")
                         .font(AppTheme.chromeBold())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppTheme.warmPaperInkMuted)
                         .padding(.horizontal, 4)
                     ForEach(store.recentURLs.prefix(6), id: \.self) { url in
                         Button {
@@ -80,9 +88,10 @@ struct HomeView: View {
                         } label: {
                             HStack(spacing: 8) {
                                 Image(systemName: "doc.text")
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(AppTheme.warmPaperInkMuted)
                                 Text(url.deletingPathExtension().lastPathComponent)
                                     .font(AppTheme.body(size: 15))
+                                    .foregroundStyle(AppTheme.warmPaperInk)
                                     .lineLimit(1)
                                 Spacer()
                             }
@@ -118,6 +127,11 @@ struct ReaderScreen: View {
     @State private var showImportRewrite      = false
     @State private var showExportFolderPicker = false
     @State private var showImportFolderPicker = false
+
+    // Live page-scrub via drag on the toolbar page-number label (page-flip mode only —
+    // scroll mode already has the native scrollbar for that).
+    @State private var isScrubbingPageLabel = false
+    @State private var scrubStartPage       = 0
 
     private var docxType: UTType { UTType(filenameExtension: "docx") ?? .data }
 
@@ -157,10 +171,46 @@ struct ReaderScreen: View {
                             .font(AppTheme.chrome())
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
+                            .contentShape(Rectangle())
+                            .gesture(
+                                // Click-and-drag left/right live-scrubs pages; a plain click
+                                // (no movement) does nothing, matching the chevrons for ±1 steps.
+                                DragGesture(minimumDistance: 4)
+                                    .onChanged { value in
+                                        if !isScrubbingPageLabel {
+                                            isScrubbingPageLabel = true
+                                            scrubStartPage = coordinator.currentPage
+                                        }
+                                        let pointsPerPage: CGFloat = 24
+                                        let delta = Int((value.translation.width / pointsPerPage).rounded())
+                                        let target = min(max(scrubStartPage + delta, 0),
+                                                          coordinator.pageCount - 1)
+                                        if target != coordinator.currentPage {
+                                            coordinator.goToPage(target)
+                                        }
+                                    }
+                                    .onEnded { _ in isScrubbingPageLabel = false }
+                            )
                         Button { coordinator.nextPage() } label: {
                             Image(systemName: "chevron.right")
                         }
                         .disabled(coordinator.currentPage >= coordinator.pageCount - 1)
+                    }
+                }
+                // Locked-tool chip — shown only while a tool is locked. Tap to unlock.
+                // Mirrors Android's bottom-bar locked-tool slot.
+                if let locked = store.lockedTool {
+                    ToolbarItem(placement: .automatic) {
+                        Button {
+                            store.lockedTool = nil
+                        } label: {
+                            Label {
+                                Text("\(locked.chipLabel) locked")
+                            } icon: {
+                                Image(systemName: "lock.fill")
+                            }
+                        }
+                        .help("\(locked.chipLabel) tool locked — tap to unlock")
                     }
                 }
                 // Typography: font, size, two-column (paged mode).
@@ -305,6 +355,9 @@ struct ReaderScreen: View {
         Button { exportAi() } label: {
             Label("Export for AI…", systemImage: "square.and.arrow.up")
         }
+        Button { exportAnnotationsOnly() } label: {
+            Label("Export Annotations Only…", systemImage: "list.bullet.rectangle")
+        }
         Button { importRewrite() } label: {
             Label("Import rewrite…", systemImage: "square.and.arrow.down")
         }
@@ -335,6 +388,25 @@ struct ReaderScreen: View {
         }
     }
 
+    /// Export Annotations Only: same folder-or-panel choice as Export for AI, but writes only
+    /// the anchor list (no chapter text) as a lightweight sibling artifact.
+    private func exportAnnotationsOnly() {
+        Task {
+            if let folder = store.aiExportFolder {
+                _ = await store.exportAnnotationsOnly(toFolder: folder)
+            } else {
+                let panel = NSOpenPanel()
+                panel.canChooseDirectories = true
+                panel.canChooseFiles = false
+                panel.prompt = "Export Here"
+                panel.message = "Choose a folder to write the annotations-only export."
+                if panel.runModal() == .OK, let folder = panel.url {
+                    _ = await store.exportAnnotationsOnly(toFolder: folder)
+                }
+            }
+        }
+    }
+
     /// Import rewrite: auto-find "<doc> Draft.docx" in the import folder, else open a picker.
     private func importRewrite() {
         if let found = store.autoFindRewrite() {
@@ -349,5 +421,24 @@ struct ReaderScreen: View {
         let parent = url.deletingLastPathComponent().lastPathComponent
         let name   = url.lastPathComponent
         return parent.isEmpty ? "\(base)  (\(name))" : "\(base)  (\(parent)/\(name))"
+    }
+}
+
+// MARK: - Locked-tool chip label
+
+extension AnnotationTool {
+    /// Short human label for the reader's locked-tool toolbar chip.
+    var chipLabel: String {
+        switch self {
+        case .highlight:       return "Highlight"
+        case .underline:       return "Underline"
+        case .doubleUnderline: return "Double Underline"
+        case .strikethrough:   return "Strikethrough"
+        case .wavyUnderline:   return "Wavy Underline"
+        case .bookmark:        return "Bookmark"
+        case .inkAnnotation:   return "Ink"
+        case .comment:         return "Comment"
+        case .blockquote:      return "Paragraph"
+        }
     }
 }

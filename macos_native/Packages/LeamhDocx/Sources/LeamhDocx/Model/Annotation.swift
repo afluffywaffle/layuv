@@ -53,6 +53,12 @@ public struct Annotation: Equatable {
     public let tag: AnnotationTag?
     public let timestamp: Date
     public let position: Double
+    /// 1-indexed paragraph number this annotation anchors to, computed via
+    /// `PlainTextMapper.paragraphIndex` from the exact char offset available at
+    /// creation/parse time — NOT reverse-derived from `position`. Like `position`, reflects
+    /// the document as of the last (re-)anchor; 0 means never computed (legacy record).
+    /// Mirrors `Annotation.paragraph` in Kotlin.
+    public let paragraph: Int
     public let hasInk: Bool
     /// Chronological comment thread. Empty for legacy/single-note annotations (the `note` field
     /// carries those). When non-empty, entry 0's text equals `note` and the thread is the source
@@ -69,6 +75,7 @@ public struct Annotation: Equatable {
         tag: AnnotationTag? = nil,
         timestamp: Date,
         position: Double = 0.0,
+        paragraph: Int = 0,
         hasInk: Bool = false,
         threadEntries: [ThreadEntry] = []
     ) {
@@ -81,6 +88,7 @@ public struct Annotation: Equatable {
         self.tag = tag
         self.timestamp = timestamp
         self.position = position
+        self.paragraph = paragraph
         self.hasInk = hasInk
         self.threadEntries = threadEntries
     }
@@ -97,6 +105,7 @@ public struct Annotation: Equatable {
             "tag": tag?.rawValue as Any?,
             "timestamp": Timestamps.format(timestamp),
             "position": position,
+            "paragraph": paragraph,
             "hasInk": hasInk,
             "threadEntries": threadEntries.map { $0.toMap() },
         ]
@@ -117,6 +126,7 @@ public struct Annotation: Equatable {
             tag: AnnotationTag.fromName(map["tag"] as? String),
             timestamp: Timestamps.parse(timestampStr),
             position: (map["position"] as? NSNumber)?.doubleValue ?? 0.0,
+            paragraph: (map["paragraph"] as? NSNumber)?.intValue ?? 0,
             hasInk: (map["hasInk"] as? Bool) ?? false,
             threadEntries: ((map["threadEntries"] as? [[String: Any]]) ?? [])
                 .map { ThreadEntry.fromMap($0 as [String: Any?]) }
@@ -133,6 +143,7 @@ public struct Annotation: Equatable {
         tag: AnnotationTag?? = nil,
         timestamp: Date? = nil,
         position: Double? = nil,
+        paragraph: Int? = nil,
         hasInk: Bool? = nil,
         threadEntries: [ThreadEntry]? = nil
     ) -> Annotation {
@@ -146,6 +157,7 @@ public struct Annotation: Equatable {
             tag: tag ?? self.tag,
             timestamp: timestamp ?? self.timestamp,
             position: position ?? self.position,
+            paragraph: paragraph ?? self.paragraph,
             hasInk: hasInk ?? self.hasInk,
             threadEntries: threadEntries ?? self.threadEntries
         )

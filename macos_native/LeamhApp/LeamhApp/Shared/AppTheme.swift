@@ -74,6 +74,11 @@ enum LineSpacing: String, CaseIterable {
 enum AppTheme {
     // CLAUDE.md: warm paper background #F5F0E8
     static let warmPaper = Color(red: 245/255, green: 240/255, blue: 232/255)
+    // Explicit dark ink for text drawn on warmPaper. warmPaper is a fixed light colour regardless
+    // of system appearance, so text on it must NOT use semantic colours (.primary/.secondary) —
+    // those flip to white in dark mode and vanish against the paper.
+    static let warmPaperInk        = Color(red: 0.20, green: 0.15, blue: 0.10)
+    static let warmPaperInkMuted   = Color(red: 0.20, green: 0.15, blue: 0.10).opacity(0.6)
 
     // Neutral surfaces used by shared panels — map to native system colours per platform.
     #if os(macOS)

@@ -155,19 +155,15 @@ struct ReaderTextView: UIViewControllerRepresentable {
             case .wavyUnderline:
                 let style = NSUnderlineStyle.patternDash.rawValue | NSUnderlineStyle.thick.rawValue
                 str.addAttribute(.underlineStyle, value: style, range: r)
-                str.addAttribute(.underlineColor, value: UIColor.systemTeal, range: r)
+                str.addAttribute(.underlineColor, value: theme.uiWavyUnderline, range: r)
             case .bookmark:
-                str.addAttribute(.backgroundColor,
-                                 value: UIColor.systemOrange.withAlphaComponent(0.15), range: r)
+                str.addAttribute(.backgroundColor, value: theme.uiBookmarkFill, range: r)
             case .comment:
-                let style = NSUnderlineStyle.patternDot.rawValue | NSUnderlineStyle.thick.rawValue
-                str.addAttribute(.underlineStyle, value: style, range: r)
-                str.addAttribute(.underlineColor, value: UIColor.systemGreen, range: r)
-                str.addAttribute(.backgroundColor,
-                                 value: UIColor.systemGreen.withAlphaComponent(0.1), range: r)
+                str.addAttribute(.backgroundColor, value: theme.uiCommentFill, range: r)
             case .inkAnnotation:
-                str.addAttribute(.backgroundColor,
-                                 value: UIColor.systemPurple.withAlphaComponent(0.12), range: r)
+                str.addAttribute(.backgroundColor, value: theme.uiInkFill, range: r)
+            case .blockquote:
+                str.addAttribute(.backgroundColor, value: theme.uiBlockquoteFill, range: r)
             }
         }
         return str
@@ -590,6 +586,11 @@ final class FloatingSelectionToolbar: UIView {
             btn.translatesAutoresizingMaskIntoConstraints = false
             btn.widthAnchor.constraint(equalToConstant: Self.buttonSize).isActive = true
             btn.heightAnchor.constraint(equalToConstant: Self.buttonSize).isActive = true
+            // Long-press Highlight for "Highlight Paragraph" — commits .blockquote over the
+            // whole enclosing paragraph instead of just the selection.
+            if tool == .highlight {
+                btn.addInteraction(UIContextMenuInteraction(delegate: self))
+            }
             stack.addArrangedSubview(btn)
 
             if i < Self.items.count - 1 {
@@ -609,5 +610,16 @@ final class FloatingSelectionToolbar: UIView {
         let seps    = CGFloat(Self.items.count)
         return CGSize(width: buttons * Self.buttonSize + seps * Self.separatorW,
                       height: Self.buttonSize)
+    }
+}
+
+extension FloatingSelectionToolbar: UIContextMenuInteractionDelegate {
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
+                                 configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
+        UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+            UIMenu(title: "", children: [
+                UIAction(title: "Highlight Paragraph") { _ in self?.onSelect?(.blockquote) },
+            ])
+        }
     }
 }

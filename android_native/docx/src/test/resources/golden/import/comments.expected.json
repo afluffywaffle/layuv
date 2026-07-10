@@ -9,6 +9,7 @@
     "tag": "pacing",
     "timestamp": "2026-06-08T10:00:00.000Z",
     "position": 0.25,
+    "paragraph": 1,
     "hasInk": false
   },
   {
@@ -21,6 +22,7 @@
     "tag": null,
     "timestamp": "2026-06-08T11:00:00.000Z",
     "position": 0.35294117647058826,
+    "paragraph": 1,
     "hasInk": false
   }
 ]

@@ -19,6 +19,7 @@ public struct LoadedDocument {
     public var plainText: String { plainMap.plain }
     public var formatSpans: [FormatSpan] { plainMap.formats }
     public var headings: [Heading] { plainMap.headings }
+    public var paragraphStyles: [ParagraphStyleSpan] { plainMap.paragraphStyles }
 }
 
 /// Read/write entry point for the DOCX engine. Mirror of DocxStore.kt.
@@ -81,11 +82,14 @@ public enum DocxStore {
                 annotations = native + legacy
             }
             return annotations.map { a in
-                ResolvedAnnotation(
-                    annotation: a,
-                    span: Anchoring.locateInPlain(map.plain, selectedText: a.selectedText,
-                                                  prefix: a.prefix, suffix: a.suffix, positionHint: a.position)
-                )
+                let span = Anchoring.locateInPlain(map.plain, selectedText: a.selectedText,
+                                                    prefix: a.prefix, suffix: a.suffix, positionHint: a.position)
+                // Recompute `paragraph` from the freshly resolved span rather than trusting
+                // whatever was persisted — keeps it accurate as the document drifts, and
+                // backfills it for annotations saved before this field existed (leamh/annotations.json
+                // is the primary store and is never regenerated from document.xml on ordinary loads).
+                let resolved = span.map { a.copy(paragraph: PlainTextMapper.paragraphIndex(map.plain, $0.start)) } ?? a
+                return ResolvedAnnotation(annotation: resolved, span: span)
             }
         } catch {
             return []

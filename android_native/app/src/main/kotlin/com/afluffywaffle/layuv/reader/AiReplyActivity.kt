@@ -2,12 +2,16 @@ package com.afluffywaffle.layuv.reader
 
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
+import android.graphics.Color
 import android.os.Bundle
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -30,6 +34,10 @@ class AiReplyActivity : Activity() {
     companion object {
         const val EXTRA_TITLE = "ai_reply_title"
         const val EXTRA_TEXT = "ai_reply_text"
+        /** Extra returned with RESULT_OK when the user types a follow-up reply here. */
+        const val EXTRA_REPLY = "ai_reply_reply"
+        /** Request code used by [AskAiPanel] to launch this activity for a result. */
+        const val REQUEST_CODE = 1012
         private const val KEY_FLIP_SIDE = "ai_flip_side"
     }
 
@@ -94,6 +102,41 @@ class AiReplyActivity : Activity() {
         frame.addView(edgeNav, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         root.addView(frame, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
         applyNavSide()
+
+        // Reply bar: lets the user type a follow-up without collapsing back to the chat panel.
+        // On send, the activity finishes with RESULT_OK + EXTRA_REPLY so AskAiPanel submits it.
+        root.addView(rowDivider())
+        val replyInput = EditText(this).apply {
+            typeface = ReaderTheme.body(this@AiReplyActivity)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, ReaderTheme.BODY_TEXT_SP)
+            setTextColor(ReaderTheme.INK_87)
+            setHintTextColor(0xFF9E9A92.toInt())
+            setHighlightColor(Color.argb(60, 0, 0, 0))
+            hint = "Reply…"
+            minLines = 1
+            maxLines = 4
+            gravity = Gravity.TOP or Gravity.START
+            background = popupBackground()
+            setPadding(dp(12f), dp(10f), dp(12f), dp(10f))
+            minimumHeight = dp(48f)
+        }
+        val replyButton = textButton("Reply", bold = true) {
+            val text = replyInput.text.toString().trim()
+            if (text.isEmpty()) return@textButton
+            val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.hideSoftInputFromWindow(replyInput.windowToken, 0)
+            setResult(RESULT_OK, Intent().putExtra(EXTRA_REPLY, text))
+            finish()
+        }
+        val replyRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.BOTTOM
+            setPadding(dp(12f), dp(8f), dp(12f), dp(8f))
+            addView(replyInput, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+            addView(replyButton, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT)
+                .also { it.leftMargin = dp(8f) })
+        }
+        root.addView(replyRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
 
         setContentView(root)
     }

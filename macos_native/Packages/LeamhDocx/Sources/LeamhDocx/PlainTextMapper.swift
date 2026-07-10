@@ -8,6 +8,23 @@ public struct FormatSpan: Equatable {
     public let italic: Bool
 }
 
+/// A whole paragraph over [start, end) char offsets (end excludes the trailing `\n`)
+/// styled with a Word paragraph border and/or paragraph-level shading — e.g. a
+/// block-quote/callout paragraph (<w:pBdr> + <w:shd> inside <w:pPr>). Distinct from
+/// run-level <w:rPr><w:shd> which imports as a .highlight annotation instead (see
+/// NativeImport). Mirrors ParagraphStyleSpan in PlainTextMapper.kt.
+public struct ParagraphStyleSpan: Equatable {
+    public let start: Int
+    public let end: Int
+    public let blockquote: Bool
+
+    public init(start: Int, end: Int, blockquote: Bool) {
+        self.start = start
+        self.end = end
+        self.blockquote = blockquote
+    }
+}
+
 /// The canonical plain text plus, for each of its UTF-16 code units, the char offset
 /// xmlOffsets into the source document.xml. The two are parallel: xmlOffsets.count == plain.utf16.count.
 ///
@@ -18,12 +35,15 @@ public struct PlainMap {
     public let formats: [FormatSpan]
     /// Heading paragraphs in document order — drives the navigation outline.
     public let headings: [Heading]
+    /// Block-quote-styled paragraphs in document order — display only, same overlay contract as formats.
+    public let paragraphStyles: [ParagraphStyleSpan]
 
-    public init(plain: String, xmlOffsets: [Int], formats: [FormatSpan] = [], headings: [Heading] = []) {
+    public init(plain: String, xmlOffsets: [Int], formats: [FormatSpan] = [], headings: [Heading] = [], paragraphStyles: [ParagraphStyleSpan] = []) {
         self.plain = plain
         self.xmlOffsets = xmlOffsets
         self.formats = formats
         self.headings = headings
+        self.paragraphStyles = paragraphStyles
     }
 }
 
@@ -60,10 +80,34 @@ public struct Heading: Equatable {
 ///   everything else   ignored
 public enum PlainTextMapper {
 
+    /// 1-indexed paragraph number containing UTF-16 offset `offset` into `plain`. Exact —
+    /// paragraphs in `plain` are delimited one-for-one by the `\n` each `</w:p>` emits (see
+    /// the extraction rules above), so this is a plain newline count, not an approximation.
+    /// Mirrors `PlainTextMapper.paragraphIndex` in Kotlin.
+    public static func paragraphIndex(_ plain: String, _ offset: Int) -> Int {
+        let units = plain.utf16
+        guard !units.isEmpty else { return 1 }
+        let clamped = max(0, min(offset, units.count))
+        var count = 1
+        for (i, u) in units.enumerated() {
+            if i >= clamped { break }
+            if u == 0x0A { count += 1 }
+        }
+        return count
+    }
+
     private static let wtClose = "</w:t>"
     private static let valRE = try! NSRegularExpression(pattern: #"w:val="([^"]*)""#)
     // Conventional heading styleId "Heading1".."Heading9" (optional space), case-insensitive.
     private static let headingRE = try! NSRegularExpression(pattern: #"^[Hh]eading\s*([1-9])$"#)
+    private static let fillRE = try! NSRegularExpression(pattern: #"w:fill="([0-9A-Fa-f]{6})""#)
+
+    private static func isRealFill(_ tag: String) -> Bool {
+        guard let m = fillRE.firstMatch(in: tag, range: NSRange(tag.startIndex..., in: tag)) else { return false }
+        let fill = (tag as NSString).substring(with: m.range(at: 1))
+        return fill.caseInsensitiveCompare("auto") != .orderedSame
+            && fill.caseInsensitiveCompare("FFFFFF") != .orderedSame
+    }
 
     /// The 0-based outline level for a pStyle val, or nil if it isn't a heading.
     private static func headingLevel(_ val: String) -> Int? {
@@ -83,10 +127,15 @@ public enum PlainTextMapper {
         var offsets: [Int] = []
         var formats: [FormatSpan] = []
         var headings: [Heading] = []
+        var paragraphStyles: [ParagraphStyleSpan] = []
         // Outline tracking: where the current paragraph's text begins in plain (UTF-16),
         // and its heading level (nil = not a heading), captured from <w:pStyle>.
         var paraStart = 0
         var paraHeadingLevel: Int? = nil
+        // Paragraph border/shading tracking (only meaningful while !inRun).
+        var inPBdr = false
+        var paraHasBorder = false
+        var paraHasShd = false
 
         var inRun = false
         var runBold = false
@@ -149,6 +198,7 @@ public enum PlainTextMapper {
             case (false, false, "w:p"):
                 paraStart = plain.utf16.count
                 paraHeadingLevel = nil
+                inPBdr = false; paraHasBorder = false; paraHasShd = false
             case (true, _, "w:p"):
                 // Record the outline entry from this paragraph's text BEFORE the
                 // trailing newline is appended. Skip blank headings.
@@ -158,11 +208,28 @@ public enum PlainTextMapper {
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     if !text.isEmpty { headings.append(Heading(text: text, level: lvl, charOffset: paraStart)) }
                 }
+                if paraHasBorder || paraHasShd {
+                    paragraphStyles.append(ParagraphStyleSpan(start: paraStart, end: plain.utf16.count, blockquote: true))
+                }
                 plain += "\n"; offsets.append(tagStartUtf16)
             case (false, _, "w:pStyle") where !inRun:
                 if let m = valRE.firstMatch(in: tag, range: NSRange(tag.startIndex..., in: tag)) {
                     paraHeadingLevel = headingLevel((tag as NSString).substring(with: m.range(at: 1)))
                 }
+            case (false, false, "w:pBdr") where !inRun:
+                inPBdr = true
+            case (true, _, "w:pBdr"):
+                inPBdr = false
+            case (false, true, "w:left") where inPBdr:
+                paraHasBorder = true
+            case (false, true, "w:top") where inPBdr:
+                paraHasBorder = true
+            case (false, true, "w:bottom") where inPBdr:
+                paraHasBorder = true
+            case (false, true, "w:right") where inPBdr:
+                paraHasBorder = true
+            case (false, true, "w:shd") where !inRun && isRealFill(tag):
+                paraHasShd = true
             case (false, false, "w:r"):
                 inRun = true; runBold = false; runItalic = false
             case (true, _, "w:r"):
@@ -178,6 +245,6 @@ public enum PlainTextMapper {
             i = xml.index(after: gtIdx)
         }
 
-        return PlainMap(plain: plain, xmlOffsets: offsets, formats: formats, headings: headings)
+        return PlainMap(plain: plain, xmlOffsets: offsets, formats: formats, headings: headings, paragraphStyles: paragraphStyles)
     }
 }

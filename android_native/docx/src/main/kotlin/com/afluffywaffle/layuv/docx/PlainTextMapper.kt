@@ -12,6 +12,15 @@ data class FormatSpan(val start: Int, val end: Int, val bold: Boolean, val itali
 data class Heading(val text: String, val level: Int, val charOffset: Int)
 
 /**
+ * A whole paragraph over `[start, end)` char offsets (end excludes the trailing
+ * `\n`) styled with a Word paragraph border and/or paragraph-level shading —
+ * e.g. a block-quote/callout paragraph (`<w:pBdr>` + `<w:shd>` inside `<w:pPr>`).
+ * Distinct from run-level `<w:rPr><w:shd>` which imports as a `.highlight`
+ * annotation instead (see NativeImport).
+ */
+data class ParagraphStyleSpan(val start: Int, val end: Int, val blockquote: Boolean)
+
+/**
  * The canonical plain text [plain] plus, for each of its UTF-16 code units,
  * the char offset [xmlOffsets] into the source document.xml. The two arrays
  * are parallel: `xmlOffsets.size == plain.length`.
@@ -26,6 +35,8 @@ class PlainMap(
     val formats: List<FormatSpan> = emptyList(),
     /** Heading paragraphs in document order — drives the navigation outline. */
     val headings: List<Heading> = emptyList(),
+    /** Block-quote-styled paragraphs in document order — display only, same overlay contract as [formats]. */
+    val paragraphStyles: List<ParagraphStyleSpan> = emptyList(),
 )
 
 /**
@@ -54,8 +65,27 @@ class PlainMap(
  */
 object PlainTextMapper {
 
+    /**
+     * 1-indexed paragraph number containing char offset [offset] into [plain]. Exact —
+     * paragraphs in [plain] are delimited one-for-one by the `\n` each `</w:p>` emits (see
+     * the extraction rules above), so this is a plain newline count, not an approximation.
+     */
+    fun paragraphIndex(plain: String, offset: Int): Int {
+        if (plain.isEmpty()) return 1
+        val clamped = offset.coerceIn(0, plain.length)
+        var count = 1
+        for (i in 0 until clamped) if (plain[i] == '\n') count++
+        return count
+    }
+
     private const val WT_CLOSE = "</w:t>"
     private val VAL_RE = Regex("w:val=\"([^\"]*)\"")
+    private val FILL_RE = Regex("w:fill=\"([0-9A-Fa-f]{6})\"")
+
+    private fun isRealFill(tag: String): Boolean {
+        val fill = FILL_RE.find(tag)?.groupValues?.get(1) ?: return false
+        return !fill.equals("auto", ignoreCase = true) && !fill.equals("FFFFFF", ignoreCase = true)
+    }
 
     /** A toggle property like `<w:b/>` is ON unless `w:val` says otherwise. */
     private fun toggleOn(tag: String): Boolean {
@@ -74,10 +104,15 @@ object PlainTextMapper {
         val offsets = ArrayList<Int>()
         val formats = ArrayList<FormatSpan>()
         val headings = ArrayList<Heading>()
+        val paragraphStyles = ArrayList<ParagraphStyleSpan>()
         // Outline tracking: where the current paragraph's text begins in [sb], and
         // its heading level (null = not a heading), captured from <w:pStyle>.
         var paraStart = 0
         var paraHeadingLevel: Int? = null
+        // Paragraph border/shading tracking (only meaningful while inPPr, not inRun).
+        var inPBdr = false
+        var paraHasBorder = false
+        var paraHasShd = false
         // Direct run formatting, tracked inside <w:r>.
         var inRun = false
         var runBold = false
@@ -155,6 +190,7 @@ object PlainTextMapper {
                 !isEnd && !isSelfClose && name == "w:p" -> {
                     pStyleBold = false; pStyleItalic = false; inPPr = false
                     paraStart = sb.length; paraHeadingLevel = null
+                    inPBdr = false; paraHasBorder = false; paraHasShd = false
                 }
                 isEnd && name == "w:p" -> {
                     // Record the outline entry from this paragraph's text BEFORE the
@@ -164,11 +200,21 @@ object PlainTextMapper {
                         val text = sb.substring(paraStart, sb.length).trim()
                         if (text.isNotEmpty()) headings.add(Heading(text, lvl, paraStart))
                     }
+                    if (paraHasBorder || paraHasShd) {
+                        paragraphStyles.add(ParagraphStyleSpan(paraStart, sb.length, blockquote = true))
+                    }
                     sb.append('\n'); offsets.add(lt)
                 }
                 // Paragraph properties block (only outside runs).
                 !isEnd && !isSelfClose && name == "w:pPr" && !inRun -> inPPr = true
                 isEnd && name == "w:pPr" -> inPPr = false
+                // Paragraph border block — any edge present counts as a "change bar" style.
+                !isEnd && !isSelfClose && name == "w:pBdr" && inPPr -> inPBdr = true
+                isEnd && name == "w:pBdr" -> inPBdr = false
+                isSelfClose && inPBdr && (name == "w:left" || name == "w:top" || name == "w:bottom" || name == "w:right") ->
+                    paraHasBorder = true
+                // Paragraph-level shading (distinct from run-level <w:rPr><w:shd> imported as .highlight).
+                isSelfClose && name == "w:shd" && inPPr && !inRun && isRealFill(tag) -> paraHasShd = true
                 // Paragraph style reference → resolve bold/italic from the style map.
                 isSelfClose && name == "w:pStyle" && inPPr && styles != null -> {
                     val sid = VAL_RE.find(tag)?.groupValues?.get(1)
@@ -202,6 +248,6 @@ object PlainTextMapper {
             }
             i = gt + 1
         }
-        return PlainMap(sb.toString(), offsets.toIntArray(), formats, headings)
+        return PlainMap(sb.toString(), offsets.toIntArray(), formats, headings, paragraphStyles)
     }
 }

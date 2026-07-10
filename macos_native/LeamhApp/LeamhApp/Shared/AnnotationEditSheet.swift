@@ -82,6 +82,10 @@ struct AnnotationEditSheet: View {
 
             // Actions
             HStack {
+                Button("Delete", role: .destructive) {
+                    store.deleteAnnotation(id: annotation.id)
+                    dismiss()
+                }
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.escape)
                 Spacer()

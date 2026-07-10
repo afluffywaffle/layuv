@@ -772,5 +772,6 @@ class AnnotationsPanelActivity : Activity() {
         AnnotationTool.bookmark        -> "Bookmarks"  // not shown; kept for exhaustive when
         AnnotationTool.inkAnnotation   -> "Ink notes"
         AnnotationTool.comment         -> "Comments"
+        AnnotationTool.blockquote      -> "Blockquotes"
     }
 }

@@ -32,8 +32,8 @@ struct SidebarPanelView: View {
     /// iPhone hosts Find on the reader toolbar, so the panel hides its Find tab in compact width.
     var showFindTab: Bool = true
 
-    enum Tab { case outline, annotations, bookmarks, find }
-    @State private var tab: Tab = .outline
+    enum Tab { case annotations, outline, bookmarks, find }
+    @State private var tab: Tab = .annotations
 
     private var openPlacement: ToolbarItemPlacement {
         #if os(iOS)
@@ -46,31 +46,32 @@ struct SidebarPanelView: View {
     var body: some View {
         VStack(spacing: 0) {
             Picker("Panel", selection: $tab) {
-                Text("Outline").tag(Tab.outline)
                 Text("Annotations").tag(Tab.annotations)
+                Text("Outline").tag(Tab.outline)
                 Text("Bookmarks").tag(Tab.bookmarks)
                 if showFindTab {
                     Text("Find").tag(Tab.find)
                 }
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
 
             Divider()
 
             switch tab {
+            case .annotations:
+                AnnotationsPanel(onScrollTo: onScrollTo)
             case .outline:
                 OutlineListView(onScrollToCharOffset: onScrollToCharOffset)
-            case .annotations:
-                AnnotationsPanel()
             case .bookmarks:
                 BookmarksListView(onScrollTo: onScrollTo)
             case .find:
                 if showFindTab {
                     FindPanel(onFind: onFind)
                 } else {
-                    AnnotationsPanel()
+                    AnnotationsPanel(onScrollTo: onScrollTo)
                 }
             }
 

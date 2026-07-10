@@ -19,6 +19,11 @@ final class DocumentStore: ObservableObject {
     /// Set to open the annotation edit sheet from anywhere (VC tap, panel row, comment creation).
     @Published var editingAnnotation: Annotation?
 
+    /// Currently locked annotation tool. When non-nil, new text selections auto-annotate
+    /// with this tool (no tool popover), and the reader toolbar shows a tap-to-unlock chip.
+    /// In-memory only (mirrors Android's `lockedTool` — not persisted across launches).
+    @Published var lockedTool: AnnotationTool?
+
     @Published private(set) var currentURL: URL?
     // Track the URL whose security scope we're holding so we can release on next load.
     private var accessedURL: URL?
@@ -727,6 +732,54 @@ final class DocumentStore: ObservableObject {
         let footer   = images.isEmpty ? "" :
             "\n=== IMAGE FILES ===\n" + images.map(\.0).joined(separator: "\n") + "\n"
         return (header + body.text + footer, images)
+    }
+
+    /// Lightweight sibling to `exportForAi`: annotations + their anchors only, no chapter text.
+    /// For an AI (e.g. Claude Code) that already has the manuscript file open directly and just
+    /// needs to know where each annotation applies, without the chapter body being pasted again.
+    /// Ink annotations still get their handwritten PNG (numbered "attached image N", same as the
+    /// full export) since the note content itself is only readable from the image.
+    func buildAnnotationsOnlyExport() async -> (text: String, images: [(name: String, data: Data)]) {
+        let annotations = self.annotations.map(\.annotation)
+        let fileName = currentURL?.lastPathComponent ?? "Document"
+        let cleanBase = currentURL?.deletingPathExtension().lastPathComponent ?? "chapter"
+        let body = ManuscriptSerializer.buildAnnotationsOnlyExport(fileName: fileName, annotations: annotations)
+        var images: [(String, Data)] = []
+        for (i, id) in body.inkAnnotationIds.enumerated() {
+            if let png = await loadInkPng(id) {
+                // Prefixed with the chapter name — this export writes flat into a shared folder,
+                // unlike the full export's per-chapter subdirectory, so names must not collide.
+                images.append(("\(cleanBase)_ink_\(i + 1).png", png))
+            }
+        }
+        return (body.text, images)
+    }
+
+    /// Writes the annotations-only export as `<cleanBase>_annotations.md` + any ink PNGs
+    /// directly in `folder` (no versioned subfolder — this is a reference artifact regenerated
+    /// each time, not a numbered draft, so overwriting the previous pass is correct).
+    /// Returns true on success.
+    func exportAnnotationsOnly(toFolder folder: URL) async -> Bool {
+        guard let src = currentURL else { return false }
+        let cleanBase = src.deletingPathExtension().lastPathComponent
+        let (body, images) = await buildAnnotationsOnlyExport()
+        var text = body
+        if !images.isEmpty {
+            text += "\n=== IMAGE FILES ===\n" + images.map(\.0).joined(separator: "\n") + "\n"
+        }
+        let scoped = folder.startAccessingSecurityScopedResource()
+        defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
+        do {
+            let dest = folder.appendingPathComponent("\(cleanBase)_annotations.md")
+            try (text.data(using: .utf8) ?? Data()).write(to: dest)
+            for (name, data) in images {
+                try data.write(to: folder.appendingPathComponent(name))
+            }
+            return true
+        } catch {
+            print("[DocumentStore] annotations-only export failed: \(error)")
+            return false
+        }
     }
 }
 

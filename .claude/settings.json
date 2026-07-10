@@ -34,7 +34,9 @@
       "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s SN078C10005528 shell ls /sdcard/Document/TRANSFER_TEST_v1_export/)",
       "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s SN078C10005528 shell ls /sdcard/Document/Skies/)",
       "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s SN078C10005528 install -r app/build/outputs/apk/debug/app-debug.apk)",
-      "Bash(git -C android_native log --oneline -15 -- android_native/)"
+      "Bash(git -C android_native log --oneline -15 -- android_native/)",
+      "Bash(./gradlew :docx:generateGoldens)",
+      "Bash(/Users/jayromacorda/Library/Android/sdk/platform-tools/adb -s 192.168.12.183:5555 install -r /Users/jayromacorda/Develop/layuv/android_native/app/build/outputs/apk/debug/app-debug.apk)"
     ]
   }
 }

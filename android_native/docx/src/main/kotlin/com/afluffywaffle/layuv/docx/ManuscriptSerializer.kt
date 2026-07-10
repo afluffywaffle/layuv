@@ -73,6 +73,49 @@ object ManuscriptSerializer {
         return Prompt(sb.toString(), inkIds)
     }
 
+    /**
+     * Annotations-only export: no chapter text, just each annotation's anchor (paragraph
+     * number, computed from the same exact char offset used to place the DOCX comment range —
+     * NOT reverse-derived from the position fraction — plus position fraction + prefix/suffix
+     * context around the quoted passage) plus note/tag/thread. Lets an AI that already has the
+     * manuscript (e.g. reading the project folder directly) locate each annotation without the
+     * chapter body being duplicated into the export, and without re-deriving anchoring itself.
+     * [fileName] identifies which document these anchors belong to once exports from multiple
+     * chapters sit side by side.
+     */
+    fun buildAnnotationsOnlyExport(fileName: String, annotations: List<Annotation>): Prompt {
+        val sb = StringBuilder()
+        val inkIds = mutableListOf<String>()
+        sb.append("=== ANNOTATIONS FOR \"").append(fileName).append("\" (")
+            .append(annotations.size).append(") ===\n")
+        if (annotations.isEmpty()) {
+            sb.append("(none)\n")
+            return Prompt(sb.toString(), inkIds)
+        }
+        annotations.forEachIndexed { i, a ->
+            val pct = Math.round(a.position * 100).toInt()
+            val paraLabel = if (a.paragraph > 0) "paragraph ~${a.paragraph}, " else ""
+            sb.append(i + 1).append(". [").append(label(a.tool)).append("] ").append(paraLabel)
+                .append('~').append(pct).append("% through the manuscript\n")
+            val prefix = a.prefix.trim()
+            val suffix = a.suffix.trim()
+            val quoted = a.selectedText.trim()
+            val context = StringBuilder()
+            if (prefix.isNotEmpty()) context.append('…').append(prefix)
+            context.append('‹').append(quoted).append('›')
+            if (suffix.isNotEmpty()) context.append(suffix).append('…')
+            sb.append("   context: ").append(context).append('\n')
+            val note = noteText(a)
+            if (note.isNotBlank()) sb.append("   note: ").append(note).append('\n')
+            if (a.hasInk) {
+                inkIds.add(a.id)
+                sb.append("   handwritten note: see attached image ").append(inkIds.size).append('\n')
+            }
+            a.tag?.let { sb.append("   tag: ").append(it.name).append('\n') }
+        }
+        return Prompt(sb.toString(), inkIds)
+    }
+
     /** Full thread text when present (the note is just the first entry), else the note. */
     private fun noteText(a: Annotation): String =
         if (a.threadEntries.isNotEmpty()) {
@@ -90,5 +133,6 @@ object ManuscriptSerializer {
         AnnotationTool.bookmark -> "Bookmark"
         AnnotationTool.inkAnnotation -> "Ink note"
         AnnotationTool.comment -> "Comment"
+        AnnotationTool.blockquote -> "Blockquote"
     }
 }
