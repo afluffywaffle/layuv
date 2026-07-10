@@ -159,6 +159,7 @@ object DocxStore {
         annotations: List<Annotation>,
         inkPng: Pair<String, ByteArray>? = null,
         inkStrokes: Pair<String, String>? = null,
+        author: String? = null,
     ): ByteArray {
         val archive = DocxArchive.read(docxBytes)
         val entries = archive.toMutableEntries()
@@ -169,18 +170,20 @@ object DocxStore {
             entries["word/media/ink_${inkStrokes.first}_strokes.json"] =
                 inkStrokes.second.toByteArray(Charsets.UTF_8)
         }
-        writeIntoEntries(entries, annotations)
+        writeIntoEntries(entries, annotations, author)
         return DocxArchive.write(entries, archive.entryMethods())
     }
 
-    fun write(docxBytes: ByteArray, annotations: List<Annotation>): ByteArray {
+    /** [author] is written as each comment's `w:author`; null falls back to the annotation id
+     * (legacy behaviour). The app passes the user's configured author name. */
+    fun write(docxBytes: ByteArray, annotations: List<Annotation>, author: String? = null): ByteArray {
         val archive = DocxArchive.read(docxBytes)
         val entries = archive.toMutableEntries()
-        writeIntoEntries(entries, annotations)
+        writeIntoEntries(entries, annotations, author)
         return DocxArchive.write(entries, archive.entryMethods())
     }
 
-    private fun writeIntoEntries(entries: MutableMap<String, ByteArray>, annotations: List<Annotation>) {
+    private fun writeIntoEntries(entries: MutableMap<String, ByteArray>, annotations: List<Annotation>, author: String? = null) {
 
         // Save the original document.xml as a clean snapshot on first write.
         if (!entries.containsKey(CLEAN)) {
@@ -201,7 +204,7 @@ object DocxStore {
 
         if (commentAnnotations.isNotEmpty()) {
             entries[COMMENTS] =
-                CommentWriter.buildCommentsXml(commentAnnotations).toByteArray(Charsets.UTF_8)
+                CommentWriter.buildCommentsXml(commentAnnotations, author).toByteArray(Charsets.UTF_8)
             entries[DOC_RELS]?.let {
                 entries[DOC_RELS] =
                     CommentWriter.ensureRelsEntry(it.toString(Charsets.UTF_8)).toByteArray(Charsets.UTF_8)

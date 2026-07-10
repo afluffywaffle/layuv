@@ -101,7 +101,19 @@ enum RunPropertyInjector {
             }
 
             let rPrContent = rPrForTool(a.tool)
-            guard !rPrContent.isEmpty else { continue }
+            guard !rPrContent.isEmpty else {
+                // Blockquote is a whole-paragraph tool with no run property, so it skips the
+                // run-splitting/rPr injection below. But it can still carry a note — register
+                // its comment anchor here before bailing, or Word never sees the comment (the
+                // range markers that reference the comment id would never be emitted).
+                if let commentId = noteCommentId[a.id] {
+                    anchorInsertions.append(AnchorIns(
+                        commentId: commentId,
+                        selectedText: a.selectedText, prefix: a.prefix, suffix: a.suffix, position: a.position
+                    ))
+                }
+                continue
+            }
 
             let startOffset = approxCharOffsetInRun(xml, runOpen: runOpens[sIdx], runClose: startRC, xmlCharPos: startXmlPos)
             let endOffset   = approxCharOffsetInRun(xml, runOpen: runOpens[eIdx], runClose: endRC,   xmlCharPos: endXmlPos)

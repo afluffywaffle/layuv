@@ -19,6 +19,10 @@ final class DocumentStore: ObservableObject {
     /// Set to open the annotation edit sheet from anywhere (VC tap, panel row, comment creation).
     @Published var editingAnnotation: Annotation?
 
+    /// Set to present the consolidated app Settings sheet (macOS ⌘, or the More menu). Per-window,
+    /// so the sheet reads/writes THIS window's document for the per-document section.
+    @Published var showSettings = false
+
     /// Currently locked annotation tool. When non-nil, new text selections auto-annotate
     /// with this tool (no tool popover), and the reader toolbar shows a tap-to-unlock chip.
     /// In-memory only (mirrors Android's `lockedTool` — not persisted across launches).
@@ -107,6 +111,50 @@ final class DocumentStore: ObservableObject {
         suppressThemePersist = true
         paperTheme = resolved
         suppressThemePersist = false
+    }
+
+    private let docAuthorsKey = "com.afluffywaffle.layuv.docAuthors"   // [docPath: authorName]
+
+    /// When set, an in-flight `load()` is applying a document's stored author override — didSet then
+    /// skips persistence so opening a doc never rewrites the map with the same value.
+    private var suppressDocAuthorPersist = false
+
+    /// Per-document author override (empty = "use the global default"). Bound by the UI. On change,
+    /// persists into the per-doc map keyed by the current document's path. App-local, plist-backed;
+    /// nothing is written into the DOCX itself here — it only feeds `effectiveAuthor` at save time.
+    @Published var currentDocAuthor: String = "" {
+        didSet {
+            guard oldValue != currentDocAuthor, !suppressDocAuthorPersist else { return }
+            if let url = currentURL { setDocAuthor(currentDocAuthor, for: url) }
+        }
+    }
+
+    private func docAuthorMap() -> [String: String] {
+        UserDefaults.standard.dictionary(forKey: docAuthorsKey) as? [String: String] ?? [:]
+    }
+    /// The stored override for a document, trimmed; nil when unset/blank.
+    private func docAuthor(for url: URL) -> String? {
+        let t = (docAuthorMap()[url.path] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
+    }
+    private func setDocAuthor(_ name: String, for url: URL) {
+        var map = docAuthorMap()
+        let t = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { map.removeValue(forKey: url.path) } else { map[url.path] = t }
+        UserDefaults.standard.set(map, forKey: docAuthorsKey)
+    }
+    /// Seeds `currentDocAuthor` from the stored override WITHOUT rewriting the map.
+    private func applyDocAuthor(for url: URL) {
+        suppressDocAuthorPersist = true
+        currentDocAuthor = docAuthor(for: url) ?? ""
+        suppressDocAuthorPersist = false
+    }
+
+    /// The author name to write into comments for the current document: a per-document override
+    /// if set, else the global default (`AppSettings`), else `"Layuv"`.
+    var effectiveAuthor: String {
+        if let url = currentURL, let o = docAuthor(for: url) { return o }
+        return AppSettings.shared.effectiveGlobalAuthor
     }
 
     private let followsDarkModeKey = "com.afluffywaffle.layuv.followsDarkMode"
@@ -292,6 +340,7 @@ final class DocumentStore: ObservableObject {
             self.annotations = doc.annotations
             self.currentURL = url
             applyDocTheme(for: url)   // per-doc theme (or global default), without rewriting prefs
+            applyDocAuthor(for: url)  // per-doc author override (blank = use global default)
             addRecent(url)
         } catch {
             print("[DocumentStore] load failed: \(error)")
@@ -310,8 +359,9 @@ final class DocumentStore: ObservableObject {
     func save() async {
         guard let url = currentURL else { return }
         let annotationsToWrite = annotations.map(\.annotation)
+        let author = effectiveAuthor
         await enqueueWrite(url: url) { base in
-            try DocxStore.write(base, annotations: annotationsToWrite)
+            try DocxStore.write(base, annotations: annotationsToWrite, author: author)
         }
     }
 
@@ -419,10 +469,11 @@ final class DocumentStore: ObservableObject {
             annotations[idx] = ResolvedAnnotation(annotation: updated, span: annotations[idx].span)
         }
         let annotationsToWrite = annotations.map(\.annotation)
+        let author = effectiveAuthor
         await enqueueWrite(url: url) { base in
             var b = try DocxStore.saveInkPng(base, annotationId: annotationId, pngData: png)
             b = try DocxStore.saveInkStrokes(b, annotationId: annotationId, json: strokesJSON)
-            return try DocxStore.write(b, annotations: annotationsToWrite)
+            return try DocxStore.write(b, annotations: annotationsToWrite, author: author)
         }
     }
 

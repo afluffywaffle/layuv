@@ -275,7 +275,17 @@ object RunPropertyInjector {
                     continue
                 }
                 val rPrContent = rPrForTool(a.tool)
-                if (rPrContent.isEmpty()) continue
+                if (rPrContent.isEmpty()) {
+                    // Blockquote is a whole-paragraph tool with no run property, so it skips the
+                    // run-splitting/rPr injection below. But it can still carry a note — register
+                    // its comment anchor here before bailing, or Word never sees the comment (the
+                    // range markers that reference the comment id would never be emitted).
+                    val commentId = noteCommentId[a.id]
+                    if (commentId != null) {
+                        anchorInsertions.add(Anchor(commentId, a.selectedText, a.prefix, a.suffix, a.position))
+                    }
+                    continue
+                }
 
                 val startOffset = doc.charOffsetInRun(doc.runOpens[sIdx], startRC, startXmlPos)
                 val endOffset = doc.charOffsetInRun(doc.runOpens[eIdx], endRC, endXmlPos)

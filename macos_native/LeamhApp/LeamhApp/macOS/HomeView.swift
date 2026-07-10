@@ -67,6 +67,13 @@ struct HomeView: View {
         // Per-window title from the document (dc:title → file name), so the Dock/Window menu and
         // title bar identify which document each window holds.
         .navigationTitle(store.document != nil ? store.windowTitle : "Layuv")
+        // Consolidated app + per-document settings. Presented here (root) so it's reachable with or
+        // without a document open, and always sees this window's store for the per-document section.
+        .sheet(isPresented: $store.showSettings) {
+            AppSettingsView()
+                .environmentObject(store)
+                .preferredColorScheme(.light)
+        }
     }
 
     private var emptyState: some View {
@@ -297,6 +304,10 @@ struct ReaderScreen: View {
                         Divider()
                         Toggle("Night Mode (Follow System Dark)", isOn: $store.followsDarkMode)
                         Toggle("Left-Handed Navigation", isOn: $store.leftHandedNav)
+                        Divider()
+                        Button { store.showSettings = true } label: {
+                            Label("Settings…", systemImage: "gearshape")
+                        }
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }

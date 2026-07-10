@@ -86,6 +86,13 @@ private struct DocumentCommands: Commands {
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
+        // Replace the default "Settings…" (⌘,) with our consolidated in-window sheet, so it can
+        // read/write the focused window's document for the per-document section.
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") { store?.showSettings = true }
+                .keyboardShortcut(",", modifiers: .command)
+                .disabled(store == nil)
+        }
         CommandGroup(after: .newItem) {
             Button("Open…") {
                 if let url = DocumentStore.runOpenPanel() { openWindow(value: url) }

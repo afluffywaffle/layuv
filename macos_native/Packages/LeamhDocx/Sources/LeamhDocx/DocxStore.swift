@@ -126,7 +126,9 @@ public enum DocxStore {
     // MARK: - Write
 
     /// Returns new DOCX bytes. Does not touch the filesystem — the caller writes atomically.
-    public static func write(_ docxData: Data, annotations: [Annotation]) throws -> Data {
+    /// `author` is written as each comment's `w:author`; nil falls back to the annotation id
+    /// (legacy behaviour). The app passes the user's configured author name.
+    public static func write(_ docxData: Data, annotations: [Annotation], author: String? = nil) throws -> Data {
         let archive = try DocxArchive.read(docxData)
         var entries = archive.toMutableEntries()
 
@@ -145,7 +147,7 @@ public enum DocxStore {
         let commentAnnotations = annotations.filter { $0.note != nil || $0.tag != nil || $0.hasInk }
 
         if !commentAnnotations.isEmpty {
-            entries[commentsPath] = Data(CommentWriter.buildCommentsXml(commentAnnotations).utf8)
+            entries[commentsPath] = Data(CommentWriter.buildCommentsXml(commentAnnotations, author: author).utf8)
             if let docRels = entries[docRelsPath],
                let docRelsStr = String(data: docRels, encoding: .utf8) {
                 entries[docRelsPath] = Data(CommentWriter.ensureRelsEntry(docRelsStr).utf8)

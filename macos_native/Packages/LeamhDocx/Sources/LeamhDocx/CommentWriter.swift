@@ -4,7 +4,9 @@ import Foundation
 /// Mirrors CommentWriter.kt.
 enum CommentWriter {
 
-    static func buildNoteComment(xmlId: Int, annotation a: Annotation, inkRelId: String?) -> String {
+    /// `author` is written as `w:author`; nil falls back to the annotation id (legacy behaviour,
+    /// keeps goldens byte-identical). The app passes the user's configured name.
+    static func buildNoteComment(xmlId: Int, annotation a: Annotation, inkRelId: String?, author: String? = nil) -> String {
         // When the annotation carries a thread, each entry is its own paragraph: the first (== note)
         // is plain; later entries are prefixed with their write time so Word/Pages readers see the
         // thread. With no thread, behaviour is unchanged — a single note paragraph (byte-identical).
@@ -31,7 +33,7 @@ enum CommentWriter {
         let bodyParts = [noteXml, tagXml, drawingXml].filter { !$0.isEmpty }
         let bodyXml = bodyParts.isEmpty ? "<w:p/>" : bodyParts.joined()
 
-        return "<w:comment w:id=\"\(xmlId)\" w:author=\"\(XmlEntities.escape(a.id))\"" +
+        return "<w:comment w:id=\"\(xmlId)\" w:author=\"\(XmlEntities.escape(author ?? a.id))\"" +
                " w:date=\"\(Timestamps.format(a.timestamp))\">\n" +
                "  <w:p>\n" +
                "    <w:pPr><w:pStyle w:val=\"CommentText\"/></w:pPr>\n" +
@@ -41,9 +43,9 @@ enum CommentWriter {
                "  \(bodyXml)</w:comment>"
     }
 
-    static func buildCommentsXml(_ commentAnnotations: [Annotation]) -> String {
+    static func buildCommentsXml(_ commentAnnotations: [Annotation], author: String? = nil) -> String {
         let blocks = commentAnnotations.enumerated().map { (i, a) in
-            buildNoteComment(xmlId: i, annotation: a, inkRelId: a.hasInk ? InkDrawing.relId(a.id) : nil)
+            buildNoteComment(xmlId: i, annotation: a, inkRelId: a.hasInk ? InkDrawing.relId(a.id) : nil, author: author)
         }.joined(separator: "\n")
         return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n" +
                "<w:comments" +

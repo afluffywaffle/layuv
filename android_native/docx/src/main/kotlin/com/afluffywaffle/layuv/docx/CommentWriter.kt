@@ -12,7 +12,9 @@ import com.afluffywaffle.layuv.docx.model.Timestamps
 object CommentWriter {
 
     /** A `<w:comment>` whose author is the annotation id; body = note/thread, [tag], ink drawing. */
-    fun buildNoteComment(xmlId: Int, a: Annotation, inkRelId: String?): String {
+    /** [author] is written as `w:author`; null falls back to the annotation id (legacy behaviour,
+     * keeps goldens byte-identical). The app passes the user's configured name. */
+    fun buildNoteComment(xmlId: Int, a: Annotation, inkRelId: String?, author: String? = null): String {
         // When the annotation carries a thread, each entry is its own paragraph:
         // the first (== note) is plain; later entries (replies / added comments)
         // are prefixed with their write time so Word/Pages readers see the thread.
@@ -47,7 +49,7 @@ object CommentWriter {
         val bodyParts = listOf(noteXml, tagXml, drawingXml).filter { it.isNotEmpty() }
         val bodyXml = if (bodyParts.isEmpty()) "<w:p/>" else bodyParts.joinToString("")
 
-        return "<w:comment w:id=\"$xmlId\" w:author=\"${XmlEntities.escape(a.id)}\"" +
+        return "<w:comment w:id=\"$xmlId\" w:author=\"${XmlEntities.escape(author ?: a.id)}\"" +
             " w:date=\"${Timestamps.format(a.timestamp)}\">\n" +
             "  <w:p>\n" +
             "    <w:pPr><w:pStyle w:val=\"CommentText\"/></w:pPr>\n" +
@@ -57,9 +59,9 @@ object CommentWriter {
             "  $bodyXml</w:comment>"
     }
 
-    fun buildCommentsXml(commentAnnotations: List<Annotation>): String {
+    fun buildCommentsXml(commentAnnotations: List<Annotation>, author: String? = null): String {
         val blocks = commentAnnotations.mapIndexed { i, a ->
-            buildNoteComment(i, a, if (a.hasInk) InkDrawing.relId(a.id) else null)
+            buildNoteComment(i, a, if (a.hasInk) InkDrawing.relId(a.id) else null, author)
         }.joinToString("\n")
         return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n" +
             "<w:comments" +
