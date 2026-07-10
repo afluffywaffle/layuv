@@ -40,6 +40,14 @@ DERIVED_APP=$(DEVELOPER_DIR="$DEVELOPER_DIR" xcodebuild \
 rm -rf /Applications/Layuv.app
 cp -R "$DERIVED_APP" /Applications/Layuv.app
 
+# xcodebuild always leaves its own copy in DerivedData, which Launch Services
+# also registers under the same bundle ID. LSMultipleInstancesProhibited is
+# scoped per bundle PATH, not per bundle ID — so two registered paths with the
+# same ID can still each get launched, causing duplicate-instance file opens
+# even with that key set. Delete the DerivedData copy so /Applications is the
+# only registration left.
+rm -rf "$DERIVED_APP"
+
 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister \
   -f -R -trusted /Applications/Layuv.app
 
