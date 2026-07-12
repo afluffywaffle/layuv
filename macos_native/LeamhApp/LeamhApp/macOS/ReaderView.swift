@@ -81,6 +81,9 @@ struct ReaderView: NSViewControllerRepresentable {
         vc.onToolLocked = { [weak store] tool in
             Task { @MainActor in store?.lockedTool = tool }
         }
+        vc.onReadingPositionChanged = { [weak store] fraction in
+            Task { @MainActor in await store?.setReadingMarker(fraction: fraction) }
+        }
         return vc
     }
 
@@ -90,11 +93,13 @@ struct ReaderView: NSViewControllerRepresentable {
         AppTheme.currentTheme = theme
         AppTheme.current = font
         vc.leftHanded = leftHanded
+        vc.markerOnDoubleClick = store.markerOnDoubleClick
         vc.lockedTool = store.lockedTool
         vc.update(document: doc, annotations: store.annotations,
                   bodySize: store.bodyTextSize.points,
                   lineHeight: store.lineSpacing.multiple,
-                  navMode: navMode, twoColumn: twoColumn, theme: theme, font: font)
+                  navMode: navMode, twoColumn: twoColumn, theme: theme, font: font,
+                  markerFraction: store.readingMarkerFraction)
         DispatchQueue.main.async { coordinator.sync() }
     }
 }
@@ -116,12 +121,23 @@ final class AnnotatingTextView: NSTextView {
     var blockquoteRanges: [NSRange] = []
     var blockquoteBorderColor: NSColor = .black
 
+    /// Reading-position marker: LOCAL char index the reader last clicked/tapped, or nil.
+    /// Drawn as a small glyph in the left margin so the reader can find their place on return.
+    var readingMarkerLocalIndex: Int?
+    var readingMarkerColor: NSColor = .secondaryLabelColor
+    /// Reported (as a LOCAL char index) when the reader clicks to drop a marker.
+    var onReadingPositionPicked: ((Int) -> Void)?
+    /// Gesture mapping (from the store). false: single-click marks, double-click edits an annotation.
+    /// true: single-click edits an annotation, double-click marks.
+    var markerOnDoubleClick = false
+
     override func scrollWheel(with event: NSEvent) {
         if let fwd = onScrollWheelForward { fwd(event) } else { super.scrollWheel(with: event) }
     }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
+        drawReadingMarker()
         guard !blockquoteRanges.isEmpty, let lm = layoutManager, let tc = textContainer else { return }
         let inset = textContainerInset
         let totalLen = (string as NSString).length
@@ -145,12 +161,110 @@ final class AnnotatingTextView: NSTextView {
 
     override func mouseDown(with event: NSEvent) {
         let pointInView = convert(event.locationInWindow, from: nil)
-        if let annotation = annotationAt(pointInView) {
-            onAnnotationTapped?(annotation)
-            // Don't call super — prevents starting a selection on annotated text.
+        let annotation = annotationAt(pointInView)
+
+        if markerOnDoubleClick {
+            // Single-click edits an annotation; double-click drops the marker.
+            if event.clickCount >= 2 {
+                if let idx = charIndex(at: pointInView) { onReadingPositionPicked?(idx) }
+                return   // suppress the default double-click word selection
+            }
+            if let annotation {
+                onAnnotationTapped?(annotation)
+                return   // no selection on annotated text
+            }
+            super.mouseDown(with: event)
             return
         }
+
+        // Default: single-click drops the marker (even on annotations); double-click edits.
+        if event.clickCount >= 2, let annotation {
+            onAnnotationTapped?(annotation)
+            return   // suppress the default double-click word selection
+        }
         super.mouseDown(with: event)
+        // A single click that left no text selected drops a reading marker at the clicked char.
+        if event.clickCount == 1, selectedRange().length == 0, let idx = charIndex(at: pointInView) {
+            onReadingPositionPicked?(idx)
+        }
+    }
+
+    /// Char index under a point in the text view's coordinate system (TK2-safe), or nil.
+    private func charIndex(at pointInView: NSPoint) -> Int? {
+        if let lm = layoutManager, let tc = textContainer {
+            let inset = textContainerInset
+            let ptInContainer = NSPoint(x: pointInView.x - inset.width,
+                                        y: pointInView.y - inset.height)
+            let idx = lm.characterIndex(for: ptInContainer, in: tc,
+                                         fractionOfDistanceBetweenInsertionPoints: nil)
+            let len = (string as NSString).length
+            if idx <= len { return min(idx, max(0, len - 1)) }
+        }
+        let idx = characterIndex(for: pointInView)
+        return idx != NSNotFound ? idx : nil
+    }
+
+    /// Draws a small star in the left margin at the reading-position marker's line.
+    /// Works under BOTH TextKit 1 (legacy layoutManager) and TextKit 2 (textLayoutManager) —
+    /// the scroll reader is TK2, where `layoutManager` is nil.
+    private func drawReadingMarker() {
+        guard let idx = readingMarkerLocalIndex else { return }
+        let len = (string as NSString).length
+        guard len > 0 else { return }
+        let clamped = max(0, min(idx, len - 1))
+        guard let lineRect = markerLineRect(atCharIndex: clamped) else { return }
+        let inset = textContainerInset
+        let top = lineRect.minY + inset.height
+        let h = lineRect.height
+        // NSTextView leaves a clip on the context that excludes the inset margins; reset it to the
+        // full bounds so we can paint both the line band AND a marker out in the left margin.
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: bounds).setClip()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        // Soft full-width band behind the reading line.
+        let bandX = inset.width - 4
+        let bandW = bounds.width - 2 * inset.width + 8
+        let band = NSRect(x: bandX, y: top, width: bandW, height: h)
+        readingMarkerColor.withAlphaComponent(0.18).setFill()
+        NSBezierPath(roundedRect: band, xRadius: 3, yRadius: 3).fill()
+        // Margin indicator: a filled triangle pointer out in the left margin, on the line's midline.
+        let cy = top + h / 2
+        let tip = inset.width - 16
+        let back = tip - 9
+        let hh: CGFloat = 6
+        readingMarkerColor.withAlphaComponent(0.9).setFill()
+        let ptr = NSBezierPath()
+        ptr.move(to: NSPoint(x: back, y: cy - hh))
+        ptr.line(to: NSPoint(x: back, y: cy + hh))
+        ptr.line(to: NSPoint(x: tip,  y: cy))
+        ptr.close()
+        ptr.fill()
+    }
+
+    /// The used line-fragment rect (in text-container coordinates, i.e. before textContainerInset)
+    /// for the line containing `charIndex`, or nil. Handles TK1 and TK2.
+    private func markerLineRect(atCharIndex charIndex: Int) -> NSRect? {
+        // TextKit 1
+        if let lm = layoutManager, let tc = textContainer {
+            let glyphRange = lm.glyphRange(forCharacterRange: NSRange(location: charIndex, length: 1),
+                                           actualCharacterRange: nil)
+            let r = lm.lineFragmentUsedRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+            _ = tc
+            return r.height > 0 ? r : nil
+        }
+        // TextKit 2
+        if let tlm = textLayoutManager, let cm = textLayoutManager?.textContentManager,
+           let start = cm.location(cm.documentRange.location, offsetBy: charIndex),
+           let end = cm.location(start, offsetBy: 1),
+           let range = NSTextRange(location: start, end: end) {
+            var found: NSRect?
+            tlm.enumerateTextSegments(in: range, type: .standard, options: []) { _, frame, _, _ in
+                found = frame
+                return false
+            }
+            return found
+        }
+        return nil
     }
 
     /// Finds an annotation under the given point (in the text view's coordinate system).
@@ -195,6 +309,9 @@ final class ReaderViewController: NSViewController {
     var onPageChanged:            (() -> Void)?
     /// Called when the user locks a tool from the picker — pushes the state up to the store.
     var onToolLocked:             ((AnnotationTool) -> Void)?
+    /// Called with a 0.0–1.0 plain-text fraction when the reader single-clicks/taps to drop a
+    /// reading-position marker — pushed up to the store, which persists it into the .docx.
+    var onReadingPositionChanged: ((Double) -> Void)?
 
     /// Currently locked tool (pushed down from the store). When set, a new selection is
     /// auto-annotated with it and the tool popover is skipped.
@@ -225,6 +342,14 @@ final class ReaderViewController: NSViewController {
     private var font: FontChoice = .serif
     var leftHanded = false
 
+    /// Reading-marker gesture mapping (from the store). Pushed to every live text view.
+    var markerOnDoubleClick = false {
+        didSet {
+            if scrollTextView != nil { scrollTextView.markerOnDoubleClick = markerOnDoubleClick }
+            for tv in columns { tv.markerOnDoubleClick = markerOnDoubleClick }
+        }
+    }
+
     // Pagination (paged mode): one NSRange per column-page; a "screen" is 1 or 2 columns.
     private var pageRanges: [NSRange] = []
     private(set) var currentPage = 0   // screen index
@@ -238,6 +363,35 @@ final class ReaderViewController: NSViewController {
     private var lastShownRange = NSRange(location: NSNotFound, length: 0)
 
     private var columnsPerScreen: Int { (navMode == .pageFlip && twoColumn) ? 2 : 1 }
+
+    /// Reading-position marker (GLOBAL char offset), or nil. Set on a single click in empty text;
+    /// localized into whichever text view(s) currently show that offset.
+    private var readingMarkerGlobal: Int?
+
+    private func setReadingMarker(global: Int) {
+        readingMarkerGlobal = global
+        refreshReadingMarkers()
+    }
+
+    /// Pushes the global marker down into each live text view as a local index (nil where the
+    /// offset isn't on screen) and triggers a redraw of the margin.
+    private func refreshReadingMarkers() {
+        func apply(_ tv: AnnotatingTextView?, base: Int, length: Int) {
+            guard let tv else { return }
+            if let g = readingMarkerGlobal, g >= base, g < base + length {
+                tv.readingMarkerLocalIndex = g - base
+            } else {
+                tv.readingMarkerLocalIndex = nil
+            }
+            tv.needsDisplay = true
+        }
+        apply(scrollTextView, base: 0, length: fullText.length)
+        for tv in columns {
+            let base = baseOffset(of: tv)
+            let length = pageRanges.first(where: { $0.location == base })?.length ?? 0
+            apply(tv, base: base, length: length)
+        }
+    }
 
     // MARK: View lifecycle
 
@@ -304,6 +458,15 @@ final class ReaderViewController: NSViewController {
         }
         tv.onAnnotationTapped = { [weak self] annotation in
             self?.onAnnotationTapped?(annotation)
+        }
+        tv.readingMarkerColor = theme.nsInk.withAlphaComponent(0.55)
+        tv.markerOnDoubleClick = markerOnDoubleClick
+        tv.onReadingPositionPicked = { [weak self, weak tv] localIdx in
+            guard let self, let tv else { return }
+            let global = self.baseOffset(of: tv) + localIdx
+            self.setReadingMarker(global: global)                 // immediate on-screen feedback
+            let len = self.fullText.length
+            if len > 0 { self.onReadingPositionChanged?(Double(global) / Double(len)) }
         }
         NotificationCenter.default.addObserver(
             self, selector: #selector(selectionChanged(_:)),
@@ -438,7 +601,7 @@ final class ReaderViewController: NSViewController {
 
     func update(document: LoadedDocument, annotations: [ResolvedAnnotation],
                 bodySize: CGFloat, lineHeight: CGFloat, navMode: NavMode, twoColumn: Bool,
-                theme: PaperTheme, font: FontChoice) {
+                theme: PaperTheme, font: FontChoice, markerFraction: Double?) {
         let contentChanged = bodySize != self.bodySize
             || lineHeight != self.lineHeight
             || theme != self.theme
@@ -471,12 +634,24 @@ final class ReaderViewController: NSViewController {
             setScrollContent()
             paginationDirty = true
         }
+        let markerColor = theme.nsInk.withAlphaComponent(0.55)
         scrollTextView.blockquoteBorderColor = theme.nsBlockquoteBorder
-        for tv in columns { tv.blockquoteBorderColor = theme.nsBlockquoteBorder }
+        scrollTextView.readingMarkerColor = markerColor
+        for tv in columns {
+            tv.blockquoteBorderColor = theme.nsBlockquoteBorder
+            tv.readingMarkerColor = markerColor
+        }
 
         if contentChanged || modeChanged {
             applyMode()
         }
+        // Seed the marker from the persisted plain-text fraction (survives reload + cross-device).
+        if let f = markerFraction, fullText.length > 0 {
+            readingMarkerGlobal = min(fullText.length - 1, max(0, Int((f * Double(fullText.length)).rounded())))
+        } else {
+            readingMarkerGlobal = nil
+        }
+        refreshReadingMarkers()
     }
 
     private func annotationsEqual(_ a: [ResolvedAnnotation], _ b: [ResolvedAnnotation]) -> Bool {
@@ -577,6 +752,7 @@ final class ReaderViewController: NSViewController {
                 tv.isHidden = true
             }
         }
+        refreshReadingMarkers()
     }
 
     /// Expands `range` to the bounds of its enclosing paragraph in `text` — scanning outward

@@ -227,7 +227,8 @@ struct HomeView: View {
                          onSetImportFolder: { showImportFolderPicker = true },
                          searchScrollOverride: searchScrollOverride,
                          onClearSearch: { searchScrollOverride = false },
-                         onPageChanged: { pg, cnt in readerCurrentPage = pg; readerPageCount = cnt })
+                         onPageChanged: { pg, cnt in readerCurrentPage = pg; readerPageCount = cnt },
+                         onJumpToOffset: { scrollToCharOffsetValue = $0 })
         } else {
             emptyState
         }
@@ -301,6 +302,10 @@ private struct ReaderScreen: View {
     let searchScrollOverride: Bool
     let onClearSearch: () -> Void
     let onPageChanged: ((Int, Int) -> Void)?
+    let onJumpToOffset: (Int) -> Void
+
+    @State private var showResumeBanner = false
+    @State private var resumeGen        = 0
 
     @AppStorage("com.afluffywaffle.layuv.navMode") private var navModeRaw = NavMode.scroll.rawValue
     private var navMode: NavMode { NavMode(rawValue: navModeRaw) ?? .scroll }
@@ -323,7 +328,11 @@ private struct ReaderScreen: View {
                        scrollToAnnotationId: scrollToAnnotationId,
                        scrollToCharOffsetValue: scrollToCharOffsetValue,
                        goToPageValue: goToPageValue,
-                       onPageChanged: onPageChanged)
+                       onPageChanged: onPageChanged,
+                       markerFraction: store.readingMarkerFraction)
+            .overlay(alignment: .top) { resumeBanner }
+            .onChange(of: store.currentURL) { maybeShowResumeBanner() }
+            .onAppear { maybeShowResumeBanner() }
             .ignoresSafeArea(.container, edges: .bottom)
             .navigationTitle(docTitle)
             .navigationBarTitleDisplayMode(.inline)
@@ -515,5 +524,65 @@ private struct ReaderScreen: View {
         let parent = url.deletingLastPathComponent().lastPathComponent
         let name   = url.lastPathComponent
         return parent.isEmpty ? "\(base)  (\(name))" : "\(base)  (\(parent)/\(name))"
+    }
+
+    // MARK: - Resume banner
+
+    @ViewBuilder private var resumeBanner: some View {
+        if showResumeBanner {
+            HStack(spacing: 10) {
+                Image(systemName: "bookmark.fill")
+                    .foregroundStyle(.secondary)
+                Text("Pick up where you left off?")
+                    .font(.callout.weight(.medium))
+                Button("Jump") {
+                    jumpToReadingMarker()
+                    dismissResumeBanner()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                Button {
+                    dismissResumeBanner()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.regularMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(.quaternary))
+            .shadow(color: .black.opacity(0.12), radius: 10, y: 3)
+            .padding(.top, 8)
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
+    private func maybeShowResumeBanner() {
+        guard let f = store.readingMarkerFraction, f > 0.02 else {
+            if showResumeBanner { withAnimation { showResumeBanner = false } }
+            return
+        }
+        resumeGen += 1
+        let gen = resumeGen
+        withAnimation(.easeOut(duration: 0.3)) { showResumeBanner = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+            if gen == resumeGen { withAnimation { showResumeBanner = false } }
+        }
+    }
+
+    private func dismissResumeBanner() {
+        resumeGen += 1
+        withAnimation { showResumeBanner = false }
+    }
+
+    private func jumpToReadingMarker() {
+        guard let f = store.readingMarkerFraction else { return }
+        let len = (document.plainText as NSString).length
+        guard len > 0 else { return }
+        let offset = min(len - 1, max(0, Int((f * Double(len)).rounded())))
+        onJumpToOffset(offset)
     }
 }

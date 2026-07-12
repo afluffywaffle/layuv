@@ -150,6 +150,10 @@ struct ReaderScreen: View {
     @State private var isScrubbingPageLabel = false
     @State private var scrubStartPage       = 0
 
+    // "Pick up where you left off" banner — shown on open when the document carries a reading marker.
+    @State private var showResumeBanner = false
+    @State private var resumeGen        = 0
+
     private var docxType: UTType { UTType(filenameExtension: "docx") ?? .data }
 
     var body: some View {
@@ -176,6 +180,9 @@ struct ReaderScreen: View {
                 .allowsHitTesting(false)
                 .ignoresSafeArea(.container, edges: .top)
             }
+            .overlay(alignment: .top) { resumeBanner }
+            .onChange(of: store.currentURL) { maybeShowResumeBanner() }
+            .onAppear { maybeShowResumeBanner() }
             .toolbar {
                 // Page navigation (screen-flip mode only).
                 if coordinator.paged {
@@ -442,6 +449,68 @@ struct ReaderScreen: View {
         let parent = url.deletingLastPathComponent().lastPathComponent
         let name   = url.lastPathComponent
         return parent.isEmpty ? "\(base)  (\(name))" : "\(base)  (\(parent)/\(name))"
+    }
+
+    // MARK: - Resume banner
+
+    @ViewBuilder private var resumeBanner: some View {
+        if showResumeBanner {
+            HStack(spacing: 10) {
+                Image(systemName: "bookmark.fill")
+                    .foregroundStyle(.secondary)
+                Text("Pick up where you left off?")
+                    .font(.callout.weight(.medium))
+                Button("Jump") {
+                    jumpToReadingMarker()
+                    dismissResumeBanner()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                Button {
+                    dismissResumeBanner()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.regularMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(.quaternary))
+            .shadow(color: .black.opacity(0.12), radius: 10, y: 3)
+            .padding(.top, 58)
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
+    /// Shows the banner when a freshly-opened document has a marker meaningfully below the top.
+    private func maybeShowResumeBanner() {
+        guard let f = store.readingMarkerFraction, f > 0.02 else {
+            if showResumeBanner { withAnimation { showResumeBanner = false } }
+            return
+        }
+        resumeGen += 1
+        let gen = resumeGen
+        withAnimation(.easeOut(duration: 0.3)) { showResumeBanner = true }
+        // Auto-dismiss after a few seconds unless superseded by another open.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+            if gen == resumeGen { withAnimation { showResumeBanner = false } }
+        }
+    }
+
+    private func dismissResumeBanner() {
+        resumeGen += 1
+        withAnimation { showResumeBanner = false }
+    }
+
+    private func jumpToReadingMarker() {
+        guard let f = store.readingMarkerFraction, let doc = store.document else { return }
+        let len = (doc.plainText as NSString).length
+        guard len > 0 else { return }
+        let offset = min(len - 1, max(0, Int((f * Double(len)).rounded())))
+        coordinator.scrollToCharOffset(offset)
     }
 }
 

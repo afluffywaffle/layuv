@@ -30,6 +30,11 @@ final class DocumentStore: ObservableObject {
 
     @Published private(set) var currentURL: URL?
 
+    /// Reading-position marker as a 0.0–1.0 plain-text fraction, or nil when none is set.
+    /// Persisted INSIDE the .docx (`leamh/position.json`) so it travels with the file across
+    /// devices (macOS ⇄ iPad ⇄ Android). Set on a single click/tap in the reader.
+    @Published private(set) var readingMarkerFraction: Double?
+
     /// Title for the document window: the DOCX `dc:title` when meaningful, else the file name.
     /// Generic placeholders Word/Pages leave behind ("Untitled", "Document") fall back to the name.
     var windowTitle: String {
@@ -183,6 +188,18 @@ final class DocumentStore: ObservableObject {
         (followsDarkMode && systemDark) ? .night : paperTheme
     }
 
+    private let markerOnDoubleClickKey = "com.afluffywaffle.layuv.markerOnDoubleClick"
+
+    /// Reading-marker gesture mapping. OFF (default): single-click drops the reading marker,
+    /// double-click an annotation opens its edit sheet. ON: single-click an annotation opens its
+    /// edit sheet (legacy feel), double-click drops the reading marker.
+    @Published var markerOnDoubleClick: Bool {
+        didSet {
+            guard oldValue != markerOnDoubleClick else { return }
+            UserDefaults.standard.set(markerOnDoubleClick, forKey: markerOnDoubleClickKey)
+        }
+    }
+
     private let twoColumnKey = "com.afluffywaffle.layuv.twoColumnPaged"
 
     /// iPad-only preference: use two columns in the paged reader modes (default on). iPhone is
@@ -247,6 +264,7 @@ final class DocumentStore: ObservableObject {
         followsDarkMode = UserDefaults.standard.bool(forKey: followsDarkModeKey)
         leftHandedNav   = UserDefaults.standard.bool(forKey: leftHandedNavKey)
         twoColumnPaged = (UserDefaults.standard.object(forKey: twoColumnKey) as? Bool) ?? true
+        markerOnDoubleClick = UserDefaults.standard.bool(forKey: markerOnDoubleClickKey)
         aiExportFolder = nil
         aiImportFolder = nil
         applyFontChoice(choice)
@@ -339,6 +357,7 @@ final class DocumentStore: ObservableObject {
             self.document = doc
             self.annotations = doc.annotations
             self.currentURL = url
+            self.readingMarkerFraction = doc.position.map { $0.fraction }
             applyDocTheme(for: url)   // per-doc theme (or global default), without rewriting prefs
             applyDocAuthor(for: url)  // per-doc author override (blank = use global default)
             addRecent(url)
@@ -362,6 +381,24 @@ final class DocumentStore: ObservableObject {
         let author = effectiveAuthor
         await enqueueWrite(url: url) { base in
             try DocxStore.write(base, annotations: annotationsToWrite, author: author)
+        }
+    }
+
+    /// Persists the reading-position marker into `leamh/position.json` (touches only that part,
+    /// so it coexists with annotation writes). Preserves any existing mode/page/scrollOffset the
+    /// file already carries (e.g. written by Android); only the plain-text `fraction` changes.
+    func setReadingMarker(fraction: Double) async {
+        guard let url = currentURL else { return }
+        let clamped = min(1.0, max(0.0, fraction))
+        readingMarkerFraction = clamped
+        let existing = document?.position
+        let position = ReadingPosition(
+            mode: existing?.mode ?? .scroll,
+            page: existing?.page ?? 0,
+            scrollOffset: existing?.scrollOffset ?? 0.0,
+            fraction: clamped)
+        await enqueueWrite(url: url) { base in
+            try DocxStore.writePosition(base, position: position)
         }
     }
 

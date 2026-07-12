@@ -54,6 +54,8 @@ struct ReaderTextView: UIViewControllerRepresentable {
     var goToPageValue: Int? = nil
     /// Reports (currentPage, pageCount) whenever the visible page changes.
     var onPageChanged: ((Int, Int) -> Void)? = nil
+    /// Persisted reading-position marker (0.0–1.0 plain-text fraction), or nil.
+    var markerFraction: Double? = nil
     @EnvironmentObject var store: DocumentStore
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -73,6 +75,9 @@ struct ReaderTextView: UIViewControllerRepresentable {
         vc.onInkAnnotationRequested = { [weak store] ann in store?.beginInkAnnotation(ann) }
         vc.onEditInk                = { [weak store] ann in store?.editInkAnnotation(ann) }
         vc.onPageChanged            = { pg, cnt in onPageChanged?(pg, cnt) }
+        vc.onReadingPositionChanged = { [weak store] f in
+            Task { @MainActor in await store?.setReadingMarker(fraction: f) }
+        }
         return vc
     }
 
@@ -80,12 +85,14 @@ struct ReaderTextView: UIViewControllerRepresentable {
         vc.setTheme(paperTheme)
         vc.update(document: document, annotations: annotations,
                   documentURL: documentURL, bodySize: bodyPointSize,
-                  lineHeight: store.lineSpacing.multiple)
+                  lineHeight: store.lineSpacing.multiple,
+                  markerFraction: markerFraction)
         if vc.twoColumnEnabled != twoColumnPaged {
             vc.twoColumnEnabled = twoColumnPaged
             vc.invalidatePagination()
         }
         vc.navMode = navMode
+        vc.markerOnDoubleClick = store.markerOnDoubleClick
         if findTrigger != context.coordinator.lastFindTrigger {
             context.coordinator.lastFindTrigger = findTrigger
             vc.activateFind()
@@ -184,9 +191,14 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
     var onEditInk:           ((Annotation) -> Void)?
     /// Called when the visible page changes. Parameters: (currentPage, pageCount) — 0-based.
     var onPageChanged: ((Int, Int) -> Void)?
+    /// Called with a 0.0–1.0 plain-text fraction when the reader single-taps to drop a marker.
+    var onReadingPositionChanged: ((Double) -> Void)?
 
     private var fullAttributed = NSAttributedString()
     private var fullPlainText: NSString = ""
+    /// Persisted reading-position marker (0.0–1.0 plain-text fraction), or nil. Fanned out to each
+    /// live surface as a local char index.
+    private var markerFraction: Double?
     private var currentAnnotations: [ResolvedAnnotation] = []
     private var bodySize = AppTheme.bodySize
     private var lineHeight = AppTheme.readerLineHeightMultiple
@@ -200,15 +212,18 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
         guard theme != paperTheme else { return }
         paperTheme = theme
         let paper = theme.uiPaper
+        let markerColor = theme.uiInk.withAlphaComponent(0.55)
         view.backgroundColor = paper
         scrollSurface?.view.backgroundColor = paper
         scrollSurface?.textView.backgroundColor = paper
+        scrollSurface?.readingMarkerColor = markerColor
         pageVC?.view.backgroundColor = paper
         if let page = pageVC?.viewControllers?.first as? ReaderPageViewController {
             page.view.backgroundColor = paper
             for col in page.columns {
                 col.view.backgroundColor = paper
                 col.textView.backgroundColor = paper
+                col.readingMarkerColor = markerColor
             }
         }
     }
@@ -264,12 +279,49 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
         surface.onDeleteAnnotation   = { [weak self] in self?.onDeleteAnnotation?($0) }
         surface.onInkAnnotationRequested = { [weak self] in self?.onInkAnnotationRequested?($0) }
         surface.onEditInk            = { [weak self] in self?.onEditInk?($0) }
+        surface.onReadingPositionPicked = { [weak self] in self?.onReadingPositionChanged?($0) }
+        surface.readingMarkerColor   = paperTheme.uiInk.withAlphaComponent(0.55)
+        surface.markerOnDoubleClick  = markerOnDoubleClick
+    }
+
+    /// Reading-marker gesture mapping (from the store). Pushed to every live surface.
+    var markerOnDoubleClick = false {
+        didSet {
+            scrollSurface?.markerOnDoubleClick = markerOnDoubleClick
+            if let page = pageVC?.viewControllers?.first as? ReaderPageViewController {
+                for col in page.columns { col.markerOnDoubleClick = markerOnDoubleClick }
+            }
+        }
+    }
+
+    /// Maps the global marker fraction onto each live surface as a LOCAL char index (nil where the
+    /// marker isn't within that surface's range), mirroring macOS `refreshReadingMarkers`.
+    private func refreshReadingMarkers() {
+        let len = fullPlainText.length
+        let global: Int? = (markerFraction != nil && len > 0)
+            ? min(len - 1, max(0, Int((markerFraction! * Double(len)).rounded())))
+            : nil
+        func apply(_ surface: AnnotatingTextSurface?) {
+            guard let surface else { return }
+            let surfaceLen = (surface.textView.text as NSString?)?.length ?? 0
+            if let g = global, g >= surface.baseOffset, g < surface.baseOffset + surfaceLen {
+                surface.setReadingMarkerLocalIndex(g - surface.baseOffset)
+            } else {
+                surface.setReadingMarkerLocalIndex(nil)
+            }
+        }
+        apply(scrollSurface)
+        if let page = pageVC?.viewControllers?.first as? ReaderPageViewController {
+            for col in page.columns { apply(col) }
+        }
     }
 
     // MARK: Content update
 
     func update(document: LoadedDocument, annotations: [ResolvedAnnotation],
-                documentURL: URL?, bodySize: CGFloat, lineHeight: CGFloat) {
+                documentURL: URL?, bodySize: CGFloat, lineHeight: CGFloat,
+                markerFraction: Double?) {
+        self.markerFraction = markerFraction
         let isNew = !hasRendered || documentURL != lastDocumentURL
         currentAnnotations = annotations
         self.bodySize      = bodySize
@@ -306,6 +358,7 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
                 }
             }
         }
+        refreshReadingMarkers()
     }
 
     // MARK: Mode install / layout
@@ -323,6 +376,7 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
             add(child: s)
             scrollSurface = s
             s.setAttributed(fullAttributed)
+            refreshReadingMarkers()
         case .pageTurn, .screenFlip:
             edgeTap.isEnabled = true
             // Page Turn = horizontal page-curl; Screen Flip = vertical scroll.
@@ -364,6 +418,7 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
         if let page = makePage(pageIndex) {
             pageVC?.setViewControllers([page], direction: .forward, animated: false)
         }
+        refreshReadingMarkers()
         if let p = pageVC { restrictPagingToFinger(p) }
         // Notify the sidebar shuttle of the real page count now that pagination is complete.
         onPageChanged?(pageIndex, pages.count)
@@ -387,6 +442,14 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
             s.baseOffset = range.location
             s.loadViewIfNeeded()
             s.setAttributed(fullAttributed.attributedSubstring(from: range))
+            // Seed the marker if it falls within this column's range (mirrors refreshReadingMarkers).
+            let len = fullPlainText.length
+            if let f = markerFraction, len > 0 {
+                let g = min(len - 1, max(0, Int((f * Double(len)).rounded())))
+                if g >= range.location, g < range.location + range.length {
+                    s.setReadingMarkerLocalIndex(g - range.location)
+                }
+            }
             return s
         }
         return ReaderPageViewController(pageNumber: index, columns: columns,

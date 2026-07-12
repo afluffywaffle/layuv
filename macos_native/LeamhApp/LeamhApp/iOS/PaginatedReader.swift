@@ -43,9 +43,52 @@ enum TextPaginator {
 /// Used for BOTH the scroll-mode reader (scrollable, baseOffset 0, full text) and each curl/flip
 /// page (non-scrolling, baseOffset = page start, page substring). Selection + annotation therefore
 /// work identically in every mode.
+/// UITextView that draws a small reading-position marker in the left inset band at a given
+/// LOCAL char index — the iOS mirror of the macOS AnnotatingTextView marker (ReaderView.swift).
+final class MarkerTextView: UITextView {
+    var readingMarkerLocalIndex: Int? { didSet { setNeedsDisplay() } }
+    var readingMarkerColor: UIColor = .secondaryLabel { didSet { setNeedsDisplay() } }
+
+    override func draw(_ rect: CGRect) {
+        super.draw(rect)
+        guard let idx = readingMarkerLocalIndex else { return }
+        let len = (text as NSString?)?.length ?? 0
+        guard len > 0 else { return }
+        let clamped = max(0, min(idx, len - 1))
+        guard let from  = position(from: beginningOfDocument, offset: clamped),
+              let to    = position(from: from, offset: 1),
+              let range = textRange(from: from, to: to) else { return }
+        let lineRect = firstRect(for: range)
+        guard lineRect.height > 0, lineRect.minX.isFinite else { return }
+        guard let ctx = UIGraphicsGetCurrentContext() else { return }
+        ctx.saveGState()
+        ctx.resetClip()   // UITextView clips to the text container; paint the margin too
+        let inset = textContainerInset
+        // Soft full-width band behind the reading line.
+        let bandX = inset.left - 4
+        let bandW = bounds.width - inset.left - inset.right + 8
+        let band = CGRect(x: bandX, y: lineRect.minY, width: bandW, height: lineRect.height)
+        readingMarkerColor.withAlphaComponent(0.18).setFill()
+        UIBezierPath(roundedRect: band, cornerRadius: 3).fill()
+        // Margin indicator: a filled triangle pointer in the left margin, on the line's midline.
+        let cy = lineRect.midY
+        let back = max(2, inset.left - 17)
+        let tip  = back + 9
+        let hh: CGFloat = 6
+        readingMarkerColor.withAlphaComponent(0.9).setFill()
+        let ptr = UIBezierPath()
+        ptr.move(to: CGPoint(x: back, y: cy - hh))
+        ptr.addLine(to: CGPoint(x: back, y: cy + hh))
+        ptr.addLine(to: CGPoint(x: tip,  y: cy))
+        ptr.close()
+        ptr.fill()
+        ctx.restoreGState()
+    }
+}
+
 final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestureRecognizerDelegate {
 
-    let textView: UITextView
+    let textView: MarkerTextView
     private let scrollable: Bool
     private let insets: UIEdgeInsets
 
@@ -65,6 +108,21 @@ final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestu
     /// Fired when this surface starts a selection — lets the page clear the OTHER columns' selections
     /// so only one column shows the floating bar at a time.
     var onBeganSelecting:         (() -> Void)?
+    /// Fired with a 0.0–1.0 plain-text fraction when the reader single-taps empty text to drop a
+    /// reading-position marker — bubbled up to the store, which persists it into the .docx.
+    var onReadingPositionPicked:  ((Double) -> Void)?
+
+    /// Marker colour (from the paper theme). Forwarded to the marker-drawing text view.
+    var readingMarkerColor: UIColor = .secondaryLabel {
+        didSet { textView.readingMarkerColor = readingMarkerColor }
+    }
+
+    /// Sets (or clears, with nil) the marker glyph on this surface at a LOCAL char index.
+    func setReadingMarkerLocalIndex(_ idx: Int?) { textView.readingMarkerLocalIndex = idx }
+
+    /// Gesture mapping (from the store). false: single-tap marks, double-tap edits an annotation.
+    /// true: single-tap edits an annotation, double-tap marks.
+    var markerOnDoubleClick = false
 
     private var selectionToolbar: FloatingSelectionToolbar?
 
@@ -79,7 +137,7 @@ final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestu
         self.insets     = insets
         // Scroll mode uses TextKit 2 (matches the original reader); pages use TextKit 1 so their
         // line breaking matches the TextKit-1 paginator exactly.
-        self.textView   = UITextView(usingTextLayoutManager: scrollable)
+        self.textView   = MarkerTextView(usingTextLayoutManager: scrollable)
         super.init(nibName: nil, bundle: nil)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -120,9 +178,16 @@ final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestu
             ])
         }
 
+        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        doubleTap.delegate = self
+        doubleTap.cancelsTouchesInView = false
+        textView.addGestureRecognizer(doubleTap)
+
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         tap.delegate = self
         tap.cancelsTouchesInView = false
+        tap.require(toFail: doubleTap)
         for gr in textView.gestureRecognizers ?? [] {
             if let dbl = gr as? UITapGestureRecognizer, dbl.numberOfTapsRequired == 2 {
                 tap.require(toFail: dbl)
@@ -282,17 +347,49 @@ final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestu
     @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
         guard textView.selectedRange.length == 0 else { return }
         let point = gesture.location(in: textView)
-        guard let annotation = annotationAt(point) else { return }
-        presentActions(for: annotation, at: point)
+        if markerOnDoubleClick {
+            // Single-tap edits an annotation; marking is on double-tap.
+            if let annotation = annotationAt(point) { presentActions(for: annotation, at: point) }
+        } else {
+            // Single-tap drops a marker (even on annotations); editing is on double-tap.
+            dropMarker(at: point)
+        }
     }
 
-    private func annotationAt(_ point: CGPoint) -> Annotation? {
+    @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
+        let point = gesture.location(in: textView)
+        if markerOnDoubleClick {
+            dropMarker(at: point)
+        } else if let annotation = annotationAt(point) {
+            presentActions(for: annotation, at: point)
+        }
+        // Cancel any word selection the double-tap may have started.
+        textView.selectedTextRange = nil
+    }
+
+    /// Drops a reading-position marker at the tapped character and reports its global fraction.
+    private func dropMarker(at point: CGPoint) {
+        guard let localIdx = localCharIndex(at: point) else { return }
+        let global = baseOffset + localIdx
+        let len = fullPlainText.length
+        guard len > 0 else { return }
+        setReadingMarkerLocalIndex(localIdx)              // immediate feedback on this surface
+        onReadingPositionPicked?(Double(global) / Double(len))
+    }
+
+    /// LOCAL char index nearest a point in the text view, or nil if outside the text.
+    private func localCharIndex(at point: CGPoint) -> Int? {
         guard let pos = textView.closestPosition(to: point) else { return nil }
         let caret    = textView.caretRect(for: pos)
         var localIdx = textView.offset(from: textView.beginningOfDocument, to: pos)
         if point.x < caret.minX { localIdx -= 1 }
         let pageLen = (textView.text as NSString?)?.length ?? 0
         guard localIdx >= 0, localIdx < pageLen else { return nil }
+        return localIdx
+    }
+
+    private func annotationAt(_ point: CGPoint) -> Annotation? {
+        guard let localIdx = localCharIndex(at: point) else { return nil }
         guard let from  = textView.position(from: textView.beginningOfDocument, offset: localIdx),
               let to    = textView.position(from: from, offset: 1),
               let range = textView.textRange(from: from, to: to) else { return nil }

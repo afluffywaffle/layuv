@@ -47,10 +47,11 @@ struct AppSettingsView: View {
                     Toggle("Two Columns (Page Flip)", isOn: $store.twoColumnPaged)
                     Toggle("Follow System Dark Mode (Night)", isOn: $store.followsDarkMode)
                     Toggle("Left-Handed Navigation (WASD)", isOn: $store.leftHandedNav)
+                    Toggle("Reading Marker on Double-Click", isOn: $store.markerOnDoubleClick)
                 } header: {
                     Text("Reader")
                 } footer: {
-                    Text("Paper theme is remembered per document; the current pick becomes the default for new documents.")
+                    Text("Paper theme is remembered per document; the current pick becomes the default for new documents. Reading marker: off = single-click marks your place and double-click opens an annotation; on = single-click opens an annotation and double-click marks your place.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
