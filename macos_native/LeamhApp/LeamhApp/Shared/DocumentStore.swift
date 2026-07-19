@@ -719,10 +719,22 @@ final class DocumentStore: ObservableObject {
     private static func archiveOldDrafts(in dir: URL, cleanBase: String, keep: Int) {
         let fm = FileManager.default
         guard let names = try? fm.contentsOfDirectory(atPath: dir.path) else { return }
-        let re = try! Regex("^\(NSRegularExpression.escapedPattern(for: cleanBase))_draft_v(\\d+)\\.docx$")
-            .ignoresCase()
+        // Build the pattern safely: cleanBase is user-file-derived, so a malformed
+        // pattern must not crash. On the (unexpected) failure, fall back to a manual
+        // prefix/suffix scan below instead of forcing a Regex.
+        let re = (try? Regex("^\(NSRegularExpression.escapedPattern(for: cleanBase))_draft_v(\\d+)\\.docx$")
+            .ignoresCase())
+        let prefix = "\(cleanBase)_draft_v"
+        let suffix = ".docx"
         let drafts = names.compactMap { name -> (Int, String)? in
-            guard let m = try? re.firstMatch(in: name), let r = m[1].substring, let v = Int(r) else { return nil }
+            if let re, let m = try? re.firstMatch(in: name), let r = m[1].substring, let v = Int(r) {
+                return (v, name)
+            }
+            // Fallback (regex unavailable): case-insensitive prefix/suffix match on the version.
+            let lower = name.lowercased()
+            guard lower.hasPrefix(prefix.lowercased()), lower.hasSuffix(suffix) else { return nil }
+            let mid = name.dropFirst(prefix.count).dropLast(suffix.count)
+            guard let v = Int(mid) else { return nil }
             return (v, name)
         }.sorted { $0.0 > $1.0 }
         let toArchive = drafts.dropFirst(keep)
