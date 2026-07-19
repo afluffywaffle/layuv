@@ -88,7 +88,7 @@
              start with `am start -n .../com.afluffywaffle.layuv.spike.DrawPathSpikeActivity`. -->
         <activity
             android:name=".spike.DrawPathSpikeActivity"
-            android:exported="true"
+            android:exported="false"
             android:theme="@style/Theme.Leamh"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|keyboardHidden" />
 
@@ -97,7 +97,7 @@
              `am start -n .../com.afluffywaffle.layuv.spike.EinkRefreshSpikeActivity`. -->
         <activity
             android:name=".spike.EinkRefreshSpikeActivity"
-            android:exported="true"
+            android:exported="false"
             android:theme="@style/Theme.Leamh"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|keyboardHidden" />
     </application>
