@@ -1,0 +1,23 @@
+{
+  "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/LeamhApp/iOS/PaginatedReader.swift" : {
+    "const-values" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/PaginatedReader.swiftconstvalues",
+    "dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/PaginatedReader.d",
+    "diagnostics" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/PaginatedReader.dia",
+    "object" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/PaginatedReader.o",
+    "swift-dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/PaginatedReader.swiftdeps"
+  },
+  "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/LeamhApp/iOS/ReaderTextView.swift" : {
+    "const-values" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/ReaderTextView.swiftconstvalues",
+    "dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/ReaderTextView.d",
+    "diagnostics" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/ReaderTextView.dia",
+    "object" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/ReaderTextView.o",
+    "swift-dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/ReaderTextView.swiftdeps"
+  },
+  "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/DerivedSources/GeneratedAssetSymbols.swift" : {
+    "const-values" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/GeneratedAssetSymbols.swiftconstvalues",
+    "dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/GeneratedAssetSymbols.d",
+    "diagnostics" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/GeneratedAssetSymbols.dia",
+    "object" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/GeneratedAssetSymbols.o",
+    "swift-dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/GeneratedAssetSymbols.swiftdeps"
+  }
+}

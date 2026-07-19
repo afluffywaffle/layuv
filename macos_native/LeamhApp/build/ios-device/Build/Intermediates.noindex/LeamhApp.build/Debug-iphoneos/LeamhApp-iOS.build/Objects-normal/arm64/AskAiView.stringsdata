@@ -1,0 +1,144 @@
+{
+  "source": "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/LeamhApp/iOS/AskAiView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Ask AI",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 25
+        }
+      },
+      {
+        "comment": "",
+        "key": "Error",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 56
+        }
+      },
+      {
+        "comment": "",
+        "key": "Clear the entire conversation?",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 64
+        }
+      },
+      {
+        "comment": "",
+        "key": "Done",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 29
+        }
+      },
+      {
+        "comment": "",
+        "key": "AI Settings",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 36
+        }
+      },
+      {
+        "comment": "",
+        "key": "Clear Conversation",
+        "location": {
+          "startingColumn": 39,
+          "startingLine": 42
+        }
+      },
+      {
+        "comment": "",
+        "key": "OK",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 60
+        }
+      },
+      {
+        "comment": "",
+        "key": "Clear",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 67
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 70
+        }
+      },
+      {
+        "comment": "",
+        "key": "The revised chapter is ready. Save it as a new DOCX draft to review in the Files app.",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 175
+        }
+      },
+      {
+        "comment": "",
+        "key": "Rewrite ready",
+        "location": {
+          "startingColumn": 19,
+          "startingLine": 172
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save as Draft…",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 181
+        }
+      },
+      {
+        "comment": "",
+        "key": "Continue…",
+        "location": {
+          "startingColumn": 19,
+          "startingLine": 197
+        }
+      },
+      {
+        "comment": "",
+        "key": "Ask AI to revise this chapter",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 208
+        }
+      },
+      {
+        "comment": "",
+        "key": "Your chapter text and annotations will be sent to the configured AI endpoint.",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 210
+        }
+      },
+      {
+        "comment": "",
+        "key": "Configure AI Endpoint",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 219
+        }
+      },
+      {
+        "comment": "",
+        "key": "Reply…",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 232
+        }
+      }
+    ]
+  },
+  "version": 1
+}

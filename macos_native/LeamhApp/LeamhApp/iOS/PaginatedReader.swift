@@ -105,6 +105,11 @@ final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestu
     var onDeleteAnnotation:       ((String) -> Void)?
     var onInkAnnotationRequested: ((Annotation) -> Void)?
     var onEditInk:                ((Annotation) -> Void)?
+    /// Returns the currently locked tool (from the store), or nil. When non-nil, a completed selection
+    /// auto-annotates with it instead of showing the floating tool bar (mirrors macOS).
+    var lockedToolProvider:       (() -> AnnotationTool?)?
+    /// Locks (or, with nil, unlocks) a tool in the store — set from the floating bar's "Lock Tool".
+    var onLockTool:               ((AnnotationTool?) -> Void)?
     /// Fired when this surface starts a selection — lets the page clear the OTHER columns' selections
     /// so only one column shows the floating bar at a time.
     var onBeganSelecting:         (() -> Void)?
@@ -125,9 +130,13 @@ final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestu
     var markerOnDoubleClick = false
 
     private var selectionToolbar: FloatingSelectionToolbar?
+    /// Pending auto-commit for a locked tool — rescheduled on every selection change so it fires only
+    /// once the selection settles (a drag posts many selection-changed callbacks).
+    private var pendingLockedCommit: DispatchWorkItem?
 
     /// Clears this surface's selection and hides its floating bar (called on sibling columns).
     func clearSelectionUI() {
+        pendingLockedCommit?.cancel(); pendingLockedCommit = nil
         selectionToolbar?.isHidden = true
         if textView.selectedTextRange != nil { textView.selectedTextRange = nil }
     }
@@ -242,12 +251,42 @@ final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestu
     // MARK: Selection → floating tool toolbar
 
     func textViewDidChangeSelection(_ textView: UITextView) {
-        if textView.selectedRange.length > 0 {
+        let sel = textView.selectedRange
+        if sel.length > 0 {
             onBeganSelecting?()   // clear other columns' selections so only one bar shows
-            showAnnotationToolbar(near: textView.selectedRange)
+            if let locked = lockedToolProvider?() {
+                // A tool is locked: skip the floating bar and auto-annotate once the selection settles.
+                selectionToolbar?.isHidden = true
+                scheduleLockedCommit(locked)
+            } else {
+                showAnnotationToolbar(near: sel)
+            }
         } else {
+            pendingLockedCommit?.cancel(); pendingLockedCommit = nil
             selectionToolbar?.isHidden = true
         }
+    }
+
+    /// Debounced auto-commit of a locked tool — fires ~0.35s after the selection stops changing,
+    /// so a drag-select commits once on release rather than on every intermediate selection.
+    private func scheduleLockedCommit(_ tool: AnnotationTool) {
+        pendingLockedCommit?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            let r = self.textView.selectedRange
+            guard r.length > 0 else { return }
+            self.commitAnnotation(tool: tool, localRange: r)   // also clears the selection
+        }
+        pendingLockedCommit = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
+    }
+
+    /// Locks the tool in the store AND applies it once to the current selection (the "Lock Tool"
+    /// flyout action). Subsequent selections then auto-annotate via `scheduleLockedCommit`.
+    private func lockAndApply(_ tool: AnnotationTool) {
+        onLockTool?(tool)
+        commitAnnotation(tool: tool, localRange: textView.selectedRange)
+        selectionToolbar?.isHidden = true
     }
 
     func textView(_ textView: UITextView, editMenuForTextIn range: NSRange,
@@ -268,10 +307,25 @@ final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestu
                 self.commitAnnotation(tool: tool, localRange: self.textView.selectedRange)
                 self.selectionToolbar?.isHidden = true
             }
+            t.onLock = { [weak self] tool in self?.lockAndApply(tool) }
             t.onCopy = { [weak self] in self?.copySelection() }
             view.addSubview(t)
             selectionToolbar = t
             toolbar = t
+        }
+
+        let sz = toolbar.intrinsicContentSize
+
+        // On iPhone (compact width) the reader is narrow and selection handles crowd a
+        // follow-the-selection bar, so pin the bar to the bottom-centre instead. On iPad
+        // (regular width) keep it floating just above the selection.
+        if traitCollection.horizontalSizeClass == .compact {
+            let x = (view.bounds.width - sz.width) / 2
+            let y = view.bounds.height - view.safeAreaInsets.bottom - sz.height - 12
+            toolbar.frame = CGRect(x: max(8, x), y: y, width: sz.width, height: sz.height)
+            toolbar.isHidden = false
+            view.bringSubviewToFront(toolbar)
+            return
         }
 
         guard let from = textView.position(from: textView.beginningOfDocument, offset: range.location),
@@ -280,7 +334,6 @@ final class AnnotatingTextSurface: UIViewController, UITextViewDelegate, UIGestu
             toolbar.isHidden = true; return
         }
         let rectInView = textView.convert(textView.firstRect(for: tr), to: view)
-        let sz         = toolbar.intrinsicContentSize
         let yAbove     = rectInView.minY - sz.height - 10
         let ySafe      = max(view.safeAreaInsets.top + 8, yAbove)
         let xClamped   = max(8, min(view.bounds.width - sz.width - 8, rectInView.midX - sz.width / 2))

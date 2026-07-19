@@ -53,7 +53,7 @@ public enum DocxFromText {
             entries[docRelsPath] = Data(cleaned.utf8)
         }
 
-        return try DocxArchive.write(entries)
+        return try DocxArchive.write(entries, source: archive)
     }
 
     /// Replaces the inner content of `<w:body>` with paragraphs from `text`, preserving any

@@ -78,6 +78,8 @@ struct ReaderTextView: UIViewControllerRepresentable {
         vc.onReadingPositionChanged = { [weak store] f in
             Task { @MainActor in await store?.setReadingMarker(fraction: f) }
         }
+        vc.lockedToolProvider       = { [weak store] in store?.lockedTool }
+        vc.onLockTool               = { [weak store] tool in store?.lockedTool = tool }
         return vc
     }
 
@@ -193,6 +195,11 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
     var onPageChanged: ((Int, Int) -> Void)?
     /// Called with a 0.0–1.0 plain-text fraction when the reader single-taps to drop a marker.
     var onReadingPositionChanged: ((Double) -> Void)?
+    /// Returns the currently locked tool (from the store), or nil. Fanned out to each surface so a
+    /// completed selection auto-annotates with it.
+    var lockedToolProvider: (() -> AnnotationTool?)?
+    /// Locks/unlocks a tool in the store (from a surface's "Lock Tool" flyout).
+    var onLockTool: ((AnnotationTool?) -> Void)?
 
     private var fullAttributed = NSAttributedString()
     private var fullPlainText: NSString = ""
@@ -280,6 +287,8 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
         surface.onInkAnnotationRequested = { [weak self] in self?.onInkAnnotationRequested?($0) }
         surface.onEditInk            = { [weak self] in self?.onEditInk?($0) }
         surface.onReadingPositionPicked = { [weak self] in self?.onReadingPositionChanged?($0) }
+        surface.lockedToolProvider   = { [weak self] in self?.lockedToolProvider?() }
+        surface.onLockTool           = { [weak self] in self?.onLockTool?($0) }
         surface.readingMarkerColor   = paperTheme.uiInk.withAlphaComponent(0.55)
         surface.markerOnDoubleClick  = markerOnDoubleClick
     }
@@ -545,6 +554,48 @@ final class ReaderViewController: UIViewController, UIPageViewControllerDataSour
         }
     }
 
+    // MARK: Hardware-keyboard navigation (iPad)
+
+    override var canBecomeFirstResponder: Bool { true }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // Claim first responder so key commands reach the reader (yielded while a text view is
+        // being used for Find/selection; reclaimed on the next appearance/tap).
+        becomeFirstResponder()
+    }
+
+    override var keyCommands: [UIKeyCommand]? {
+        let flip: [UIKeyCommand] = [
+            UIKeyCommand(input: UIKeyCommand.inputRightArrow, modifierFlags: [], action: #selector(keyNextPage)),
+            UIKeyCommand(input: UIKeyCommand.inputLeftArrow,  modifierFlags: [], action: #selector(keyPrevPage)),
+            UIKeyCommand(input: UIKeyCommand.inputDownArrow,  modifierFlags: [], action: #selector(keyNextPage)),
+            UIKeyCommand(input: UIKeyCommand.inputUpArrow,    modifierFlags: [], action: #selector(keyPrevPage)),
+            UIKeyCommand(input: " ",                          modifierFlags: [], action: #selector(keyNextPage)),
+            UIKeyCommand(input: " ",                          modifierFlags: .shift, action: #selector(keyPrevPage)),
+        ]
+        // Let these fire even while a child text view is first responder.
+        flip.forEach { $0.wantsPriorityOverSystemBehavior = true }
+        return flip
+    }
+
+    @objc private func keyNextPage() { advance(by: 1) }
+    @objc private func keyPrevPage() { advance(by: -1) }
+
+    /// Page nav in paged modes; page-height scroll in scroll mode.
+    private func advance(by direction: Int) {
+        if scrollSurface != nil {
+            guard let tv = scrollSurface?.textView else { return }
+            let page = tv.bounds.height - tv.adjustedContentInset.top - tv.adjustedContentInset.bottom - 24
+            let maxY = max(0, tv.contentSize.height - tv.bounds.height + tv.adjustedContentInset.bottom)
+            let y = min(maxY, max(-tv.adjustedContentInset.top,
+                                  tv.contentOffset.y + CGFloat(direction) * page))
+            tv.setContentOffset(CGPoint(x: tv.contentOffset.x, y: y), animated: true)
+        } else {
+            goToPage(pageIndex + direction)
+        }
+    }
+
     // MARK: UIPageViewControllerDataSource / Delegate
 
     func pageViewController(_ pvc: UIPageViewController,
@@ -579,6 +630,15 @@ final class FloatingSelectionToolbar: UIView {
 
     var onSelect: ((AnnotationTool) -> Void)?
     var onCopy: (() -> Void)?
+    /// Lock the tool: apply it to the current selection AND keep it active so every subsequent
+    /// selection auto-annotates with it (mirrors macOS `ToolPickerView.onLock`).
+    var onLock: ((AnnotationTool) -> Void)?
+
+    /// Comment and Ink are NOT lockable (they open their own edit/ink flow) — matches macOS/Android,
+    /// where lock is limited to the mark-up tools.
+    private static func isLockable(_ tool: AnnotationTool) -> Bool {
+        tool != .comment && tool != .inkAnnotation
+    }
 
     private static let items: [(AnnotationTool, String, UIColor, String)] = [
         (.highlight,       "highlighter",            .systemOrange, "Highlight"),
@@ -645,13 +705,14 @@ final class FloatingSelectionToolbar: UIView {
             btn.tintColor = color
             btn.accessibilityLabel = label
             let t = tool
+            btn.tag = i   // resolves the tool in the context-menu delegate
             btn.addAction(UIAction { [weak self] _ in self?.onSelect?(t) }, for: .touchUpInside)
             btn.translatesAutoresizingMaskIntoConstraints = false
             btn.widthAnchor.constraint(equalToConstant: Self.buttonSize).isActive = true
             btn.heightAnchor.constraint(equalToConstant: Self.buttonSize).isActive = true
-            // Long-press Highlight for "Highlight Paragraph" — commits .blockquote over the
-            // whole enclosing paragraph instead of just the selection.
-            if tool == .highlight {
+            // Press-and-hold a mark-up tool for its flyout: Apply Once / Lock Tool (Highlight also
+            // offers "Highlight Paragraph"). Mirrors the macOS ToolPickerView hold-flyout.
+            if Self.isLockable(tool) {
                 btn.addInteraction(UIContextMenuInteraction(delegate: self))
             }
             stack.addArrangedSubview(btn)
@@ -679,10 +740,24 @@ final class FloatingSelectionToolbar: UIView {
 extension FloatingSelectionToolbar: UIContextMenuInteractionDelegate {
     func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
                                  configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
-        UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
-            UIMenu(title: "", children: [
-                UIAction(title: "Highlight Paragraph") { _ in self?.onSelect?(.blockquote) },
-            ])
+        // Resolve which tool this interaction belongs to from the button's tag (= item index).
+        guard let btn = interaction.view as? UIButton,
+              btn.tag >= 0, btn.tag < Self.items.count else { return nil }
+        let tool = Self.items[btn.tag].0
+        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+            var actions: [UIMenuElement] = [
+                UIAction(title: "Apply Once",
+                         image: UIImage(systemName: Self.items[btn.tag].1)) { _ in self?.onSelect?(tool) },
+                UIAction(title: "Lock Tool",
+                         image: UIImage(systemName: "lock.fill")) { _ in self?.onLock?(tool) },
+            ]
+            if tool == .highlight {
+                actions.append(
+                    UIAction(title: "Highlight Paragraph",
+                             image: UIImage(systemName: "text.quote")) { _ in self?.onSelect?(.blockquote) }
+                )
+            }
+            return UIMenu(title: "", children: actions)
         }
     }
 }

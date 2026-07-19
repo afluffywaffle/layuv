@@ -1,0 +1,30 @@
+{
+  "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/LeamhApp/iOS/InkEditorView.swift" : {
+    "const-values" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/InkEditorView.swiftconstvalues",
+    "dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/InkEditorView.d",
+    "diagnostics" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/InkEditorView.dia",
+    "object" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/InkEditorView.o",
+    "swift-dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/InkEditorView.swiftdeps"
+  },
+  "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/LeamhApp/iOS/InkRasterizer.swift" : {
+    "const-values" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/InkRasterizer.swiftconstvalues",
+    "dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/InkRasterizer.d",
+    "diagnostics" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/InkRasterizer.dia",
+    "object" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/InkRasterizer.o",
+    "swift-dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/InkRasterizer.swiftdeps"
+  },
+  "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/LeamhApp/iOS/LeamhApp_iOS_App.swift" : {
+    "const-values" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/LeamhApp_iOS_App.swiftconstvalues",
+    "dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/LeamhApp_iOS_App.d",
+    "diagnostics" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/LeamhApp_iOS_App.dia",
+    "object" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/LeamhApp_iOS_App.o",
+    "swift-dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/LeamhApp_iOS_App.swiftdeps"
+  },
+  "/Users/jayromacorda/Develop/layuv/macos_native/Packages/LeamhDocx/Sources/LeamhDocx/XmlEntities.swift" : {
+    "const-values" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/XmlEntities.swiftconstvalues",
+    "dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/XmlEntities.d",
+    "diagnostics" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/XmlEntities.dia",
+    "object" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/XmlEntities.o",
+    "swift-dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/XmlEntities.swiftdeps"
+  }
+}

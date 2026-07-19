@@ -1,0 +1,200 @@
+{
+  "source": "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/LeamhApp/iOS/AppSettingsView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Settings",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 105
+        }
+      },
+      {
+        "comment": "",
+        "key": "Typography",
+        "location": {
+          "startingColumn": 25,
+          "startingLine": 35
+        }
+      },
+      {
+        "comment": "",
+        "key": "Layuv",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 25
+        }
+      },
+      {
+        "comment": "",
+        "key": "Author Name",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 29
+        }
+      },
+      {
+        "comment": "",
+        "key": "Written as the author of the comments Layuv saves into your DOCX. Falls back to “Layuv” when blank. A single document can override this below.",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 31
+        }
+      },
+      {
+        "comment": "",
+        "key": "Font",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 36
+        }
+      },
+      {
+        "comment": "",
+        "key": "Text Size",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 39
+        }
+      },
+      {
+        "comment": "",
+        "key": "Line Spacing",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 42
+        }
+      },
+      {
+        "comment": "",
+        "key": "Paper Theme",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 48
+        }
+      },
+      {
+        "comment": "",
+        "key": "Two Columns (Page Flip)",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 51
+        }
+      },
+      {
+        "comment": "",
+        "key": "Follow System Dark Mode (Night)",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 52
+        }
+      },
+      {
+        "comment": "",
+        "key": "Reading Marker on Double-Tap",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 53
+        }
+      },
+      {
+        "comment": "",
+        "key": "Reader",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 55
+        }
+      },
+      {
+        "comment": "",
+        "key": "Paper theme is remembered per document; the current pick becomes the default for new documents. Reading marker: off = single-tap marks your place and double-tap opens an annotation; on = single-tap opens an annotation and double-tap marks your place.",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 57
+        }
+      },
+      {
+        "comment": "",
+        "key": "http://mini.local:8080",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 62
+        }
+      },
+      {
+        "comment": "",
+        "key": "claude-sonnet-4-6",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 66
+        }
+      },
+      {
+        "comment": "",
+        "key": "sk-…",
+        "location": {
+          "startingColumn": 52,
+          "startingLine": 71
+        }
+      },
+      {
+        "comment": "",
+        "key": "sk-…",
+        "location": {
+          "startingColumn": 54,
+          "startingLine": 72
+        }
+      },
+      {
+        "comment": "",
+        "key": "AI Provider",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 83
+        }
+      },
+      {
+        "comment": "",
+        "key": "OpenAI-compatible endpoint. API key is stored in the Keychain. Plain HTTP is allowed for local/private addresses only.",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 85
+        }
+      },
+      {
+        "comment": "",
+        "key": "This Document",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 97
+        }
+      },
+      {
+        "comment": "",
+        "key": "Author override for “%@”. Leave blank to use the global author (“%@”).",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 100
+        }
+      },
+      {
+        "comment": "",
+        "key": "Open a document to set a per-document author override.",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 101
+        }
+      },
+      {
+        "comment": "",
+        "key": "Done",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 109
+        }
+      }
+    ]
+  },
+  "version": 1
+}

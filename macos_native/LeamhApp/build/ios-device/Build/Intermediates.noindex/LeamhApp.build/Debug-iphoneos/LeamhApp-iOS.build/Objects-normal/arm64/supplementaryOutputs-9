@@ -1,0 +1,30 @@
+{
+  "/Users/jayromacorda/Develop/layuv/macos_native/Packages/LeamhDocx/Sources/LeamhDocx/PlainTextMapper.swift" : {
+    "const-values" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/PlainTextMapper.swiftconstvalues",
+    "dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/PlainTextMapper.d",
+    "diagnostics" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/PlainTextMapper.dia",
+    "object" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/PlainTextMapper.o",
+    "swift-dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/PlainTextMapper.swiftdeps"
+  },
+  "/Users/jayromacorda/Develop/layuv/macos_native/Packages/LeamhDocx/Sources/LeamhDocx/RewriteProtocol.swift" : {
+    "const-values" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/RewriteProtocol.swiftconstvalues",
+    "dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/RewriteProtocol.d",
+    "diagnostics" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/RewriteProtocol.dia",
+    "object" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/RewriteProtocol.o",
+    "swift-dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/RewriteProtocol.swiftdeps"
+  },
+  "/Users/jayromacorda/Develop/layuv/macos_native/Packages/LeamhDocx/Sources/LeamhDocx/RunPropertyInjector.swift" : {
+    "const-values" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/RunPropertyInjector.swiftconstvalues",
+    "dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/RunPropertyInjector.d",
+    "diagnostics" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/RunPropertyInjector.dia",
+    "object" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/RunPropertyInjector.o",
+    "swift-dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/RunPropertyInjector.swiftdeps"
+  },
+  "/Users/jayromacorda/Develop/layuv/macos_native/Packages/LeamhDocx/Sources/LeamhDocx/TextImport.swift" : {
+    "const-values" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/TextImport.swiftconstvalues",
+    "dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/TextImport.d",
+    "diagnostics" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/TextImport.dia",
+    "object" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/TextImport.o",
+    "swift-dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/TextImport.swiftdeps"
+  }
+}

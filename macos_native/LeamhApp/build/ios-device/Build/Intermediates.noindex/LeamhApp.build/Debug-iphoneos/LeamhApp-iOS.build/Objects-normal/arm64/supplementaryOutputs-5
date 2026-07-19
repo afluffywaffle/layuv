@@ -1,0 +1,30 @@
+{
+  "/Users/jayromacorda/Develop/layuv/macos_native/Packages/LeamhDocx/Sources/LeamhDocx/Model/AiTurn.swift" : {
+    "const-values" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/AiTurn.swiftconstvalues",
+    "dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/AiTurn.d",
+    "diagnostics" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/AiTurn.dia",
+    "object" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/AiTurn.o",
+    "swift-dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/AiTurn.swiftdeps"
+  },
+  "/Users/jayromacorda/Develop/layuv/macos_native/Packages/LeamhDocx/Sources/LeamhDocx/Model/Annotation.swift" : {
+    "const-values" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/Annotation.swiftconstvalues",
+    "dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/Annotation.d",
+    "diagnostics" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/Annotation.dia",
+    "object" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/Annotation.o",
+    "swift-dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/Annotation.swiftdeps"
+  },
+  "/Users/jayromacorda/Develop/layuv/macos_native/Packages/LeamhDocx/Sources/LeamhDocx/Model/Enums.swift" : {
+    "const-values" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/Enums.swiftconstvalues",
+    "dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/Enums.d",
+    "diagnostics" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/Enums.dia",
+    "object" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/Enums.o",
+    "swift-dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/Enums.swiftdeps"
+  },
+  "/Users/jayromacorda/Develop/layuv/macos_native/Packages/LeamhDocx/Sources/LeamhDocx/Model/ReadingPosition.swift" : {
+    "const-values" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/ReadingPosition.swiftconstvalues",
+    "dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/ReadingPosition.d",
+    "diagnostics" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/ReadingPosition.dia",
+    "object" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/ReadingPosition.o",
+    "swift-dependencies" : "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/build/ios-device/Build/Intermediates.noindex/LeamhApp.build/Debug-iphoneos/LeamhApp-iOS.build/Objects-normal/arm64/ReadingPosition.swiftdeps"
+  }
+}

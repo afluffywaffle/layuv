@@ -1,0 +1,40 @@
+{
+  "source": "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/LeamhApp/iOS/InkEditorView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Ink note",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 38
+        }
+      },
+      {
+        "comment": "",
+        "key": "Cancel",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 42
+        }
+      },
+      {
+        "comment": "",
+        "key": "Close",
+        "location": {
+          "startingColumn": 39,
+          "startingLine": 48
+        }
+      },
+      {
+        "comment": "",
+        "key": "Done",
+        "location": {
+          "startingColumn": 49,
+          "startingLine": 48
+        }
+      }
+    ]
+  },
+  "version": 1
+}

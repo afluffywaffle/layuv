@@ -1,0 +1,104 @@
+{
+  "source": "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/LeamhApp/Shared/AnnotationsPanel.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Annotations (%lld / %lld)",
+        "location": {
+          "startingColumn": 15,
+          "startingLine": 81
+        }
+      },
+      {
+        "comment": "",
+        "key": "Annotations",
+        "location": {
+          "startingColumn": 15,
+          "startingLine": 82
+        }
+      },
+      {
+        "comment": "",
+        "key": "Search text or notes…",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 119
+        }
+      },
+      {
+        "comment": "",
+        "key": "Clear",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 158
+        }
+      },
+      {
+        "comment": "",
+        "key": "Select text in the reader and choose a tool to annotate.",
+        "location": {
+          "startingColumn": 39,
+          "startingLine": 190
+        }
+      },
+      {
+        "comment": "",
+        "key": "Try a different search term or clear the tag filter.",
+        "location": {
+          "startingColumn": 39,
+          "startingLine": 194
+        }
+      },
+      {
+        "comment": "",
+        "key": "No Annotations",
+        "location": {
+          "startingColumn": 40,
+          "startingLine": 188
+        }
+      },
+      {
+        "comment": "",
+        "key": "No Results",
+        "location": {
+          "startingColumn": 40,
+          "startingLine": 192
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 213
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 265
+        }
+      },
+      {
+        "comment": "",
+        "key": "Edit…",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 272
+        }
+      },
+      {
+        "comment": "",
+        "key": "Delete",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 277
+        }
+      }
+    ]
+  },
+  "version": 1
+}

@@ -171,7 +171,7 @@ object DocxStore {
                 inkStrokes.second.toByteArray(Charsets.UTF_8)
         }
         writeIntoEntries(entries, annotations, author)
-        return DocxArchive.write(entries, archive.entryMethods())
+        return DocxArchive.write(entries, archive.entryMethods(), source = archive)
     }
 
     /** [author] is written as each comment's `w:author`; null falls back to the annotation id
@@ -180,7 +180,7 @@ object DocxStore {
         val archive = DocxArchive.read(docxBytes)
         val entries = archive.toMutableEntries()
         writeIntoEntries(entries, annotations, author)
-        return DocxArchive.write(entries, archive.entryMethods())
+        return DocxArchive.write(entries, archive.entryMethods(), source = archive)
     }
 
     private fun writeIntoEntries(entries: MutableMap<String, ByteArray>, annotations: List<Annotation>, author: String? = null) {
@@ -259,7 +259,7 @@ object DocxStore {
         val archive = DocxArchive.read(docxBytes)
         val entries = archive.toMutableEntries()
         entries["word/media/ink_$annotationId.png"] = pngBytes
-        return DocxArchive.write(entries, archive.entryMethods())
+        return DocxArchive.write(entries, archive.entryMethods(), source = archive)
     }
 
     /**
@@ -278,7 +278,7 @@ object DocxStore {
         val archive = DocxArchive.read(docxBytes)
         val entries = archive.toMutableEntries()
         entries["word/media/ink_${annotationId}_strokes.json"] = json.toByteArray(Charsets.UTF_8)
-        return DocxArchive.write(entries, archive.entryMethods())
+        return DocxArchive.write(entries, archive.entryMethods(), source = archive)
     }
 
     /** Reads stored stroke JSON for [annotationId], or null if absent (rasterized note). */
@@ -295,7 +295,7 @@ object DocxStore {
         val archive = DocxArchive.read(docxBytes)
         val entries = archive.toMutableEntries()
         entries.keys.removeAll { it.startsWith("word/media/ink_") && it.endsWith("_strokes.json") }
-        return DocxArchive.write(entries, archive.entryMethods())
+        return DocxArchive.write(entries, archive.entryMethods(), source = archive)
     }
 
     /** Returns true if the archive contains at least one `*_strokes.json` file. */
@@ -309,7 +309,7 @@ object DocxStore {
         val archive = DocxArchive.read(docxBytes)
         val entries = archive.toMutableEntries()
         entries[POSITION] = JsonWriter.encode(position.toMap()).toByteArray(Charsets.UTF_8)
-        return DocxArchive.write(entries, archive.entryMethods())
+        return DocxArchive.write(entries, archive.entryMethods(), source = archive)
     }
 
     // -------------------------------------------------------------------------
@@ -348,6 +348,6 @@ object DocxStore {
         entries[CONTENT_TYPES]?.let {
             entries[CONTENT_TYPES] = ContentTypes.ensure(it.toString(Charsets.UTF_8)).toByteArray(Charsets.UTF_8)
         }
-        return DocxArchive.write(entries, archive.entryMethods())
+        return DocxArchive.write(entries, archive.entryMethods(), source = archive)
     }
 }

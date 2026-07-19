@@ -178,7 +178,7 @@ public enum DocxStore {
             entries[documentPath] = Data(injected.utf8)
         }
 
-        return try DocxArchive.write(entries)
+        return try DocxArchive.write(entries, source: archive)
     }
 
     /// Embeds a PNG at word/media/ink_<annotationId>.png. Call before write() so PNG is
@@ -187,7 +187,7 @@ public enum DocxStore {
         let archive = try DocxArchive.read(docxData)
         var entries = archive.toMutableEntries()
         entries["word/media/ink_\(annotationId).png"] = pngData
-        return try DocxArchive.write(entries)
+        return try DocxArchive.write(entries, source: archive)
     }
 
     public static func readInkPng(_ docxData: Data, annotationId: String) throws -> Data? {
@@ -199,7 +199,7 @@ public enum DocxStore {
         let archive = try DocxArchive.read(docxData)
         var entries = archive.toMutableEntries()
         entries["word/media/ink_\(annotationId)_strokes.json"] = Data(json.utf8)
-        return try DocxArchive.write(entries)
+        return try DocxArchive.write(entries, source: archive)
     }
 
     public static func readInkStrokes(_ docxData: Data, annotationId: String) throws -> String? {
@@ -212,7 +212,7 @@ public enum DocxStore {
         let archive = try DocxArchive.read(docxData)
         var entries = archive.toMutableEntries()
         entries.removeAll(where: { $0.hasPrefix("word/media/ink_") && $0.hasSuffix("_strokes.json") })
-        return try DocxArchive.write(entries)
+        return try DocxArchive.write(entries, source: archive)
     }
 
     public static func hasAnyInkStrokes(_ docxData: Data) throws -> Bool {
@@ -224,7 +224,7 @@ public enum DocxStore {
         let archive = try DocxArchive.read(docxData)
         var entries = archive.toMutableEntries()
         entries[positionPath] = Data(JsonWriter.encode(position.toMap() as Any?).utf8)
-        return try DocxArchive.write(entries)
+        return try DocxArchive.write(entries, source: archive)
     }
 
     // MARK: - Ask-AI transcript (leamh/aichat.json)
@@ -254,6 +254,6 @@ public enum DocxStore {
         if let ct = entries[contentTypesPath], let s = String(data: ct, encoding: .utf8) {
             entries[contentTypesPath] = Data(ContentTypes.ensure(s).utf8)
         }
-        return try DocxArchive.write(entries)
+        return try DocxArchive.write(entries, source: archive)
     }
 }

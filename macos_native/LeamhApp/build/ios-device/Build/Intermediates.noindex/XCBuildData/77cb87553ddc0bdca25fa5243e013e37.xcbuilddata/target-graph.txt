@@ -1,0 +1,4 @@
+Target dependency graph (2 targets)
+Target 'LeamhApp-iOS' in project 'LeamhApp'
+➜ Explicit dependency on target 'ZIPFoundation' in project 'LeamhApp'
+Target 'ZIPFoundation' in project 'LeamhApp' (no dependencies)

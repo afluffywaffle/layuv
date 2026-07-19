@@ -543,18 +543,17 @@ class AskAiPanel(
         }
     }
 
-    /** "<root>_draft_v<N>.docx" beside the source; the original counts as v1, so the first draft is v2. */
+    /**
+     * "<root>_rewrite.docx" beside the annotated copy. No version numbering here — that's
+     * the external drafting process's job now; collisions are handled generically by
+     * [uniqueFile] in [saveRewrite] (" (2)", " (3)", …), same as any other save-as-new-file.
+     */
     private fun proposeDraftName(): String {
-        val file = book?.file ?: return "draft_v2.docx"
+        val file = book?.file ?: return "rewrite.docx"
         val root = file.nameWithoutExtension
-            .replace(Regex("_draft_v\\d+$", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("_annotated$", RegexOption.IGNORE_CASE), "")
             .lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_').ifEmpty { "chapter" }
-        val existing = file.parentFile?.listFiles()?.mapNotNull { f ->
-            Regex("^${Regex.escape(root)}_draft_v(\\d+)\\.docx$", RegexOption.IGNORE_CASE)
-                .find(f.name)?.groupValues?.get(1)?.toIntOrNull()
-        } ?: emptyList()
-        val next = (existing.maxOrNull() ?: 1) + 1
-        return "${root}_draft_v$next.docx"
+        return "${root}_rewrite.docx"
     }
 
     private fun turnColumn(role: String): LinearLayout {

@@ -32,6 +32,9 @@ final class ReaderCoordinator: NSObject, ObservableObject {
     @Published var currentPage: Int = 0
     @Published var pageCount:   Int = 1
     @Published var paged:       Bool = false
+    /// True while the NSTextView find bar is showing. The reader host suppresses its top
+    /// gradient + resume banner so the find bar (which docks at the very top) isn't covered.
+    @Published var isFindActive: Bool = false
 
     weak var viewController: ReaderViewController?
 
@@ -78,6 +81,9 @@ struct ReaderView: NSViewControllerRepresentable {
             Task { @MainActor in store?.beginInkAnnotation(annotation) }
         }
         vc.onPageChanged = { [weak coordinator] in coordinator?.sync() }
+        vc.onFindBarVisibilityChanged = { [weak coordinator] visible in
+            coordinator?.isFindActive = visible
+        }
         vc.onToolLocked = { [weak store] tool in
             Task { @MainActor in store?.lockedTool = tool }
         }
@@ -312,6 +318,10 @@ final class ReaderViewController: NSViewController {
     /// Called with a 0.0–1.0 plain-text fraction when the reader single-clicks/taps to drop a
     /// reading-position marker — pushed up to the store, which persists it into the .docx.
     var onReadingPositionChanged: ((Double) -> Void)?
+    /// Fires true/false as the find bar appears/disappears (KVO on the scroll view), so the
+    /// SwiftUI host can hide its top gradient + resume banner while Find is up.
+    var onFindBarVisibilityChanged: ((Bool) -> Void)?
+    private var findBarObservation: NSKeyValueObservation?
 
     /// Currently locked tool (pushed down from the store). When set, a new selection is
     /// auto-annotated with it and the tool popover is skipped.
@@ -407,6 +417,12 @@ final class ReaderViewController: NSViewController {
         scrollTextView.autoresizingMask = [.width]
         scrollTextView.textContainer?.widthTracksTextView = true
         scrollView.documentView = scrollTextView
+
+        // Report find-bar visibility up so the host can clear the top gradient/banner that
+        // would otherwise cover it. NSScrollView.isFindBarVisible is KVO-compliant.
+        findBarObservation = scrollView.observe(\.isFindBarVisible, options: [.new, .initial]) { [weak self] sv, _ in
+            self?.onFindBarVisibilityChanged?(sv.isFindBarVisible)
+        }
 
         // Paged mode container (hidden until screen-flip selected)
         pagedContainer = PagedContainerView()

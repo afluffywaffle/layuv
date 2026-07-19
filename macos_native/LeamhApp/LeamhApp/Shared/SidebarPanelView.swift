@@ -75,15 +75,10 @@ struct SidebarPanelView: View {
                 }
             }
 
-            // Page shuttle — only visible in paged mode.
-            if paged && pageCount > 1 {
-                Divider()
-                PageShuttleView(
-                    currentPage: $currentPage,
-                    pageCount: pageCount,
-                    onGoToPage: onGoToPage
-                )
-            }
+            // Page shuttle is no longer mounted in the sidebar on any platform.
+            // Both iOS and macOS surface it transiently OVER the reader when the user taps
+            // the toolbar page counter — a permanent sidebar slider dropped touch/live-scrub
+            // and cluttered the panel. See the reader hosts' `pageScrubber` overlay.
         }
         .navigationTitle("Layuv")
         .toolbar {
@@ -141,7 +136,7 @@ private struct OutlineListView: View {
 /// Live-updating slider for paged navigation. Dragging turns pages immediately
 /// (on macOS/iOS backlit screens this is safe — no e-ink refresh concern).
 /// Chevron buttons on each end step ±1 page for fine-tuning (as the user specified).
-private struct PageShuttleView: View {
+struct PageShuttleView: View {
     @Binding var currentPage: Int
     let pageCount: Int
     let onGoToPage: (Int) -> Void

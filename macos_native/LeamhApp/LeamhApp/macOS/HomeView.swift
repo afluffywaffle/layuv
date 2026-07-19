@@ -149,6 +149,9 @@ struct ReaderScreen: View {
     // scroll mode already has the native scrollbar for that).
     @State private var isScrubbingPageLabel = false
     @State private var scrubStartPage       = 0
+    /// Transient page scrubber surfaced over the reader when the user taps the toolbar page
+    /// counter (paged mode only). Replaces the old permanent sidebar shuttle.
+    @State private var showPageScrubber     = false
 
     // "Pick up where you left off" banner — shown on open when the document carries a reading marker.
     @State private var showResumeBanner = false
@@ -162,25 +165,30 @@ struct ReaderScreen: View {
             // Top fade: content dissolves up into the toolbar so text never butts a hard edge under
             // the floating glass buttons — the reader's reading zone stays cleanly below the tools.
             .overlay(alignment: .top) {
-                let paper = effectiveTheme.paper
-                LinearGradient(
-                    stops: [
-                        .init(color: paper,             location: 0.00),
-                        .init(color: paper,             location: 0.30),
-                        .init(color: paper.opacity(0.92), location: 0.45),
-                        .init(color: paper.opacity(0.70), location: 0.60),
-                        .init(color: paper.opacity(0.42), location: 0.74),
-                        .init(color: paper.opacity(0.18), location: 0.86),
-                        .init(color: paper.opacity(0.05), location: 0.94),
-                        .init(color: paper.opacity(0.0),  location: 1.00),
-                    ],
-                    startPoint: .top, endPoint: .bottom
-                )
-                .frame(height: 150)
-                .allowsHitTesting(false)
-                .ignoresSafeArea(.container, edges: .top)
+                // Suppressed while Find is active — the find bar docks at the very top and the
+                // opaque head of this fade would otherwise cover it (and its result nav).
+                if !coordinator.isFindActive {
+                    let paper = effectiveTheme.paper
+                    LinearGradient(
+                        stops: [
+                            .init(color: paper,             location: 0.00),
+                            .init(color: paper,             location: 0.30),
+                            .init(color: paper.opacity(0.92), location: 0.45),
+                            .init(color: paper.opacity(0.70), location: 0.60),
+                            .init(color: paper.opacity(0.42), location: 0.74),
+                            .init(color: paper.opacity(0.18), location: 0.86),
+                            .init(color: paper.opacity(0.05), location: 0.94),
+                            .init(color: paper.opacity(0.0),  location: 1.00),
+                        ],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                    .frame(height: 150)
+                    .allowsHitTesting(false)
+                    .ignoresSafeArea(.container, edges: .top)
+                }
             }
             .overlay(alignment: .top) { resumeBanner }
+            .overlay(alignment: .bottom) { pageScrubber }
             .onChange(of: store.currentURL) { maybeShowResumeBanner() }
             .onAppear { maybeShowResumeBanner() }
             .toolbar {
@@ -196,6 +204,9 @@ struct ReaderScreen: View {
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
                             .contentShape(Rectangle())
+                            .onTapGesture {
+                                withAnimation(.easeOut(duration: 0.2)) { showPageScrubber.toggle() }
+                            }
                             .gesture(
                                 // Click-and-drag left/right live-scrubs pages; a plain click
                                 // (no movement) does nothing, matching the chevrons for ±1 steps.
@@ -454,7 +465,7 @@ struct ReaderScreen: View {
     // MARK: - Resume banner
 
     @ViewBuilder private var resumeBanner: some View {
-        if showResumeBanner {
+        if showResumeBanner && !coordinator.isFindActive {
             HStack(spacing: 10) {
                 Image(systemName: "bookmark.fill")
                     .foregroundStyle(.secondary)
@@ -482,6 +493,26 @@ struct ReaderScreen: View {
             .shadow(color: .black.opacity(0.12), radius: 10, y: 3)
             .padding(.top, 58)
             .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
+    /// Transient page scrubber, shown over the reader's bottom edge when the user taps the
+    /// toolbar page counter. Paged mode only (scroll mode has the native scrollbar).
+    @ViewBuilder private var pageScrubber: some View {
+        if showPageScrubber && coordinator.paged && coordinator.pageCount > 1 {
+            PageShuttleView(
+                currentPage: $coordinator.currentPage,
+                pageCount: coordinator.pageCount,
+                onGoToPage: { coordinator.goToPage($0) }
+            )
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.quaternary))
+            .shadow(color: .black.opacity(0.12), radius: 10, y: 3)
+            .frame(maxWidth: 420)
+            .padding(.bottom, 20)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }
 

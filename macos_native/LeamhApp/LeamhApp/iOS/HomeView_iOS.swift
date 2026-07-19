@@ -74,6 +74,27 @@ struct HomeView: View {
         }
     }
 
+    /// Export Annotations Only: write only the anchor list (no chapter text) into the chosen folder
+    /// if set, else fall back to the share sheet. Mirrors macOS `exportAnnotationsOnly`.
+    private func exportAnnotationsOnly() {
+        Task {
+            if let folder = store.aiExportFolder {
+                _ = await store.exportAnnotationsOnly(toFolder: folder)
+            } else {
+                let (text, images) = await store.buildAnnotationsOnlyExport()
+                var urls: [Any] = []
+                if let md = writeTmp(text.data(using: .utf8) ?? Data(), filename: "leamh_annotations.md") {
+                    urls.append(md)
+                }
+                for (name, data) in images {
+                    if let u = writeTmp(data, filename: name) { urls.append(u) }
+                }
+                exportItems = urls
+                showExport  = true
+            }
+        }
+    }
+
     /// Import rewrite: auto-find "<doc> Draft.docx" in the import folder, else open a picker.
     private func importRewrite() {
         if let found = store.autoFindRewrite() {
@@ -126,6 +147,13 @@ struct HomeView: View {
         }
         .sheet(isPresented: $showAiSettings) {
             AiSettingsView()
+                .environmentObject(store)
+                .preferredColorScheme(.light)
+        }
+        // Consolidated app + per-document settings (mirrors macOS). Presented at the root so it's
+        // reachable with or without a document and always sees this window's store.
+        .sheet(isPresented: $store.showSettings) {
+            AppSettingsView()
                 .environmentObject(store)
                 .preferredColorScheme(.light)
         }
@@ -222,13 +250,16 @@ struct HomeView: View {
                          onAskAi:  { showAskAi = true },
                          onAiSettings: { showAiSettings = true },
                          onExportAi: { exportAi() },
+                         onExportAnnotationsOnly: { exportAnnotationsOnly() },
                          onImportRewrite: { importRewrite() },
+                         onOpenSettings: { store.showSettings = true },
                          onSetExportFolder: { showExportFolderPicker = true },
                          onSetImportFolder: { showImportFolderPicker = true },
                          searchScrollOverride: searchScrollOverride,
                          onClearSearch: { searchScrollOverride = false },
                          onPageChanged: { pg, cnt in readerCurrentPage = pg; readerPageCount = cnt },
-                         onJumpToOffset: { scrollToCharOffsetValue = $0 })
+                         onJumpToOffset: { scrollToCharOffsetValue = $0 },
+                         onGoToPage: { goToPageValue = $0 })
         } else {
             emptyState
         }
@@ -294,7 +325,9 @@ private struct ReaderScreen: View {
     let onAskAi: () -> Void
     let onAiSettings: () -> Void
     let onExportAi: () -> Void
+    let onExportAnnotationsOnly: () -> Void
     let onImportRewrite: () -> Void
+    let onOpenSettings: () -> Void
     let onSetExportFolder: () -> Void
     let onSetImportFolder: () -> Void
     /// While searching in a paged mode the reader is forced to scroll (global system find);
@@ -303,13 +336,29 @@ private struct ReaderScreen: View {
     let onClearSearch: () -> Void
     let onPageChanged: ((Int, Int) -> Void)?
     let onJumpToOffset: (Int) -> Void
+    let onGoToPage: (Int) -> Void
 
     @State private var showResumeBanner = false
     @State private var resumeGen        = 0
+    // Suppress the resume banner while the system find bar is up so it can't cover it
+    // (state-driven, so it holds in any orientation — fixes Find being hidden in landscape).
+    @State private var isFindActive     = false
+    // Transient page scrubber, revealed by tapping the toolbar page counter (paged modes).
+    @State private var showPageScrubber = false
 
+    // Live page-scrub via drag on the toolbar page counter (paged modes only).
+    @State private var isScrubbingPageLabel = false
+    @State private var scrubStartPage       = 0
+    // Local mirror of the reader's page state, for the toolbar counter + scrub.
+    @State private var localPage        = 0
+    @State private var localPageCount   = 1
+
+    @Environment(\.colorScheme) private var colorScheme
     @AppStorage("com.afluffywaffle.layuv.navMode") private var navModeRaw = NavMode.scroll.rawValue
     private var navMode: NavMode { NavMode(rawValue: navModeRaw) ?? .scroll }
     private var effectiveNavMode: NavMode { searchScrollOverride ? .scroll : navMode }
+    /// Reader theme honouring the Follow-System-Dark-Mode preference (mirrors macOS).
+    private var effectiveTheme: PaperTheme { store.effectiveTheme(systemDark: colorScheme == .dark) }
 
     private var isCompact: Bool { onShowPanel != nil }
     private var docTitle: String {
@@ -323,14 +372,18 @@ private struct ReaderScreen: View {
                        bodyPointSize: store.bodyTextSize.points,
                        twoColumnPaged: store.twoColumnPaged,
                        navMode: effectiveNavMode,
-                       paperTheme: store.paperTheme,
+                       paperTheme: effectiveTheme,
                        findTrigger: findTrigger,
                        scrollToAnnotationId: scrollToAnnotationId,
                        scrollToCharOffsetValue: scrollToCharOffsetValue,
                        goToPageValue: goToPageValue,
-                       onPageChanged: onPageChanged,
+                       onPageChanged: { pg, cnt in
+                           localPage = pg; localPageCount = cnt
+                           onPageChanged?(pg, cnt)
+                       },
                        markerFraction: store.readingMarkerFraction)
             .overlay(alignment: .top) { resumeBanner }
+            .overlay(alignment: .bottom) { pageScrubber }
             .onChange(of: store.currentURL) { maybeShowResumeBanner() }
             .onAppear { maybeShowResumeBanner() }
             .ignoresSafeArea(.container, edges: .bottom)
@@ -347,9 +400,56 @@ private struct ReaderScreen: View {
                     }
                 }
 
+                // Locked-tool chip — shown only while a tool is locked. Tap to unlock.
+                // Mirrors macOS / Android's locked-tool slot.
+                if let locked = store.lockedTool {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button { store.lockedTool = nil } label: {
+                            Label("\(locked.chipLabel) locked", systemImage: "lock.fill")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .accessibilityLabel("\(locked.chipLabel) tool locked — tap to unlock")
+                    }
+                }
+
+                // Page counter with drag-to-scrub (paged modes only; scroll mode has the scrollbar).
+                if effectiveNavMode.isPaged && localPageCount > 1 {
+                    ToolbarItem(placement: .principal) {
+                        Text("\(localPage + 1) / \(localPageCount)")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                            .contentShape(Rectangle())
+                            // Tap reveals a transient scrubber over the reader; drag still fine-scrubs.
+                            .onTapGesture {
+                                withAnimation(.easeOut(duration: 0.2)) { showPageScrubber.toggle() }
+                            }
+                            .gesture(
+                                DragGesture(minimumDistance: 4)
+                                    .onChanged { value in
+                                        if !isScrubbingPageLabel {
+                                            isScrubbingPageLabel = true
+                                            scrubStartPage = localPage
+                                        }
+                                        let pointsPerPage: CGFloat = 22
+                                        let delta = Int((value.translation.width / pointsPerPage).rounded())
+                                        let target = min(max(scrubStartPage + delta, 0), localPageCount - 1)
+                                        if target != localPage { onGoToPage(target) }
+                                    }
+                                    .onEnded { _ in isScrubbingPageLabel = false }
+                            )
+                    }
+                }
+
                 // Find in text (quick shortcut; on iPad the sidebar Find tab also fires this).
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { onFind() } label: {
+                    Button {
+                        // Clear the resume banner before presenting Find so it can't sit over
+                        // the system find bar, and keep it suppressed while Find is active.
+                        isFindActive = true
+                        dismissResumeBanner()
+                        onFind()
+                    } label: {
                         Image(systemName: "magnifyingglass")
                     }
                     .accessibilityLabel("Find")
@@ -379,6 +479,10 @@ private struct ReaderScreen: View {
                             }
                             Divider()
                             Menu("AI") { aiMenuItems }
+                            Divider()
+                            Button { onOpenSettings() } label: {
+                                Label("Settings…", systemImage: "gearshape")
+                            }
                         } label: {
                             Image(systemName: "ellipsis.circle")
                         }
@@ -432,6 +536,12 @@ private struct ReaderScreen: View {
                             Image(systemName: "bubble.left.and.text.bubble.right")
                         }
                         .accessibilityLabel("AI")
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { onOpenSettings() } label: {
+                            Image(systemName: "gearshape")
+                        }
+                        .accessibilityLabel("Settings")
                     }
                 }
             }
@@ -507,6 +617,9 @@ private struct ReaderScreen: View {
         Button { onExportAi() } label: {
             Label("Export for AI…", systemImage: "square.and.arrow.up")
         }
+        Button { onExportAnnotationsOnly() } label: {
+            Label("Export Annotations Only…", systemImage: "list.bullet.rectangle")
+        }
         Button { onImportRewrite() } label: {
             Label("Import rewrite…", systemImage: "square.and.arrow.down")
         }
@@ -529,7 +642,7 @@ private struct ReaderScreen: View {
     // MARK: - Resume banner
 
     @ViewBuilder private var resumeBanner: some View {
-        if showResumeBanner {
+        if showResumeBanner && !isFindActive {
             HStack(spacing: 10) {
                 Image(systemName: "bookmark.fill")
                     .foregroundStyle(.secondary)
@@ -560,7 +673,29 @@ private struct ReaderScreen: View {
         }
     }
 
+    // MARK: - Transient page scrubber (tap the toolbar page counter to reveal)
+
+    @ViewBuilder private var pageScrubber: some View {
+        if showPageScrubber && effectiveNavMode.isPaged && localPageCount > 1 {
+            PageShuttleView(
+                currentPage: $localPage,
+                pageCount: localPageCount,
+                onGoToPage: { onGoToPage($0) }
+            )
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.quaternary))
+            .shadow(color: .black.opacity(0.12), radius: 10, y: 3)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
     private func maybeShowResumeBanner() {
+        // A newly-opened document starts a fresh reading session — Find is no longer active.
+        isFindActive = false
         guard let f = store.readingMarkerFraction, f > 0.02 else {
             if showResumeBanner { withAnimation { showResumeBanner = false } }
             return
@@ -584,5 +719,24 @@ private struct ReaderScreen: View {
         guard len > 0 else { return }
         let offset = min(len - 1, max(0, Int((f * Double(len)).rounded())))
         onJumpToOffset(offset)
+    }
+}
+
+// MARK: - Locked-tool chip label
+
+extension AnnotationTool {
+    /// Short human label for the reader's locked-tool toolbar chip (mirrors macOS).
+    var chipLabel: String {
+        switch self {
+        case .highlight:       return "Highlight"
+        case .underline:       return "Underline"
+        case .doubleUnderline: return "Double Underline"
+        case .strikethrough:   return "Strikethrough"
+        case .wavyUnderline:   return "Wavy Underline"
+        case .bookmark:        return "Bookmark"
+        case .inkAnnotation:   return "Ink"
+        case .comment:         return "Comment"
+        case .blockquote:      return "Paragraph"
+        }
     }
 }

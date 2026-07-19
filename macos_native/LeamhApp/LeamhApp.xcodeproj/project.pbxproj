@@ -54,7 +54,7 @@
 /* Begin PBXFileReference section */
 		A10000100000000000000000 /* Layuv.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Layuv.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000370000000000000000 /* ZIPFoundation.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = ZIPFoundation.framework; sourceTree = BUILT_PRODUCTS_DIR; };
-		B20000110000000000000000 /* LeamhApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = LeamhApp.app; path = Layuv.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B20000110000000000000000 /* Layuv.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Layuv.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -128,7 +128,7 @@
 			isa = PBXGroup;
 			children = (
 				A10000100000000000000000 /* Layuv.app */,
-				B20000110000000000000000 /* LeamhApp.app */,
+				B20000110000000000000000 /* Layuv.app */,
 				A10000370000000000000000 /* ZIPFoundation.framework */,
 			);
 			name = Products;
@@ -201,7 +201,7 @@
 			);
 			name = "LeamhApp-iOS";
 			productName = "LeamhApp-iOS";
-			productReference = B20000110000000000000000 /* LeamhApp.app */;
+			productReference = B20000110000000000000000 /* Layuv.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -528,7 +528,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = WZRSG66662;
+				DEVELOPMENT_TEAM = V7S69GC55H;
 				INFOPLIST_FILE = "LeamhApp-iOS-Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -552,7 +552,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = WZRSG66662;
+				DEVELOPMENT_TEAM = V7S69GC55H;
 				INFOPLIST_FILE = "LeamhApp-iOS-Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (

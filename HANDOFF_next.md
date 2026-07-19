@@ -20,39 +20,35 @@ serif "L"). Those handoff sections are retired.
 
 ---
 
-## ✅ BUILT (2026-06-24) — "Export for AI" (the manual Claude Code route)
+## ✅ REFACTORED (2026-07-19) — working-copy model replaces versioned "Export for AI"
 
-**Why:** after long discussion, the chosen primary AI workflow is **manual Claude Code on the user's
-novel-project folder** (which already has references + a `CLAUDE.md`): free via their Max sub
-(*interactive* use is legit; `claude -p`/headless = separate credit pool since June 2026, so it
-neither saves money nor stays clean), richest context, reuses everything they built. Layuv's job is
-just **packaging** — export the chapter + annotations as a clean Markdown file so Claude reads a ready
-prompt instead of cracking open the `.docx` (where annotations live as Word comments). A swappable
-**sync layer** (Syncthing over LAN, or Supernote Private Cloud — user-side, not app code) carries the
-folder to the Mac. Subscriptions never grant third-party API access anywhere; cloud = a key (free
-Gemini tier or cheap paid), local (LM Studio/Ollama) = no key.
+**Why:** the versioned `_draft_vN.docx` export/archive scheme (a new numbered copy on every export,
+3-newest-kept archive folder, an `AI-export-folder` preference to point at) turned out to be more
+bookkeeping than the manual-Claude-Code workflow needed. It's replaced by a simpler **working-copy
+model**: Layuv always annotates a single `<base>_annotated.docx` copy, and hands the external drafting
+process only what it needs to locate each annotation — not a duplicated chapter export.
 
-**What landed (`:app:assembleDebug` clean, `:docx:test` green incl. 2 new tests):**
-- New reader overflow rows **"Export for AI…"** and **"Set AI export folder…"**.
-- Export writes, into the configured `ai_export_folder` (pref) or the chapter's own folder:
-  `<base>_for_ai.md` (chapter + annotations) + `<base>_for_ai_image_N.png` per ink note, with an
-  `=== IMAGE FILES ===` footer mapping "attached image N" → filename. **Overwrites** the prior export
-  (derived artifact). **Never touches the source `.docx`** — read-only; Word/Pages/GDocs round-trip
-  untouched.
-- **Key files:** `app/.../ai/AiExporter.kt` (NEW — pure builder, docx-deps only; returns
-  `Export(files, markdownName, imageCount)`); `docx/.../ManuscriptSerializer.kt` (added
-  `buildExportBody` = chapter+annotations WITHOUT the in-app `===REWRITE===` preamble; `buildPrompt`
-  refactored to `PREAMBLE + buildExportBody` → output byte-identical, golden stays green);
-  `app/.../reader/ReaderActivity.kt` (`exportForAi()` on the write-queue thread + menu rows + folder
-  pref + `REQ_PICK_AI_DIR`); `app/.../reader/FileBrowserActivity.kt` (directory-pick mode via
-  `EXTRA_PICK_DIR` → "✓ Use folder" returns the current dir; hides docs/recents in that mode).
-- **Verified:** engine tests green; app builds; APK installed on the Nomad; reader loads
-  `salt_road.docx` (8 annotations) without crash. **PENDING (needs a device, none on hand now):** the
-  on-device tap-through — open a chapter w/ an ink note → Export for AI… → confirm `<base>_for_ai.md`
-  + `<base>_for_ai_image_1.png` land in the folder and the `.md` reads cleanly; then `claude` on it.
-- **Not committed** (no commit without ask). Out of scope / follow-ups: the **return path** (import a
-  rewritten `.md`/`.docx` draft back = the existing ".docx import" follow-up); the sync layer
-  (user-side); the automated brain Send-button (on a key, later).
+**What landed (`:docx:test` 77/77 green, Swift LeamhDocx 43/43 green, `:app:assembleDebug` clean):**
+- **`ReaderActivity.resolveAnnotatedCopy(file)`** — called from `loadFromFile` on every open. If the
+  opened file isn't already a `_annotated.docx` copy, it makes one once (same folder, atomic tmp+rename)
+  and opens that; if the copy already exists, reopens it as-is so existing ink is never clobbered. The
+  original manuscript file is never mutated — it stays pristine for the external drafting process to
+  keep owning version numbering.
+- **`exportAnnotationsOnly()`** (replaces the old `exportForAi()`/`AiExporter.kt`) — writes
+  `<cleanBase>_annotations.md` (annotations + their anchors: quoted passage, prefix/suffix context,
+  position fraction — no chapter text) flat into the annotated copy's own folder, plus one PNG per ink
+  annotation, via `ManuscriptSerializer.buildAnnotationsOnlyExport`. Not versioned (overwrites each
+  pass) since it's a reference artifact, not a draft — the external process reads the manuscript
+  `.docx` directly and only needs to know where each annotation applies.
+- **`importRewrite()`** — simplified to a plain file browser (`FileBrowserActivity`, optionally
+  pre-navigated to a configured import folder). No more auto-detecting a versioned rewrite DOCX across
+  candidate paths; picking a file overwrites the working copy in place (tmp + atomic rename) and
+  reloads it.
+- **`AiExporter.kt` removed.** No `ai_export_folder` preference, no `_draft_vN` naming, no
+  keep-3/archive-folder logic, on the Android side.
+- Both engines' `DocxArchive` now do a **raw-copy ZIP rewrite** when producing the annotated copy —
+  the zip is cloned byte-for-byte apart from the parts actually being changed, rather than
+  reconstructed part-by-part.
 
 ---
 
@@ -388,29 +384,40 @@ holds the key + library and forwards to a real model** — ③ is the goal.)
 
 ---
 
-## ✅ REFINED (2026-06-26) — Export for AI + Import Rewrite UX + AI submenu
+## ✅ REFINED (2026-06-26, superseded 2026-07-19) — AI submenu UX
 
 All changes on branch `native-port-drawpath-ink`. Build clean; installed on Nomad.
 
+> **Superseded:** the "Export for AI — version continuity" and "Import rewrite" behavior described
+> below (versioned `_draft_vN.docx` copies, keep-3 archive, `AI-export-folder`/import-folder
+> auto-detect across candidate paths) was replaced 2026-07-19 by the working-copy model — see the
+> "REFACTORED" entry near the top of this file. The AI submenu / popup UX and `FileBrowserActivity`
+> folder-creation notes below are still accurate to current behavior (menu rows now read "Export
+> annotations…" and "Import rewrite…" over the new, simpler backing logic).
+
 ### What landed
 
-**Export for AI — version continuity:**
-- Version is now always `fileVersion + 1` (deterministic from the open file's `_draft_vN` suffix — no scanning). `draft_v3.docx` always exports to `v4`, no ambiguity on re-export.
-- On every export, a `${cleanBase}_draft_v${N}.docx` copy is created alongside the source and the reader opens it immediately — the user is always on the new draft before Claude rewrites.
-- Draft archive: keeps the 3 newest `_draft_vN.docx` files in the source folder; older ones move to `${cleanBase} archive/` (e.g. `salt_road archive/`).
-- Subfolder structure is now always on (no checkbox): `AI_exports/salt_road/salt_road_v4_for_ai.md` (or `…/salt_road_v4_export/chapter.md` for ink).
+**Export annotations — now non-versioned:**
+- `exportAnnotationsOnly()` writes `<cleanBase>_annotations.md` (annotations + anchors only, no
+  chapter text) flat into the annotated copy's own folder, plus one PNG per ink annotation. Overwrites
+  each pass — it's a reference artifact, not a draft, so there is no version counter and no archive
+  folder to manage.
+- The app always works on a single `<base>_annotated.docx` copy (see `resolveAnnotatedCopy()`); there
+  is no longer a new versioned copy created per export.
 
 **Import rewrite:**
-- Auto-detects the rewrite DOCX in the configured import folder and AI export folder (multiple candidate paths).
-- Falls back to the file browser pre-navigated to the configured folder if not found.
-- If neither folder is configured, opens browser at storage root (known gap — see tracker).
-- "Set import folder…" remembers the chosen folder and shows `parent/folder` subtitle in the AI menu.
+- Simplified to a plain file browser (`FileBrowserActivity`), optionally pre-navigated to a configured
+  import folder. No more auto-detection across multiple candidate paths (import folder + AI export
+  folder) — the user just picks the file. Picking a file overwrites the working copy in place
+  (tmp + atomic rename) and reloads it.
+- "Set import folder…" still remembers the chosen folder and shows a `parent/folder` subtitle in the
+  AI menu.
 
 **AI submenu (pill button → submenu):**
 - Removed AI Chat bubble from the toolbar pill; replaced with `aiMenuButton` (`AiChatButton`) whose tap opens `showAiMenu()` instead of toggling the chat panel.
 - Main overflow `...` menu is clean again — no AI items.
-- `showAiMenu()` popup: AI Chat (tappable only when `isAiConfigured()`; otherwise dimmed with "Configure in Help & About" subtitle), Export for AI…, Import rewrite…, Set AI export folder…, Set import folder…
-- "Set AI export folder…" and "Set import folder…" each show their configured `parent/folder` as a subtitle.
+- `showAiMenu()` popup: AI Chat (tappable only when `isAiConfigured()`; otherwise dimmed with "Configure in Help & About" subtitle), Export annotations…, Import rewrite…, Set import folder…
+- "Set import folder…" shows its configured `parent/folder` as a subtitle.
 - Popup uses `R.drawable.popup_bg` (same border/background as main overflow), `elevation = ReaderTheme.dp(ctx, 6f)`.
 
 **FileBrowserActivity — folder creation:**
@@ -420,7 +427,6 @@ All changes on branch `native-port-drawpath-ink`. Build clean; installed on Noma
 **Toasts — removed:**
 - All AI-workflow toasts removed: export/import progress, folder-set confirmations, "Exporting…", "Imported — reloading.", etc.
 - Pre-existing read-only/error/guard toasts (`File is read-only`, `Open a document first`, etc.) are untouched.
-- Export-with-no-folder: instead of toast, redirects to the export folder picker.
 
 ### Key files touched this session
 
@@ -428,44 +434,49 @@ All changes on branch `native-port-drawpath-ink`. Build clean; installed on Noma
 |---|---|
 | `app/.../reader/ReaderActivity.kt` | `aiMenuButton` (pill), `showAiMenu()`, `overflowActionRowWithSubtitle()`, export/import toast removal, `REQ_SET_IMPORT_FOLDER`, import redirect logic, subfolder always-on |
 | `app/.../reader/FileBrowserActivity.kt` | Removed subfolder checkbox + `buildSubfolderRow()` + `EXTRA_HAS_INK`/`EXTRA_CREATE_SUBFOLDER`; added `showNewFolderDialog()` (custom PopupWindow), `+ Folder` button |
-| `app/.../ai/AiExporter.kt` | Single `version: Int` param (was split export/nextDraft) |
+| `app/.../ai/AiExporter.kt` | Single `version: Int` param (was split export/nextDraft) — **file since removed**, see the 2026-07-19 REFACTORED entry |
 
 ### Open follow-ups (→ tracker)
-1. Import rewrite with no folder configured opens browser at storage root (no context) — see tracker.
+1. ~~Import rewrite with no folder configured opens browser at storage root~~ — moot now that import is a plain file browser; confirm behavior is still reasonable.
 2. `ai_create_subfolder` SharedPreferences orphan — harmless but should be cleared in a future "Reset" action.
 3. `aiMenuButton` always visible (previously gated) — confirm this is intended.
 
 ---
 
-## Handoff prompt for a new conversation (current as of 2026-06-28)
+## Handoff prompt for a new conversation (current as of 2026-07-19)
 
 > I'm working on the Léamh/Layuv project (`/Users/jayromacorda/Develop/layuv`), branch
 > `native-port-drawpath-ink`. Read `CLAUDE.md` and this `HANDOFF_next.md` in full first, plus the memory
 > index — especially `native_android_port.md`, `project_ai_workflow_and_export.md`, `project_brain_proxy.md`,
 > `project_ai_networking.md`, and `ios_ipad_port.md`.
 >
-> **State: Android is FEATURE-COMPLETE + AI UX refined (2026-06-28).** Reader + annotations + ink + a full
-> **AI layer**: provider-agnostic **Ask AI** (one OpenAI-compatible client → Gemini / Claude / OpenAI /
-> local / Mac brain; verified on-device), **Export for AI** (versioned DOCX copy auto-opened, chapter.md +
-> ink PNGs exported to `AI_exports/<chapter>/<chapter>_v<N>_export/`), **Import rewrite** (auto-detect +
-> file browser fallback), **AI submenu** (pill button opens popup with AI Chat / Export for AI… / Import
-> rewrite… / Set AI export folder… / Set import folder…; folder paths shown as subtitles), **on-device
-> reference library** (system-message injection of user's `.md`/`.txt` folder with optional context-limit
-> cap), and **Ask AI UX polish** (Test connection button, Settings shortcut in panel, reply from expanded
-> viewer, text-only-endpoint auto-fallback). Code-enforced cleartext guard + GMS-free `SecureKeyStore`.
-> Mac-side `brain/` Phase-1 proxy built + locally verified (on-device Gemini run pending). Engine
-> `:docx:test` green (54 tests).
+> **State: Android is FEATURE-COMPLETE, AI export workflow refactored to a working-copy model
+> (2026-07-19).** Reader + annotations + ink + a full **AI layer**: provider-agnostic **Ask AI** (one
+> OpenAI-compatible client → Gemini / Claude / OpenAI / local / Mac brain; verified on-device),
+> **export annotations** (`exportAnnotationsOnly()` writes `<base>_annotations.md` + ink PNGs, flat
+> into the annotated copy's own folder — not versioned, since the app always works on a single
+> `<base>_annotated.docx` working copy via `resolveAnnotatedCopy()`), **import rewrite** (now a plain
+> file browser — no more auto-detect/versioning), **AI submenu** (pill button opens popup with AI Chat
+> / Export annotations… / Import rewrite… / Set import folder…; folder path shown as subtitle),
+> **on-device reference library** (system-message injection of user's `.md`/`.txt` folder with optional
+> context-limit cap), and **Ask AI UX polish** (Test connection button, Settings shortcut in panel,
+> reply from expanded viewer, text-only-endpoint auto-fallback). Code-enforced cleartext guard + GMS-free
+> `SecureKeyStore`. Both engines' `DocxArchive` do a raw-copy ZIP rewrite for the annotated copy. Mac-side
+> `brain/` Phase-1 proxy built + locally verified (on-device Gemini run pending). Engine `:docx:test`
+> 77/77 green; Swift `LeamhDocx` 43/43 green; `:app:assembleDebug` clean.
 >
 > **Primary AI workflow = manual Claude Code on my novel-project folder** (free via Max sub; reads
-> CLAUDE.md + references natively). Layuv's role: annotate + Export for AI (the clean file that folder
-> consumes). Brain is the optional automated path on an API key.
+> CLAUDE.md + references natively). Layuv's role: annotate the working copy + export the annotations
+> (the clean `.md` + ink PNGs that folder consumes) — the manuscript `.docx` itself is read directly by
+> the drafting process, not re-exported. Brain is the optional automated path on an API key.
 >
 > **Current direction = the iPad Swift port** (M1–M4d all DONE; AI layer complete as of commit `7c9fa9f`;
 > milestones in memory `ios_ipad_port.md`). Android is in maintenance — the open follow-ups are in
 > `leamh_tracker.md` under "Android AI menu — next-up polish".
 >
 > **Open Android follow-ups (see tracker for detail):**
-> (1) Import rewrite with no folder set opens browser at storage root — consider a non-animated status label or redirect to "Set import folder…" flow.
+> (1) Confirm the plain-file-browser import flow (no configured folder) still lands somewhere
+> reasonable now that auto-detect is gone.
 > (2) `ai_create_subfolder` pref orphan in SharedPreferences — include in any future "Reset AI settings" action.
 > (3) `aiMenuButton` always visible in pill (previously gated) — confirm intended.
 > (4) **fully gate "Tap outside: off"** — stray non-tap still reaches `cancelSelection()` after ~3 touches; audit every call site in `ReaderView.kt`.

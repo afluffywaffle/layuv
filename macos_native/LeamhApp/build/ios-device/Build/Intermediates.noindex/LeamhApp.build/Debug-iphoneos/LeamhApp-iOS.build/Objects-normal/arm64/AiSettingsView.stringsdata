@@ -1,0 +1,112 @@
+{
+  "source": "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/LeamhApp/iOS/AiSettingsView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "AI Settings",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 75
+        }
+      },
+      {
+        "comment": "",
+        "key": "http://mini.local:8080",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 14
+        }
+      },
+      {
+        "comment": "",
+        "key": "Endpoint",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 19
+        }
+      },
+      {
+        "comment": "",
+        "key": "The base URL of your OpenAI-compatible server. Plain HTTP is allowed for local/private addresses; everything else must use HTTPS.",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 21
+        }
+      },
+      {
+        "comment": "",
+        "key": "claude-sonnet-4-6",
+        "location": {
+          "startingColumn": 31,
+          "startingLine": 26
+        }
+      },
+      {
+        "comment": "",
+        "key": "Model",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 30
+        }
+      },
+      {
+        "comment": "",
+        "key": "Model ID sent in each request. Leave blank to use the server default.",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 32
+        }
+      },
+      {
+        "comment": "",
+        "key": "sk-…",
+        "location": {
+          "startingColumn": 43,
+          "startingLine": 40
+        }
+      },
+      {
+        "comment": "",
+        "key": "sk-…",
+        "location": {
+          "startingColumn": 45,
+          "startingLine": 42
+        }
+      },
+      {
+        "comment": "",
+        "key": "API Key (optional)",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 57
+        }
+      },
+      {
+        "comment": "",
+        "key": "Stored in the Keychain. Leave blank if your endpoint doesn't require a key (e.g. a local brain proxy).",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 59
+        }
+      },
+      {
+        "comment": "",
+        "key": "Clear AI Settings",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 70
+        }
+      },
+      {
+        "comment": "",
+        "key": "Done",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 79
+        }
+      }
+    ]
+  },
+  "version": 1
+}

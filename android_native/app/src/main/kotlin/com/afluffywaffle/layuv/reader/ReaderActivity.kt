@@ -28,7 +28,6 @@ import android.widget.PopupWindow
 import android.widget.TextView
 import android.widget.Toast
 import com.afluffywaffle.layuv.R
-import com.afluffywaffle.layuv.ai.AiExporter
 import com.afluffywaffle.layuv.docx.DocxStore
 import com.afluffywaffle.layuv.docx.LoadedDocument
 import com.afluffywaffle.layuv.docx.ManuscriptSerializer
@@ -673,26 +672,9 @@ class ReaderActivity : Activity() {
             ))
         }
         root.addView(overflowMenuDivider())
-        root.addView(overflowActionRow("Export for AI…") { aiPopup?.dismiss(); exportForAi() })
         root.addView(overflowActionRow("Export Annotations Only…") { aiPopup?.dismiss(); exportAnnotationsOnly() })
         root.addView(overflowActionRow("Import rewrite…") { aiPopup?.dismiss(); importRewrite() })
         root.addView(overflowMenuDivider())
-        val exportFolderName = prefs.getString(KEY_AI_EXPORT_FOLDER, null)?.let { p ->
-            val f = File(p); "${f.parentFile?.name ?: ""}/${f.name}"
-        }
-        root.addView(overflowActionRowWithSubtitle(
-            label = "Set AI export folder…",
-            subtitle = exportFolderName,
-        ) {
-            aiPopup?.dismiss()
-            if (ensureAllFilesAccess()) {
-                startActivityForResult(
-                    Intent(this, FileBrowserActivity::class.java)
-                        .putExtra(FileBrowserActivity.EXTRA_PICK_DIR, true),
-                    REQ_PICK_AI_DIR,
-                )
-            }
-        })
         val importFolderName = prefs.getString(KEY_IMPORT_FOLDER, null)?.let { p ->
             val f = File(p); "${f.parentFile?.name ?: ""}/${f.name}"
         }
@@ -703,7 +685,6 @@ class ReaderActivity : Activity() {
             aiPopup?.dismiss()
             if (ensureAllFilesAccess()) {
                 val startDir = prefs.getString(KEY_IMPORT_FOLDER, null)?.let(::File)?.takeIf { it.isDirectory }
-                    ?: prefs.getString(KEY_AI_EXPORT_FOLDER, null)?.let(::File)?.takeIf { it.isDirectory }
                 startActivityForResult(
                     Intent(this, FileBrowserActivity::class.java)
                         .putExtra(FileBrowserActivity.EXTRA_PICK_DIR, true)
@@ -931,134 +912,30 @@ class ReaderActivity : Activity() {
     }
 
     /**
-     * Write a clean `<chapter>_for_ai.md` (chapter + annotations, via [AiExporter]) plus
-     * any handwritten-note PNGs into the AI export folder — the configured one if set and
-     * still a directory, otherwise the chapter's own folder. Sync layer (Syncthing /
-     * Supernote Private Cloud) carries it to a Mac, where `claude` reads it. Never touches
-     * the source `.docx`; runs on the write-queue thread so it sees the latest disk bytes.
-     */
-    private fun exportForAi() {
-        val opened = book ?: run {
-            Toast.makeText(this, "Open a document first.", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val configured = prefs.getString(KEY_AI_EXPORT_FOLDER, null)?.let(::File)?.takeIf { it.isDirectory }
-        val dir = configured ?: opened.file?.parentFile ?: run {
-            if (ensureAllFilesAccess()) {
-                startActivityForResult(
-                    Intent(this, FileBrowserActivity::class.java)
-                        .putExtra(FileBrowserActivity.EXTRA_PICK_DIR, true),
-                    REQ_PICK_AI_DIR,
-                )
-            }
-            return
-        }
-        val rawName = opened.file?.name ?: opened.displayName
-        val baseName = (if (rawName.endsWith(".docx", ignoreCase = true)) rawName.dropLast(5) else rawName)
-            .ifBlank { "chapter" }
-        // Strip _draft_vN suffix so all passes for the same chapter share one container.
-        val draftVersionMatch = Regex("""_draft_v(\d+)$""", RegexOption.IGNORE_CASE).find(baseName)
-        val fileVersion = draftVersionMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
-        val cleanBase = (if (draftVersionMatch != null) baseName.substring(0, draftVersionMatch.range.first)
-                         else baseName).ifBlank { "chapter" }
-        // Version is always fileVersion + 1. The source file is bumped to this version on export,
-        // so it’s always deterministic — no scanning needed.
-        val version = fileVersion + 1
-        val hasInkAnnotations = opened.doc.annotations.any { it.annotation.hasInk }
-
-        val chapterDir = File(dir, cleanBase).also { it.mkdirs() }
-        val outputDir: File
-        val mdName: String
-        val pngPrefix: String
-        if (hasInkAnnotations) {
-            outputDir = File(chapterDir, "${cleanBase}_v${version}_export").also { it.mkdirs() }
-            mdName = "chapter.md"
-            pngPrefix = "ink"
-        } else {
-            outputDir = chapterDir
-            mdName = "${cleanBase}_v${version}_for_ai.md"
-            pngPrefix = "${cleanBase}_v${version}_for_ai_image"
-        }
-        DocxWriteQueue.enqueueRead {
-            try {
-                val src = opened.file?.readBytes() ?: opened.bytes
-                val export = AiExporter.build(
-                    plainText = opened.doc.plainText,
-                    annotations = opened.doc.annotations.map { it.annotation },
-                    sourceDocxBytes = src,
-                    mdName = mdName,
-                    pngPrefix = pngPrefix,
-                    cleanBase = cleanBase,
-                    version = version,
-                )
-                export.files.forEach { DocxWriteQueue.writeAtomicDurable(File(outputDir, it.name), it.bytes) }
-
-                // Bump the working file: create draft_vN copy alongside source, then open it.
-                // Keep at most 3 draft_vN files in the working folder; archive the rest.
-                val nextDraftFile: File? = opened.file?.parent?.let { parentPath ->
-                    val parent = File(parentPath)
-                    val nextFile = File(parent, "${cleanBase}_draft_v${version}.docx")
-                    if (!nextFile.exists()) {
-                        val tmp = File(parent, nextFile.name + ".tmp")
-                        tmp.writeBytes(src)
-                        tmp.renameTo(nextFile)
-                    }
-                    val draftRe = Regex(
-                        """${Regex.escape(cleanBase)}_draft_v(\d+)\.docx$""",
-                        RegexOption.IGNORE_CASE,
-                    )
-                    val draftFiles = parent.listFiles()
-                        ?.mapNotNull { f ->
-                            draftRe.find(f.name)?.groupValues?.get(1)?.toIntOrNull()?.let { v -> v to f }
-                        }
-                        ?.sortedByDescending { (v, _) -> v } ?: emptyList()
-                    val toArchive = draftFiles.drop(3)
-                    if (toArchive.isNotEmpty()) {
-                        val archiveDir = File(parent, "$cleanBase archive").also { it.mkdirs() }
-                        toArchive.forEach { (_, f) ->
-                            val dest = File(archiveDir, f.name)
-                            if (!dest.exists()) f.renameTo(dest)
-                        }
-                    }
-                    nextFile
-                }
-
-                main.post {
-                    if (nextDraftFile != null) loadFromFile(nextDraftFile)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "AI export failed", e)
-            }
-        }
-    }
-
-    /**
-     * Lightweight sibling to [exportForAi]: writes `<cleanBase>_annotations.md` — annotations
-     * + their anchors (quoted passage, prefix/suffix context, position fraction) only, no
-     * chapter text. For an AI that already has the manuscript file open directly and just
-     * needs to know where each annotation applies, without the chapter body pasted again.
-     * Not versioned (overwrites each pass) since it's a reference artifact, not a draft.
+     * Writes `<cleanBase>_annotations.md` — annotations + their anchors (quoted passage,
+     * prefix/suffix context, position fraction) only, no chapter text — flat into the
+     * annotated copy's own folder, plus one PNG per ink annotation. The external drafting
+     * process reads the manuscript `.docx` directly, so this only needs to hand over where
+     * each annotation applies. Not versioned (overwrites each pass) since it's a reference
+     * artifact, not a draft.
      */
     private fun exportAnnotationsOnly() {
         val opened = book ?: run {
             Toast.makeText(this, "Open a document first.", Toast.LENGTH_SHORT).show()
             return
         }
-        val configured = prefs.getString(KEY_AI_EXPORT_FOLDER, null)?.let(::File)?.takeIf { it.isDirectory }
-        val dir = configured ?: opened.file?.parentFile ?: run {
-            if (ensureAllFilesAccess()) {
-                startActivityForResult(
-                    Intent(this, FileBrowserActivity::class.java)
-                        .putExtra(FileBrowserActivity.EXTRA_PICK_DIR, true),
-                    REQ_PICK_AI_DIR,
-                )
-            }
+        val file = opened.file ?: run {
+            Toast.makeText(this, "File is read-only.", Toast.LENGTH_SHORT).show()
             return
         }
-        val rawName = opened.file?.name ?: opened.displayName
+        val dir = file.parentFile ?: run {
+            Toast.makeText(this, "Couldn't resolve the export folder.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val rawName = file.name
         val baseName = (if (rawName.endsWith(".docx", ignoreCase = true)) rawName.dropLast(5) else rawName)
             .ifBlank { "chapter" }
-        val cleanBase = baseName.replace(Regex("""_draft_v(\d+)$""", RegexOption.IGNORE_CASE), "")
+        val cleanBase = baseName.replace(Regex("""_annotated$""", RegexOption.IGNORE_CASE), "")
             .ifBlank { "chapter" }
         DocxWriteQueue.enqueueRead {
             try {
@@ -1086,43 +963,21 @@ class ReaderActivity : Activity() {
         }
     }
 
+    /**
+     * Pulls a revised chapter `.docx` (produced externally — the drafting process owns
+     * naming/version numbering now) back over the currently-open annotated copy. No more
+     * auto-detection by version number: just browse to the file, starting in the
+     * remembered import folder if one's set.
+     */
     private fun importRewrite() {
         val workingFile = book?.file ?: run {
             Toast.makeText(this, "Open a document first.", Toast.LENGTH_SHORT).show()
             return
         }
-
-        val rawName = workingFile.name
-        val baseName = if (rawName.endsWith(".docx", ignoreCase = true)) rawName.dropLast(5) else rawName
-        val draftVersionMatch = Regex("""_draft_v(\d+)$""", RegexOption.IGNORE_CASE).find(baseName)
-        val aiDir = prefs.getString(KEY_AI_EXPORT_FOLDER, null)?.let(::File)?.takeIf { it.isDirectory }
         val importFolder = prefs.getString(KEY_IMPORT_FOLDER, null)?.let(::File)?.takeIf { it.isDirectory }
-
-        // Build candidate list: saved import folder first (most likely place Claude put the file),
-        // then derived locations from the AI export folder.
-        val autoFound: File? = if (draftVersionMatch != null) {
-            val v = draftVersionMatch.groupValues[1].toIntOrNull() ?: 0
-            val base = baseName.substring(0, draftVersionMatch.range.first)
-            val rewriteName = "${base}_draft_v${v}.docx"
-            buildList {
-                if (importFolder != null) add(File(importFolder, rewriteName))
-                if (aiDir != null) {
-                    add(File(aiDir, "$base/$rewriteName"))
-                    add(File(aiDir, rewriteName))
-                    add(File(aiDir, "$base/${base}_v${v}_export/$rewriteName"))
-                }
-            }.firstOrNull { it.exists() }
-        } else null
-
-        if (autoFound != null) {
-            doImportRewrite(autoFound, workingFile)
-        } else {
-            // No rewrite found (or no folder set) — open the browser pre-navigated to the import/AI folder.
-            val startDir = importFolder ?: aiDir
-            val intent = Intent(this, FileBrowserActivity::class.java)
-            if (startDir != null) intent.putExtra(FileBrowserActivity.EXTRA_START_DIR, startDir.absolutePath)
-            startActivityForResult(intent, REQ_IMPORT_REWRITE)
-        }
+        val intent = Intent(this, FileBrowserActivity::class.java)
+        if (importFolder != null) intent.putExtra(FileBrowserActivity.EXTRA_START_DIR, importFolder.absolutePath)
+        startActivityForResult(intent, REQ_IMPORT_REWRITE)
     }
 
     private fun doImportRewrite(rewriteFile: File, workingFile: File) {
@@ -1249,10 +1104,6 @@ class ReaderActivity : Activity() {
                     prefs.edit().putString(KEY_IMPORT_FOLDER, parent).apply()
                 }
                 doImportRewrite(rewriteFile, workingFile)
-            }
-            REQ_PICK_AI_DIR -> if (resultCode == RESULT_OK) {
-                val dir = data?.getStringExtra(FileBrowserActivity.EXTRA_PATH) ?: return
-                prefs.edit().putString(KEY_AI_EXPORT_FOLDER, dir).apply()
             }
             REQ_SET_IMPORT_FOLDER -> if (resultCode == RESULT_OK) {
                 val dir = data?.getStringExtra(FileBrowserActivity.EXTRA_PATH) ?: return
@@ -1414,13 +1265,36 @@ class ReaderActivity : Activity() {
         readerView.showHint("Loading…")
         DocxWriteQueue.enqueueRead {
             try {
-                val opened = BookLoader.loadFromFile(file)
+                val target = resolveAnnotatedCopy(file)
+                val opened = BookLoader.loadFromFile(target)
                 main.post { onBookLoaded(opened) }
             } catch (e: Exception) {
                 Log.e(TAG, "failed to load ${file.absolutePath}", e)
                 main.post { readerView.showHint("Couldn’t open this document.") }
             }
         }
+    }
+
+    /**
+     * Layuv always annotates a `_annotated.docx` copy, never the manuscript a drafting
+     * process hands it — that source stays pristine so it can keep owning version
+     * numbering externally. If [file] isn't already an annotated copy, copy it once
+     * (same folder) to `<cleanBase>_annotated.docx` and open that; if the copy already
+     * exists, reopen it as-is so existing ink is never clobbered. Runs on the write-queue
+     * thread (called from within [DocxWriteQueue.enqueueRead]).
+     */
+    private fun resolveAnnotatedCopy(file: File): File {
+        if (file.name.endsWith("_annotated.docx", ignoreCase = true)) return file
+        val parent = file.parentFile ?: return file
+        val baseName = if (file.name.endsWith(".docx", ignoreCase = true)) file.name.dropLast(5) else file.name
+        val cleanBase = baseName.replace(Regex("""_annotated$""", RegexOption.IGNORE_CASE), "").ifBlank { "chapter" }
+        val annotated = File(parent, "${cleanBase}_annotated.docx")
+        if (!annotated.exists()) {
+            val tmp = File(parent, annotated.name + ".tmp")
+            tmp.writeBytes(file.readBytes())
+            tmp.renameTo(annotated)
+        }
+        return annotated
     }
 
     private fun onBookLoaded(opened: OpenBook) {
@@ -2002,13 +1876,11 @@ class ReaderActivity : Activity() {
         private const val REQ_RETOOL_NOTE = 1005
         private const val REQ_INK = 1007
         private const val REQ_SEARCH = 1008
-        private const val REQ_PICK_AI_DIR = 1009
         private const val REQ_IMPORT_REWRITE = 1010
         private const val REQ_SET_IMPORT_FOLDER = 1011
         private const val REQ_AI_EXPAND = AiReplyActivity.REQUEST_CODE
         private const val KEY_IMPORT_FOLDER = "ai_import_folder"
         private const val PREFS = "leamh"
-        private const val KEY_AI_EXPORT_FOLDER = "ai_export_folder"
         private const val KEY_LAST_PATH = "last_path"
         private const val KEY_COLUMNS = "columns"
         private const val KEY_NAV_SIDE = "eink_nav_side"

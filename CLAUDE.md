@@ -42,11 +42,11 @@ architecture details before touching this tree.
 # Test the Swift engine
 cd macos_native/Packages/LeamhDocx
 unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
-DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer \
-  /Applications/Xcode-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift test
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift test
 
 # Build + install (compile-error check only, no install/launch)
-DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcodebuild \
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
   -project macos_native/LeamhApp/LeamhApp.xcodeproj \
   -scheme LeamhApp -configuration Debug -sdk macosx build
 
@@ -336,3 +336,10 @@ assigned task. Do not add features that were not requested.
 - **Build/test is the checker.** Tight loop = edit → `xcodebuild -scheme "LeamhApp" -destination 'platform=macOS' build` (macOS app) or `./gradlew :app:assembleDebug` (Android app) → read errors → fix. This compile-fix loop is mechanical and can run on a **Sonnet subagent**; reserve the main (Opus) session for design/architecture decisions.
 - **Target, don't sweep.** Grep/Glob to the relevant file or symbol; don't read the whole project tree. Point Claude at the file when you already know where the work is.
 - **Route by task type:** boilerplate / mechanical refactor → **Haiku** subagent; compile-fix loops / tests / straightforward features → **Sonnet** subagent; architecture / concurrency / hard debugging → **Opus** (main session).
+
+## Local-LLM hardware-sizing log
+
+At the end of every real-work session, append one JSON line to the GLOBAL log
+`~/.claude/llm_local_feasibility_log.jsonl` (schema + full instructions in that
+file's first line and in `~/.claude/CLAUDE.md`). It's a cross-project dataset for
+a hardware-purchase decision; set `project` to `layuv`.

@@ -338,7 +338,10 @@ class ReaderView(context: Context) : View(context) {
             t.getSpans(0, t.length, BackgroundColorSpan::class.java).forEach { t.removeSpan(it) }
             t.getSpans(0, t.length, ForegroundColorSpan::class.java).forEach { t.removeSpan(it) }
             applyAnnotationSpans(t, annotations)
-            epd.fullClear(this)
+            // Span-only mutation: no repagination happened, so a full GC16 flash isn't
+            // needed here — plain invalidate() (same partial-refresh route as selection
+            // changes) is enough to show the new highlight/underline/strikethrough spans.
+            epd.selection(this)
         } else if (raw != null) {
             // No layout yet, or it was built from a different instance — rebuild + paginate.
             // repaginate calls epd.fullClear itself after. Plain text is unchanged, but

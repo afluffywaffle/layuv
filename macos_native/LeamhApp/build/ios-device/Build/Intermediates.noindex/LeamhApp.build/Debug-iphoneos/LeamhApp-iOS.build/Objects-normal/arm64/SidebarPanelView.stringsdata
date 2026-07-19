@@ -1,0 +1,160 @@
+{
+  "source": "/Users/jayromacorda/Develop/layuv/macos_native/LeamhApp/LeamhApp/Shared/SidebarPanelView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Layuv",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 88
+        }
+      },
+      {
+        "comment": "",
+        "key": "Panel",
+        "location": {
+          "startingColumn": 20,
+          "startingLine": 48
+        }
+      },
+      {
+        "comment": "",
+        "key": "Annotations",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 49
+        }
+      },
+      {
+        "comment": "",
+        "key": "Outline",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 50
+        }
+      },
+      {
+        "comment": "",
+        "key": "Bookmarks",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 51
+        }
+      },
+      {
+        "comment": "",
+        "key": "Find",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 53
+        }
+      },
+      {
+        "comment": "",
+        "key": "Open…",
+        "location": {
+          "startingColumn": 24,
+          "startingLine": 91
+        }
+      },
+      {
+        "comment": "",
+        "key": "Outline",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 126
+        }
+      },
+      {
+        "comment": "",
+        "key": "This document has no heading paragraphs.",
+        "location": {
+          "startingColumn": 39,
+          "startingLine": 132
+        }
+      },
+      {
+        "comment": "",
+        "key": "No Headings",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 130
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld / %lld",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 189
+        }
+      },
+      {
+        "comment": "",
+        "key": "Bookmarks",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 253
+        }
+      },
+      {
+        "comment": "",
+        "key": "%lld%%",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 234
+        }
+      },
+      {
+        "comment": "",
+        "key": "Select text in the reader and choose Bookmark to mark a passage.",
+        "location": {
+          "startingColumn": 39,
+          "startingLine": 259
+        }
+      },
+      {
+        "comment": "",
+        "key": "No Bookmarks",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 257
+        }
+      },
+      {
+        "comment": "",
+        "key": "Find",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 293
+        }
+      },
+      {
+        "comment": "",
+        "key": "Find in Document",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 277
+        }
+      },
+      {
+        "comment": "",
+        "key": "The find bar is now active over the reader. Type to search the full text.",
+        "location": {
+          "startingColumn": 18,
+          "startingLine": 279
+        }
+      },
+      {
+        "comment": "",
+        "key": "Open Find Bar",
+        "location": {
+          "startingColumn": 23,
+          "startingLine": 287
+        }
+      }
+    ]
+  },
+  "version": 1
+}
