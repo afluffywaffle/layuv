@@ -59,7 +59,13 @@ enum OpenAiCompatibleProvider {
                     let (bytes, response) = try await URLSession.shared.bytes(for: request)
                     if let http = response as? HTTPURLResponse,
                        !(200..<300).contains(http.statusCode) {
-                        throw AiError.http(http.statusCode, httpMessage(http.statusCode))
+                        // Read the error body and surface the server's error.message
+                        // when present (parity with the Kotlin twin's mapHttpError),
+                        // falling back to the generic per-code message.
+                        var data = Data()
+                        for try await b in bytes { data.append(b) }
+                        let serverMsg = Self.serverErrorMessage(data)
+                        throw AiError.http(http.statusCode, serverMsg ?? httpMessage(http.statusCode))
                     }
                     var truncated = false
                     for try await line in bytes.lines {
@@ -139,6 +145,17 @@ enum OpenAiCompatibleProvider {
               let text   = delta["content"] as? String,
               !text.isEmpty else { return nil }
         return text
+    }
+
+    /// Extracts `{"error":{"message":...}}` from an error-response body, if present.
+    private static func serverErrorMessage(_ data: Data) -> String? {
+        guard !data.isEmpty,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let error = obj["error"] as? [String: Any],
+              let message = error["message"] as? String,
+              !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return nil }
+        return message
     }
 
     private static func httpMessage(_ code: Int) -> String {
