@@ -33,8 +33,13 @@ enum CleartextPolicy {
             if a[0] == 169 && a[1] == 254 { return true }                   // 169.254/16 link-local
             if a[0] == 100 && a[1] >= 64 && a[1] <= 127 { return true }    // 100.64/10 CGNAT / Tailscale
         }
-        // IPv6: link-local fe80::/10, ULA fc00::/7 (fc.../fd...)
-        if host.hasPrefix("fe80:") || host.hasPrefix("fc") || host.hasPrefix("fd") { return true }
+        // IPv6 literals only (contain ':'): link-local fe80::/10, ULA fc00::/7
+        // (fc.../fd...). Gate on ':' so public hostnames like "fdxyz.com" or
+        // "fce.example.com" are NOT misclassified as private (matches the Kotlin
+        // twin, which only runs the v6 branch when host.contains(':')).
+        if host.contains(":") {
+            if host.hasPrefix("fe80:") || host.hasPrefix("fc") || host.hasPrefix("fd") { return true }
+        }
         return false
     }
 }
