@@ -28,6 +28,16 @@ enum OpenAiCompatibleProvider {
     /// Sentinel yielded as the last stream element when `finish_reason == "length"`.
     static let truncatedMarker = "__TRUNCATED__"
 
+    /// Client-error codes a text-only model returns when it can't accept `image_url`
+    /// parts. Mirror of the Kotlin twin's `TEXT_ONLY_REJECT_CODES`.
+    private static let textOnlyRejectCodes: Set<Int> = [400, 404, 415, 422]
+
+    /// Substituted for the dropped ink images on a text-only retry.
+    /// Mirror of `AskAiPanel.INK_OMITTED_NOTE`.
+    static let inkOmittedNote =
+        "\n\n[Note: this model can't read images, so the handwritten note(s) "
+        + "referenced above were not included. Work from the text only.]"
+
     /// Returns an `AsyncThrowingStream` of partial token strings.
     /// The stream ends normally on `[DONE]`. If truncated it first yields `truncatedMarker`.
     /// Call-site should cancel the stream on user dismissal; `onTermination` cancels the task.
@@ -41,22 +51,17 @@ enum OpenAiCompatibleProvider {
         guard CleartextPolicy.isAllowed(url) else {
             throw AiError.cleartextBlocked(url.host ?? url.absoluteString)
         }
-        let body = try buildBody(turns: turns, images: images, settings: settings)
-
-        var request = URLRequest(url: url)
-        request.httpMethod  = "POST"
-        request.setValue("application/json",  forHTTPHeaderField: "Content-Type")
-        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        if let key = SecureKeyStore.read(key: SecureKeyStore.apiKeyName), !key.isEmpty {
-            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        }
-        request.httpBody = body
+        let request = try makeRequest(
+            url: url, turns: turns, images: images, settings: settings)
+        // Prepared up front so the retry path can't throw inside the stream task.
+        let textOnlyRequest: URLRequest? = images.isEmpty ? nil : try makeRequest(
+            url: url, turns: turns, images: [], settings: settings, inkOmitted: true)
 
         return AsyncThrowingStream { continuation in
             let marker = truncatedMarker
             let task = Task {
                 do {
-                    let (bytes, response) = try await URLSession.shared.bytes(for: request)
+                    var (bytes, response) = try await URLSession.shared.bytes(for: request)
                     if let http = response as? HTTPURLResponse,
                        !(200..<300).contains(http.statusCode) {
                         // Read the error body and surface the server's error.message
@@ -64,8 +69,29 @@ enum OpenAiCompatibleProvider {
                         // falling back to the generic per-code message.
                         var data = Data()
                         for try await b in bytes { data.append(b) }
-                        let serverMsg = Self.serverErrorMessage(data)
-                        throw AiError.http(http.statusCode, serverMsg ?? httpMessage(http.statusCode))
+                        // A client error on a request that carried ink-note images is
+                        // almost always a text-only model rejecting the image_url parts
+                        // (Kotlin: mapHttpError → AiResult.NeedsTextOnlyRetry). Re-send
+                        // ONCE without them, with a placeholder in the text.
+                        var didRetry = false
+                        if let retry = textOnlyRequest,
+                           Self.textOnlyRejectCodes.contains(http.statusCode) {
+                            (bytes, response) = try await URLSession.shared.bytes(for: retry)
+                            didRetry = true
+                        }
+                        if let http2 = response as? HTTPURLResponse,
+                           !(200..<300).contains(http2.statusCode) {
+                            // On a retry, `data` holds the FIRST response's body; the
+                            // second response's body is still unread, so drain it.
+                            var retryData = data
+                            if didRetry {
+                                retryData = Data()
+                                for try await b in bytes { retryData.append(b) }
+                            }
+                            let serverMsg = Self.serverErrorMessage(retryData)
+                            throw AiError.http(http2.statusCode,
+                                               serverMsg ?? httpMessage(http2.statusCode))
+                        }
                     }
                     var truncated = false
                     for try await line in bytes.lines {
@@ -99,14 +125,45 @@ enum OpenAiCompatibleProvider {
         return url
     }
 
+    /// Builds the POST request. `inkOmitted` marks the text-only retry: the ink
+    /// images are gone, so the first user turn carries `inkOmittedNote` instead.
+    private static func makeRequest(
+        url: URL,
+        turns: [AiTurn],
+        images: [Data],
+        settings: AiProviderSettings,
+        inkOmitted: Bool = false
+    ) throws -> URLRequest {
+        var request = URLRequest(url: url)
+        request.httpMethod  = "POST"
+        request.setValue("application/json",  forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        if let key = SecureKeyStore.read(key: SecureKeyStore.apiKeyName), !key.isEmpty {
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try buildBody(
+            turns: turns, images: images, settings: settings, inkOmitted: inkOmitted)
+        return request
+    }
+
     private static func buildBody(
         turns: [AiTurn],
         images: [Data],
-        settings: AiProviderSettings
+        settings: AiProviderSettings,
+        inkOmitted: Bool = false
     ) throws -> Data {
         var messages: [[String: Any]] = []
 
         for (i, turn) in turns.enumerated() {
+            var turn = turn
+            // Load-bearing: `turns` carries NO system message on either platform, so
+            // index 0 is the user seed. If a system turn is ever prepended here, both
+            // this note AND the image attachment below must be re-indexed.
+            if inkOmitted && turn.role == AiTurn.roleUser && i == 0 {
+                turn = AiTurn(role: turn.role,
+                              text: turn.text + inkOmittedNote,
+                              truncated: turn.truncated)
+            }
             // Images are attached to the FIRST user message as content items.
             if turn.role == AiTurn.roleUser && i == 0 && !images.isEmpty {
                 var content: [[String: Any]] = [["type": "text", "text": turn.text]]
